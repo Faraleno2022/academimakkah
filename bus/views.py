@@ -19,6 +19,7 @@ from eleves.models import Eleve
 from .models import AbonnementBus, GrilleTarifaireBus
 from .forms import AbonnementBusForm, GrilleTarifaireBusForm
 from .suivi_classes import contexte_suivi_classe
+from .historique_eleve import infos_logistiques_bus, reprise_bus
 from utilisateurs.utils import user_is_superadmin, user_school, filter_by_user_school
 from utilisateurs.permissions import can_delete_subscriptions, permission_required
 from ecole_moderne.security_decorators import require_school_object
@@ -311,6 +312,8 @@ def abonnement_create(request):
             if ecole:
                 eleves = eleves.filter(classe__ecole=ecole)
             initial['eleve'] = eleves.get(id=int(eleve_id))
+            # Élève déjà abonné : reprendre zone, tranche suivante et mode de paiement.
+            initial.update(reprise_bus(initial['eleve']))
         except Exception:
             pass
     if request.method == 'POST':
@@ -322,6 +325,10 @@ def abonnement_create(request):
             abo.zone = abo.grille.zone
             abo.annee_scolaire = abo.grille.annee_scolaire
             abo.date_expiration = _date_fin_grille(abo.grille, abo.date_debut)
+            # Itinéraire, arrêt et contact ne sont pas ressaisis : repris du dernier abonnement.
+            for champ, valeur in infos_logistiques_bus(abo.eleve).items():
+                if not getattr(abo, champ):
+                    setattr(abo, champ, valeur)
             abo.save()
             messages.success(
                 request,

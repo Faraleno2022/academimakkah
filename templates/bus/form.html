@@ -82,6 +82,14 @@
             </div>
           </div>
 
+          <div class="col-12 mb-2" id="repriseBus" style="display:none;">
+            <div class="alert alert-success d-flex flex-wrap align-items-center gap-2 mb-0 py-2">
+              <i class="fas fa-history"></i>
+              <span id="repriseBusTexte" class="me-auto"></span>
+              <a id="repriseBusHistorique" href="#" class="btn btn-sm btn-outline-success" target="_blank"><i class="fas fa-list me-1"></i>Voir ses abonnements</a>
+            </div>
+          </div>
+
           <div id="eleveError" class="text-danger small" style="display:none;">Veuillez sélectionner un élève.</div>
           {% else %}
             {{ form.eleve.as_hidden }}
@@ -220,9 +228,38 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
-  async function chargerEleveSelectionne() {
+  const repriseBus = document.getElementById('repriseBus');
+  const repriseBusTexte = document.getElementById('repriseBusTexte');
+  const repriseBusHistorique = document.getElementById('repriseBusHistorique');
+  const modePaiementSelect = document.getElementById('id_mode_paiement');
+
+  function selectionnerSiDisponible(select, valeur) {
+    if (!select || valeur === undefined || valeur === null) return;
+    if (Array.from(select.options).some(option => option.value === String(valeur))) {
+      select.value = String(valeur);
+    }
+  }
+
+  function appliquerRepriseBus(data, reprendre) {
+    const nb = data.nb_abonnements_bus || 0;
+    if (!repriseBus) return;
+    if (!nb) { repriseBus.style.display = 'none'; return; }
+    const r = data.reprise_bus || {};
+    repriseBusTexte.innerHTML = `<strong>${nb} paiement(s) bus existant(s).</strong> `
+      + 'La zone, la tranche suivante et le mode de paiement sont repris du dernier abonnement.';
+    repriseBusHistorique.href = data.historique_url + '&type=bus';
+    repriseBus.style.display = 'block';
+    if (reprendre && !paiementEnModification) {
+      selectionnerSiDisponible(grilleSelect, r.grille);
+      selectionnerSiDisponible(periodiciteSelect, r.periodicite);
+      selectionnerSiDisponible(modePaiementSelect, r.mode_paiement);
+    }
+  }
+
+  async function chargerEleveSelectionne(reprendre) {
     if (!eleveSelect || !eleveSelect.value || !eleveInfoSection) {
       if (eleveInfoSection) eleveInfoSection.style.display = 'none';
+      if (repriseBus) repriseBus.style.display = 'none';
       return;
     }
     try {
@@ -238,6 +275,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       eleveInfoSection.style.display = 'block';
       if (eleveError) eleveError.style.display = 'none';
+      appliquerRepriseBus(data, reprendre);
     } catch (error) {
       eleveInfoSection.style.display = 'none';
     }
@@ -343,8 +381,8 @@ document.addEventListener('DOMContentLoaded', function() {
   });
   if (periodiciteSelect) periodiciteSelect.addEventListener('change', chargerTarif);
   if (grilleSelect) grilleSelect.addEventListener('change', chargerTarif);
-  if (eleveSelect) eleveSelect.addEventListener('change', function() {
-    chargerEleveSelectionne();
+  if (eleveSelect) eleveSelect.addEventListener('change', async function() {
+    await chargerEleveSelectionne(true);
     chargerTarif();
   });
 
@@ -362,7 +400,7 @@ document.addEventListener('DOMContentLoaded', function() {
     montantInput.addEventListener('input', updateMontant);
     updateMontant();
   }
-  chargerEleveSelectionne();
+  chargerEleveSelectionne(false);
   chargerTarif();
 
   // Validation élève à la soumission

@@ -16,6 +16,7 @@ import io
 from eleves.models import Eleve
 from .models import AbonnementCantine
 from .forms import AbonnementCantineForm
+from .historique_eleve import reprise_cantine, resume_reprise_json
 from utilisateurs.utils import (
     filter_by_user_school,
     user_is_admin,
@@ -175,8 +176,8 @@ def creer_abonnement_cantine(request):
             eleve = eleves.get(pk=eleve_id)
             initial['eleve'] = eleve
             initial['classe'] = eleve.classe_id
-            if eleve.responsable_principal:
-                initial['contact_parent'] = eleve.responsable_principal.telephone
+            # Élève déjà abonné : reprendre ses informations et enchaîner les dates.
+            initial.update(reprise_cantine(eleve))
         except (Eleve.DoesNotExist, TypeError, ValueError):
             pass
     if request.method == 'POST':
@@ -415,6 +416,7 @@ def get_eleve_info_json(request, eleve_id):
             'email_parent': eleve.responsable_principal.email if eleve.responsable_principal else '',
             'photo_url': photo_url,
         }
+        data.update(resume_reprise_json(eleve))
         return JsonResponse(data)
     except Eleve.DoesNotExist:
         return JsonResponse({'error': 'Élève non trouvé'}, status=404)

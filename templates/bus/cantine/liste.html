@@ -20,6 +20,9 @@
                     <a href="{% url 'bus:creer_abonnement_cantine' %}" class="btn btn-success">
                         <i class="fas fa-plus"></i> Nouvel Abonnement
                     </a>
+                    <a href="{% url 'bus:historique_abonnements' %}?type=cantine" class="btn btn-outline-dark">
+                        <i class="fas fa-id-card"></i> Abonnements par élève
+                    </a>
                     <a href="{% url 'bus:export_cantine_excel' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-primary">
                         <i class="fas fa-file-excel"></i> Export Excel
                     </a>
@@ -144,6 +147,14 @@
                                     <a href="{% url 'bus:modifier_abonnement_cantine' abo.id %}" 
                                        class="btn btn-primary" title="Modifier">
                                         <i class="fas fa-edit"></i>
+                                    </a>
+                                    <a href="{% url 'bus:creer_abonnement_cantine' %}?eleve={{ abo.eleve_id }}"
+                                       class="btn btn-success" title="Renouveler (nouvel abonnement)">
+                                        <i class="fas fa-redo"></i>
+                                    </a>
+                                    <a href="{% url 'bus:historique_abonnements' %}?eleve={{ abo.eleve_id }}&type=cantine"
+                                       class="btn btn-dark" title="Abonnements de l'élève">
+                                        <i class="fas fa-id-card"></i>
                                     </a>
                                     <a href="{% url 'bus:supprimer_abonnement_cantine' abo.id %}" 
                                        class="btn btn-danger" title="Supprimer">
