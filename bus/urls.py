@@ -1,6 +1,7 @@
 from django.urls import path
 from . import views
 from . import views_cantine
+from . import views_historique
 from .whatsapp_bus import apercu_message_whatsapp_abonnement, apercu_message_whatsapp_expiration
 from .abonnement_public import abonnement_public_pdf
 
@@ -24,6 +25,14 @@ urlpatterns = [
     path('relances/export/excel/', views.export_relances_excel, name='export_relances_excel'),
     path('<int:abo_id>/recu/pdf/', views.generer_recu_abonnement_pdf, name='recu_pdf'),
     
+    # Historique des abonnements d'un élève (bus + cantine)
+    path('eleves/abonnements/', views_historique.historique_abonnements, name='historique_abonnements'),
+    path(
+        'eleves/abonnements/export/<str:fmt>/',
+        views_historique.export_historique_abonnements,
+        name='historique_abonnements_export',
+    ),
+
     # Abonnements Cantine
     path('cantine/', views_cantine.tableau_bord_cantine, name='tableau_bord_cantine'),
     path('cantine/liste/', views_cantine.liste_abonnements_cantine, name='liste_abonnements_cantine'),

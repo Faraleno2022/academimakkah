@@ -89,6 +89,13 @@
                                         </div>
                                     </div>
                                 </div>
+                                <div id="reprise-info" class="alert alert-success d-flex flex-wrap align-items-center gap-2" style="display: none !important;">
+                                    <i class="fas fa-history"></i>
+                                    <span id="reprise-texte" class="me-auto"></span>
+                                    <a id="reprise-historique" href="#" class="btn btn-sm btn-outline-success" target="_blank">
+                                        <i class="fas fa-list"></i> Voir ses abonnements
+                                    </a>
+                                </div>
                                 <div class="row">
                                     <div class="col-12">
                                         <div class="mb-3">
@@ -258,6 +265,86 @@ document.addEventListener('DOMContentLoaded', function() {
     const infoClasse = document.getElementById('info-classe');
     const infoPhoto = document.getElementById('info-photo');
     const infoNoPhoto = document.getElementById('info-no-photo');
+    const modeCreation = {{ abonnement|yesno:'false,true' }};
+    const repriseInfo = document.getElementById('reprise-info');
+    const repriseTexte = document.getElementById('reprise-texte');
+    const repriseHistorique = document.getElementById('reprise-historique');
+    const dateDebutInput = document.getElementById('id_date_debut');
+    const dateExpirationInput = document.getElementById('id_date_expiration');
+    const periodiciteSelect = document.getElementById('id_periodicite');
+    const champsRepris = ['type_repas', 'periodicite', 'montant', 'date_debut', 'date_expiration',
+        'alerte_avant_jours', 'regime_alimentaire', 'allergies', 'contact_parent'];
+    let expirationSaisieManuelle = false;
+    let repriseAppliquee = false;
+
+    function formatDateFr(iso) {
+        if (!iso) return '';
+        const [a, m, j] = iso.split('-');
+        return `${j}/${m}/${a}`;
+    }
+
+    function afficherBandeau(data) {
+        const nb = data.nb_abonnements_cantine || 0;
+        if (!repriseInfo) return;
+        if (!nb) {
+            repriseInfo.style.setProperty('display', 'none', 'important');
+            return;
+        }
+        const r = data.reprise_cantine || {};
+        repriseTexte.innerHTML = `<strong>${nb} abonnement(s) cantine existant(s).</strong> `
+            + (modeCreation ? 'Les informations de l'enfant sont reprises du dernier abonnement'
+                + (r.dernier_expire_le ? ` (expiré le ${formatDateFr(r.dernier_expire_le)})` : '') + '.' : '');
+        repriseHistorique.href = data.historique_url + '&type=cantine';
+        repriseInfo.style.setProperty('display', 'flex', 'important');
+    }
+
+    function appliquerReprise(data) {
+        if (!modeCreation) return;
+        const r = data.reprise_cantine;
+        champsRepris.forEach(nom => {
+            const champ = document.getElementById('id_' + nom);
+            if (!champ) return;
+            if (r && r[nom] !== undefined && r[nom] !== null) {
+                champ.value = r[nom];
+            } else if (repriseAppliquee && ['regime_alimentaire', 'allergies'].includes(nom)) {
+                champ.value = '';  // ne pas garder les infos d'un autre enfant
+            }
+        });
+        repriseAppliquee = Boolean(r);
+        expirationSaisieManuelle = false;
+    }
+
+    function ajouterPeriode(iso, periodicite) {
+        const d = new Date(iso + 'T00:00:00');
+        if (isNaN(d)) return '';
+        const mois = {MENSUEL: 1, TRIMESTRIEL: 3, ANNUEL: 12}[periodicite];
+        if (periodicite === 'JOURNALIER') d.setDate(d.getDate() + 1);
+        else if (periodicite === 'HEBDOMADAIRE') d.setDate(d.getDate() + 7);
+        else {
+            const jour = d.getDate();
+            d.setDate(1);
+            d.setMonth(d.getMonth() + (mois || 1));
+            const dernierJour = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+            d.setDate(Math.min(jour, dernierJour));
+        }
+        d.setDate(d.getDate() - 1);
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const jj = String(d.getDate()).padStart(2, '0');
+        return `${d.getFullYear()}-${mm}-${jj}`;
+    }
+
+    function recalculerExpiration() {
+        if (!modeCreation || expirationSaisieManuelle || !dateDebutInput || !dateExpirationInput) return;
+        if (dateDebutInput.value && periodiciteSelect && periodiciteSelect.value) {
+            dateExpirationInput.value = ajouterPeriode(dateDebutInput.value, periodiciteSelect.value);
+        }
+    }
+
+    if (dateExpirationInput) dateExpirationInput.addEventListener('input', () => { expirationSaisieManuelle = true; });
+    if (dateDebutInput) dateDebutInput.addEventListener('change', recalculerExpiration);
+    if (periodiciteSelect) periodiciteSelect.addEventListener('change', recalculerExpiration);
+    if (modeCreation && dateExpirationInput && !dateExpirationInput.value) recalculerExpiration();
+
     const eleveClasseMap = {
         {% for e in form.fields.eleve.queryset %}"{{ e.pk }}": "{{ e.classe_id|default:'' }}"{% if not forloop.last %},{% endif %}{% endfor %}
     };
@@ -290,7 +377,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (eleveSelect) {
         // Charger les infos si un élève est déjà sélectionné (mode édition)
         if (eleveSelect.value) {
-            loadEleveInfo(eleveSelect.value);
+            loadEleveInfo(eleveSelect.value, false);
         }
         
         // Écouter les changements de sélection
@@ -298,10 +385,11 @@ document.addEventListener('DOMContentLoaded', function() {
             const eleveId = this.value;
             
             if (eleveId) {
-                loadEleveInfo(eleveId);
+                loadEleveInfo(eleveId, true);
             } else {
                 // Réinitialiser si aucun élève sélectionné
                 eleveInfoDiv.style.display = 'none';
+                if (repriseInfo) repriseInfo.style.setProperty('display', 'none', 'important');
                 contactParentInput.value = '';
                 infoPhoto.style.display = 'none';
                 infoNoPhoto.style.display = 'none';
@@ -309,7 +397,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    function loadEleveInfo(eleveId) {
+    function loadEleveInfo(eleveId, reprendre) {
         // Afficher un indicateur de chargement
         eleveInfoDiv.style.display = 'block';
         infoNomComplet.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Chargement...';
@@ -354,6 +442,10 @@ document.addEventListener('DOMContentLoaded', function() {
                         infoNoPhoto.style.display = 'block';
                     }
                     
+                    // Élève déjà abonné : reprendre ses informations (sans écraser une saisie rechargée)
+                    afficherBandeau(data);
+                    if (reprendre) appliquerReprise(data);
+
                     // Remplir automatiquement le contact parent si vide
                     if (!contactParentInput.value && data.telephone_parent) {
                         contactParentInput.value = data.telephone_parent;
