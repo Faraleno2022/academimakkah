@@ -89,6 +89,9 @@
         </div>
     </div>
 
+    {% url 'bus:liste_abonnements_cantine' as url_liste %}
+    {% include 'bus/_recettes_periodes.html' with titre_recettes="Recettes cantine encaissées" %}
+
     <!-- Alertes Critiques -->
     {% if nb_critiques > 0 %}
     <div class="row mb-4">
