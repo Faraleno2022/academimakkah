@@ -1,0 +1,115 @@
+{% comment %}
+Accès direct aux feuilles du classeur de paie mensuel. Attend `periode`.
+Chaque bouton ouvre le document équivalent à une feuille Excel.
+{% endcomment %}
+<div class="classeur-paie card border-0 shadow-sm mb-4">
+    <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+            <h5 class="mb-0"><i class="fas fa-book-open text-primary me-2"></i>Classeur de paie — {{ periode.nom_periode }}</h5>
+            <small class="text-muted">
+                {{ periode.ecole.nom }} · {{ periode.jours_ouvrables|default:"-" }} jours de travail
+                {% if periode.cloturee %}· <span class="badge bg-danger">Clôturée</span>{% endif %}
+            </small>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+            {% if not periode.cloturee %}
+            <a href="{% url 'salaires:parametres_periode' periode.id %}" class="btn btn-sm btn-primary">
+                <i class="fas fa-sliders-h me-1"></i> Barème et signataires
+            </a>
+            {% endif %}
+            <a href="{% url 'salaires:etats_salaire' %}?periode={{ periode.id }}" class="btn btn-sm btn-outline-primary">
+                <i class="fas fa-list me-1"></i> États du mois
+            </a>
+            <a href="{% url 'salaires:liste_avances' %}" class="btn btn-sm btn-outline-warning">
+                <i class="fas fa-hand-holding-usd me-1"></i> Saisir les acomptes
+            </a>
+            <a href="{% url 'salaires:export_etats_salaire_excel' %}?periode={{ periode.id }}" class="btn btn-sm btn-outline-success">
+                <i class="fas fa-file-excel me-1"></i> Classeur Excel
+            </a>
+        </div>
+    </div>
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-6 col-xl-3">
+                <div class="classeur-groupe">
+                    <div class="classeur-titre"><i class="fas fa-file-invoice-dollar me-1"></i> États de salaire à payer</div>
+                    <div class="d-grid gap-2">
+                        <a class="btn btn-outline-dark btn-sm text-start" target="_blank" href="{% url 'salaires:document_paie_pdf' periode.id 'etat' %}?groupe=DIRECTION">
+                            <i class="fas fa-user-tie me-1"></i> Direction
+                        </a>
+                        <a class="btn btn-outline-dark btn-sm text-start" target="_blank" href="{% url 'salaires:document_paie_pdf' periode.id 'etat' %}?groupe=PRIMAIRE">
+                            <i class="fas fa-child me-1"></i> Maternelle et primaire
+                        </a>
+                        <a class="btn btn-outline-dark btn-sm text-start" target="_blank" href="{% url 'salaires:document_paie_pdf' periode.id 'etat' %}?groupe=SECONDAIRE">
+                            <i class="fas fa-chalkboard-teacher me-1"></i> Secondaire (heures)
+                        </a>
+                        <a class="btn btn-outline-dark btn-sm text-start" target="_blank" href="{% url 'salaires:document_paie_pdf' periode.id 'etat' %}?groupe=APPUI">
+                            <i class="fas fa-tools me-1"></i> Personnel d'appui
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6 col-xl-3">
+                <div class="classeur-groupe">
+                    <div class="classeur-titre"><i class="fas fa-layer-group me-1"></i> Synthèses</div>
+                    <div class="d-grid gap-2">
+                        <a class="btn btn-outline-primary btn-sm text-start" target="_blank" href="{% url 'salaires:document_paie_pdf' periode.id 'masse' %}">
+                            <i class="fas fa-coins me-1"></i> Masse salariale
+                        </a>
+                        <a class="btn btn-outline-warning btn-sm text-start" target="_blank" href="{% url 'salaires:document_paie_pdf' periode.id 'acomptes' %}">
+                            <i class="fas fa-receipt me-1"></i> Acomptes (bons 1 à 5)
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6 col-xl-3">
+                <div class="classeur-groupe">
+                    <div class="classeur-titre"><i class="fas fa-signature me-1"></i> Émargement (acquis)</div>
+                    <div class="d-grid gap-2">
+                        <a class="btn btn-outline-secondary btn-sm text-start" target="_blank" href="{% url 'salaires:document_paie_pdf' periode.id 'emargement' %}?groupe=DIRECTION,PRIMAIRE,APPUI">
+                            <i class="fas fa-pen me-1"></i> Direction, primaire, appui
+                        </a>
+                        <a class="btn btn-outline-secondary btn-sm text-start" target="_blank" href="{% url 'salaires:document_paie_pdf' periode.id 'emargement' %}?groupe=SECONDAIRE">
+                            <i class="fas fa-pen me-1"></i> Secondaire
+                        </a>
+                        <a class="btn btn-outline-secondary btn-sm text-start" target="_blank" href="{% url 'salaires:document_paie_pdf' periode.id 'emargement' %}">
+                            <i class="fas fa-users me-1"></i> Tout le personnel
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6 col-xl-3">
+                <div class="classeur-groupe">
+                    <div class="classeur-titre"><i class="fas fa-file-alt me-1"></i> Bulletins de paie</div>
+                    <div class="d-grid gap-2">
+                        <a class="btn btn-outline-success btn-sm text-start" target="_blank" href="{% url 'salaires:document_paie_pdf' periode.id 'bulletins' %}">
+                            <i class="fas fa-print me-1"></i> Tous les bulletins
+                        </a>
+                        <a class="btn btn-outline-success btn-sm text-start" target="_blank" href="{% url 'salaires:document_paie_pdf' periode.id 'bulletins' %}?groupe=DIRECTION,PRIMAIRE,APPUI">
+                            <i class="fas fa-print me-1"></i> Direction, primaire, appui
+                        </a>
+                        <a class="btn btn-outline-success btn-sm text-start" target="_blank" href="{% url 'salaires:document_paie_pdf' periode.id 'bulletins' %}?groupe=SECONDAIRE">
+                            <i class="fas fa-print me-1"></i> Secondaire
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<style>
+    .classeur-paie .classeur-groupe {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 0.75rem;
+        height: 100%;
+    }
+    .classeur-paie .classeur-titre {
+        font-weight: 600;
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: #495057;
+        margin-bottom: 0.6rem;
+    }
+</style>
