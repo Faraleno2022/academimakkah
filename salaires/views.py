@@ -40,6 +40,7 @@ from .forms import (
 from .documents_paie import (
     acomptes_pdf,
     bulletin_paie_pdf,
+    bulletins_paie_pdf,
     emargement_pdf,
     etat_salaire_groupe_pdf,
     masse_salariale_pdf,
@@ -123,9 +124,18 @@ def tableau_bord(request):
         if restreindre:
             qs_periodes = qs_periodes.filter(ecole=ecole_user)
         periode_courante = qs_periodes.first()
+        if periode_courante is None:
+            # Pas de période pour le mois calendaire : dernière période,
+            # ouverte de préférence, pour garder l'accès au classeur de paie.
+            dernieres = PeriodeSalaire.objects.select_related('ecole').order_by(
+                'cloturee', '-annee', '-mois'
+            )
+            if restreindre:
+                dernieres = dernieres.filter(ecole=ecole_user)
+            periode_courante = dernieres.first()
     except:
         pass
-    
+
     # États de salaire récents
     etats_recents = EtatSalaire.objects.select_related('enseignant', 'periode')
     if restreindre:
@@ -1457,13 +1467,14 @@ DOCUMENTS_PAIE = {
     'masse': 'Masse salariale',
     'acomptes': 'Acomptes',
     'emargement': "Fiche d'émargement",
+    'bulletins': 'Bulletins de paie',
 }
 
 
 @login_required
 @require_school_object(model=PeriodeSalaire, pk_kwarg='periode_id', field_path='ecole')
 def document_paie_pdf(request, periode_id, document):
-    """Documents mensuels : état par rubrique, masse salariale, acomptes, émargement."""
+    """Documents mensuels : états par rubrique, masse salariale, acomptes, émargement, bulletins."""
     if document not in DOCUMENTS_PAIE:
         raise Http404("Document inconnu")
     periode = get_object_or_404(
@@ -1487,6 +1498,8 @@ def document_paie_pdf(request, periode_id, document):
         masse_salariale_pdf(response, periode)
     elif document == 'acomptes':
         acomptes_pdf(response, periode)
+    elif document == 'bulletins':
+        bulletins_paie_pdf(response, periode, groupes or None)
     else:
         emargement_pdf(response, periode, groupes or None)
     return response

@@ -1325,6 +1325,9 @@ class ClasseurPaieTests(TestCase):
             reverse('salaires:document_paie_pdf', args=[self.periode.pk, 'acomptes']),
             reverse('salaires:document_paie_pdf', args=[self.periode.pk, 'emargement'])
             + '?groupe=DIRECTION,PRIMAIRE',
+            reverse('salaires:document_paie_pdf', args=[self.periode.pk, 'bulletins']),
+            reverse('salaires:document_paie_pdf', args=[self.periode.pk, 'bulletins'])
+            + '?groupe=SECONDAIRE',
             reverse('salaires:fiche_paie_pdf', args=[
                 EtatSalaire.objects.get(enseignant=maitre).pk
             ]),
@@ -1353,7 +1356,20 @@ class ClasseurPaieTests(TestCase):
         self.assertContains(ajuster, 'id="total-primes"')
 
         liste = self.client.get(reverse('salaires:etats_salaire'), {'periode': self.periode.pk})
-        self.assertContains(liste, 'Documents de paie')
+        self.assertContains(liste, 'Classeur de paie')
+        bulletins_url = reverse('salaires:document_paie_pdf', args=[self.periode.pk, 'bulletins'])
+        self.assertContains(liste, bulletins_url)
+
+        sans_periode = self.client.get(reverse('salaires:etats_salaire'))
+        self.assertContains(sans_periode, f'?periode={self.periode.pk}')
+
+        tableau = self.client.get(reverse('salaires:tableau_bord'))
+        self.assertContains(tableau, 'Classeur de paie')
+        for document in ('masse', 'acomptes', 'emargement', 'bulletins'):
+            self.assertContains(tableau, reverse(
+                'salaires:document_paie_pdf', args=[self.periode.pk, document]
+            ))
+        self.assertContains(tableau, reverse('salaires:parametres_periode', args=[self.periode.pk]))
         self.assertContains(liste, 'Matricule 0949724')
         self.assertContains(liste, 'Ancienneté 20')
 

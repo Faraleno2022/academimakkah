@@ -7,7 +7,8 @@ Chaque fonction reproduit une feuille du classeur mensuel :
 - ``masse_salariale_pdf``      : « MASSE SALARIALE » (totaux par rubrique) ;
 - ``acomptes_pdf``             : « ACOMPTE PERSONNEL » (bons 1 à 5) ;
 - ``emargement_pdf``           : « FICHE D'EMARGEMENT DES SALAIRES POUR ACQUIS » ;
-- ``bulletin_paie_pdf``        : « BULLETIN DE PAIE » individuel.
+- ``bulletin_paie_pdf``        : « BULLETIN DE PAIE » individuel ;
+- ``bulletins_paie_pdf``       : tous les bulletins de la période, un par page.
 """
 
 import os
@@ -21,8 +22,8 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import (
-    Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table,
-    TableStyle,
+    Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer,
+    Table, TableStyle,
 )
 
 from .models import AvanceSalaire, EtatSalaire, GroupePaie
@@ -629,10 +630,9 @@ def signataire_bulletin(periode):
     return 'La Comptabilité', ''
 
 
-def bulletin_paie_pdf(reponse, etat):
+def _elements_bulletin(etat, largeur):
     periode = etat.periode
     enseignant = etat.enseignant
-    doc, largeur = _document(reponse, paysage=False)
 
     infos = [
         ['Prénoms et nom :', nom_document(enseignant), 'Matricule :', enseignant.matricule or '-'],
@@ -728,4 +728,31 @@ def bulletin_paie_pdf(reponse, etat):
         '<i>Ce bulletin est personnel et confidentiel.</i>',
         ParagraphStyle('pied', parent=STYLE_TEXTE, alignment=TA_LEFT, fontSize=8),
     ))
+    return elements
+
+
+def bulletin_paie_pdf(reponse, etat):
+    doc, largeur = _document(reponse, paysage=False)
+    doc.build(_elements_bulletin(etat, largeur))
+
+
+def bulletins_paie_pdf(reponse, periode, groupes=None):
+    """Tous les bulletins de la période (feuille « Bull paie » pour chacun)."""
+    doc, largeur = _document(reponse, paysage=False)
+    etats = etats_de_la_periode(periode)
+    if groupes:
+        etats = [etat for etat in etats if etat.enseignant.groupe_paie in groupes]
+    if not etats:
+        elements = [entete_ecole(periode, largeur)]
+        elements += titre_document('BULLETINS DE PAIE', periode)
+        elements.append(Paragraph(
+            "Aucun état de salaire calculé pour cette période.", STYLE_TEXTE
+        ))
+        doc.build(elements)
+        return
+    elements = []
+    for index, etat in enumerate(etats):
+        if index:
+            elements.append(PageBreak())
+        elements += _elements_bulletin(etat, largeur)
     doc.build(elements)
