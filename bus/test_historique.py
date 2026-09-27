@@ -1,4 +1,10 @@
 from datetime import date, timedelta
+import re
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+from unittest import skipUnless
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -142,3 +148,24 @@ class HistoriqueAbonnementsTests(TestCase):
             reverse('bus:historique_abonnements_export', args=['pdf']), {'eleve': self.autre_eleve.pk}
         )
         self.assertEqual(export.status_code, 302)
+
+    @skipUnless(shutil.which('node'), "Node.js requis pour vérifier la syntaxe JavaScript")
+    def test_scripts_des_formulaires_sont_valides(self):
+        """Une erreur de syntaxe JS désactive le filtre classe → élève et la reprise des infos."""
+        pages = [
+            reverse('bus:nouveau'), f"{reverse('bus:nouveau')}?eleve={self.eleve.pk}",
+            reverse('bus:creer_abonnement_cantine'),
+            f"{reverse('bus:creer_abonnement_cantine')}?eleve={self.eleve.pk}",
+            f"{reverse('bus:historique_abonnements')}?eleve={self.eleve.pk}",
+        ]
+        motif = re.compile(r'<script(?![^>]*(?:src=|ld.json))[^>]*>(.*?)</script>', re.S)
+        with tempfile.TemporaryDirectory() as dossier:
+            for page in pages:
+                html = self.client.get(page).content.decode()
+                for numero, script in enumerate(motif.findall(html)):
+                    fichier = Path(dossier) / f'script_{numero}.js'
+                    fichier.write_text(script, encoding='utf-8')
+                    resultat = subprocess.run(
+                        ['node', '--check', str(fichier)], capture_output=True, text=True,
+                    )
+                    self.assertEqual(resultat.returncode, 0, f"{page} : {resultat.stderr}")

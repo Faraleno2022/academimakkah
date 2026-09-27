@@ -292,7 +292,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         const r = data.reprise_cantine || {};
         repriseTexte.innerHTML = `<strong>${nb} abonnement(s) cantine existant(s).</strong> `
-            + (modeCreation ? 'Les informations de l'enfant sont reprises du dernier abonnement'
+            + (modeCreation ? "Les informations de l'enfant sont reprises du dernier abonnement"
                 + (r.dernier_expire_le ? ` (expiré le ${formatDateFr(r.dernier_expire_le)})` : '') + '.' : '');
         repriseHistorique.href = data.historique_url + '&type=cantine';
         repriseInfo.style.setProperty('display', 'flex', 'important');

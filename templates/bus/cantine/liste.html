@@ -31,10 +31,14 @@
         </div>
     </div>
 
+    {% url 'bus:liste_abonnements_cantine' as url_liste %}
+    {% include 'bus/_recettes_periodes.html' with titre_recettes="Recettes cantine encaissées" %}
+
     <!-- Filtres et Recherche -->
     <div class="card mb-4">
         <div class="card-body">
             <form method="get" class="row g-3">
+                {% if periode %}<input type="hidden" name="periode" value="{{ periode }}">{% endif %}
                 <div class="col-md-4">
                     <label class="form-label">Recherche</label>
                     <input type="text" name="q" class="form-control" placeholder="Nom, prénom, matricule..." value="{{ q }}">
@@ -67,6 +71,13 @@
             </form>
         </div>
     </div>
+
+    {% if periode %}
+    <div class="alert alert-success py-2">
+        <i class="fas fa-filter me-1"></i>Abonnements payés <strong>{{ periode_libelle|lower }}</strong> :
+        {{ abonnements|length }} abonnement{{ abonnements|length|pluralize }} — <strong>{{ total_filtre|intcomma }} GNF</strong>
+    </div>
+    {% endif %}
 
     <!-- Tableau -->
     <div class="card">
@@ -153,8 +164,8 @@
                                         <i class="fas fa-redo"></i>
                                     </a>
                                     <a href="{% url 'bus:historique_abonnements' %}?eleve={{ abo.eleve_id }}&type=cantine"
-                                       class="btn btn-dark" title="Abonnements de l'élève">
-                                        <i class="fas fa-id-card"></i>
+                                       class="btn btn-dark" title="Voir tous les abonnements de l'élève">
+                                        <i class="fas fa-list-ul me-1"></i>Détails
                                     </a>
                                     <a href="{% url 'bus:supprimer_abonnement_cantine' abo.id %}" 
                                        class="btn btn-danger" title="Supprimer">

@@ -17,6 +17,7 @@ from eleves.models import Eleve
 from .models import AbonnementCantine
 from .forms import AbonnementCantineForm
 from .historique_eleve import reprise_cantine, resume_reprise_json
+from .recettes import CHAMP_DATE_CANTINE, LIBELLES_PERIODES, filtrer_periode, recettes_par_periode
 from utilisateurs.utils import (
     filter_by_user_school,
     user_is_admin,
@@ -98,6 +99,7 @@ def tableau_bord_cantine(request):
         'stats_type_repas': stats_type_repas,
         'stats_type_repas_rows': stats_type_repas_rows,
         'revenus_mensuel': revenus_mensuel,
+        'recettes': recettes_par_periode(qs, CHAMP_DATE_CANTINE),
     }
     return render(request, 'bus/cantine/tableau_bord.html', context)
 
@@ -110,6 +112,14 @@ def liste_abonnements_cantine(request):
     if not user_is_superadmin(request.user):
         qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
     
+    # Recettes de l'école sur les périodes, indépendamment des filtres
+    recettes = recettes_par_periode(qs, CHAMP_DATE_CANTINE)
+    periode = request.GET.get('periode') or ''
+    if periode not in LIBELLES_PERIODES:
+        periode = ''
+    if periode:
+        qs = filtrer_periode(qs, periode, CHAMP_DATE_CANTINE)
+
     # Recherche
     q = (request.GET.get('q') or '').strip()
     if q:
@@ -158,6 +168,10 @@ def liste_abonnements_cantine(request):
         'filtre': filtre,
         'type_repas': type_repas,
         'type_repas_choices': AbonnementCantine.TypeRepas.choices,
+        'periode': periode,
+        'periode_libelle': LIBELLES_PERIODES.get(periode, ''),
+        'recettes': recettes,
+        'total_filtre': qs.aggregate(total=Sum('montant'))['total'] or 0,
     }
     return render(request, 'bus/cantine/liste.html', context)
 
@@ -249,6 +263,7 @@ def export_cantine_excel(request):
         qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
     
     # Appliquer les mêmes filtres que la liste
+    qs = filtrer_periode(qs, request.GET.get('periode') or '', CHAMP_DATE_CANTINE)
     filtre = request.GET.get('filtre', '').strip().lower()
     if filtre == 'actif':
         qs = qs.filter(statut='ACTIF')

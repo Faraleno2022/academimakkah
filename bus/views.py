@@ -20,6 +20,7 @@ from .models import AbonnementBus, GrilleTarifaireBus
 from .forms import AbonnementBusForm, GrilleTarifaireBusForm
 from .suivi_classes import contexte_suivi_classe
 from .historique_eleve import infos_logistiques_bus, reprise_bus
+from .recettes import CHAMP_DATE_BUS, LIBELLES_PERIODES, filtrer_periode, recettes_par_periode
 from utilisateurs.utils import user_is_superadmin, user_school, filter_by_user_school
 from utilisateurs.permissions import can_delete_subscriptions, permission_required
 from ecole_moderne.security_decorators import require_school_object
@@ -81,8 +82,16 @@ def liste_abonnements(request):
     if not user_is_superadmin(request.user):
         qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
 
+    # Recettes de l'école sur les périodes, indépendamment de la recherche
+    recettes = recettes_par_periode(qs, CHAMP_DATE_BUS)
+
     q = (request.GET.get('q') or '').strip()
     filtre = (request.GET.get('filtre') or '').strip().lower()
+    periode = request.GET.get('periode') or ''
+    if periode not in LIBELLES_PERIODES:
+        periode = ''
+    if periode:
+        qs = filtrer_periode(qs, periode, CHAMP_DATE_BUS)
     if q:
         qs = qs.filter(
             Q(eleve__nom__icontains=q) |
@@ -164,6 +173,9 @@ def liste_abonnements(request):
         'abonnements': qs.order_by('-updated_at')[:500],
         'q': q,
         'filtre': filtre,
+        'periode': periode,
+        'periode_libelle': LIBELLES_PERIODES.get(periode, ''),
+        'recettes': recettes,
         # Dashboard context
         'total_count': total_count,
         'total_montant': agg.get('total_montant') or 0,

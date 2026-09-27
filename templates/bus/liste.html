@@ -14,8 +14,13 @@
 {% endblock %}
 {% block content %}
 {% include 'bus/_suivi_classe.html' %}
-<h2 class="h5 mt-4">Historique des versements bus — toutes les classes</h2>
+<div class="mt-4">
+  {% url 'bus:liste' as url_liste %}
+  {% include 'bus/_recettes_periodes.html' with titre_recettes="Recettes bus encaissées" %}
+</div>
+<h2 class="h5 mt-2">Historique des versements bus — toutes les classes</h2>
 <form method="get" class="row g-2 mb-3">
+  {% if periode %}<input type="hidden" name="periode" value="{{ periode }}">{% endif %}
   <div class="col-md-4">
     <input type="text" name="q" class="form-control" placeholder="Rechercher (élève, zone, arrêt, contact)" value="{{ q }}">
   </div>
@@ -28,23 +33,23 @@
 <div class="mb-3">
   <div class="btn-group" role="group" aria-label="Filtres abonnements">
     <a class="btn btn-sm {% if not filtre %}btn-primary{% else %}btn-outline-primary{% endif %}"
-       href="{% url 'bus:liste' %}?{% if q %}q={{ q|urlencode }}&{% endif %}">
+       href="{% url 'bus:liste' %}?{% if q %}q={{ q|urlencode }}&{% endif %}{% if periode %}periode={{ periode }}&{% endif %}">
       <i class="fas fa-list me-1"></i>Tous
     </a>
     <a class="btn btn-sm {% if filtre == 'expires' %}btn-primary{% else %}btn-outline-primary{% endif %}"
-       href="{% url 'bus:liste' %}?{% if q %}q={{ q|urlencode }}&{% endif %}filtre=expires">
+       href="{% url 'bus:liste' %}?{% if q %}q={{ q|urlencode }}&{% endif %}{% if periode %}periode={{ periode }}&{% endif %}filtre=expires">
       <i class="fas fa-times-circle me-1"></i>Expirés
     </a>
     <a class="btn btn-sm {% if filtre == 'suspendus' %}btn-primary{% else %}btn-outline-primary{% endif %}"
-       href="{% url 'bus:liste' %}?{% if q %}q={{ q|urlencode }}&{% endif %}filtre=suspendus">
+       href="{% url 'bus:liste' %}?{% if q %}q={{ q|urlencode }}&{% endif %}{% if periode %}periode={{ periode }}&{% endif %}filtre=suspendus">
       <i class="fas fa-pause-circle me-1"></i>Suspendus
     </a>
     <a class="btn btn-sm {% if filtre == 'proches' %}btn-primary{% else %}btn-outline-primary{% endif %}"
-       href="{% url 'bus:liste' %}?{% if q %}q={{ q|urlencode }}&{% endif %}filtre=proches">
+       href="{% url 'bus:liste' %}?{% if q %}q={{ q|urlencode }}&{% endif %}{% if periode %}periode={{ periode }}&{% endif %}filtre=proches">
       <i class="fas fa-hourglass-half me-1"></i>Proches d'expiration
     </a>
     <a class="btn btn-sm {% if filtre == 'depassees' %}btn-primary{% else %}btn-outline-primary{% endif %}"
-       href="{% url 'bus:liste' %}?{% if q %}q={{ q|urlencode }}&{% endif %}filtre=depassees">
+       href="{% url 'bus:liste' %}?{% if q %}q={{ q|urlencode }}&{% endif %}{% if periode %}periode={{ periode }}&{% endif %}filtre=depassees">
       <i class="fas fa-exclamation-triangle me-1"></i>Expiration dépassée
     </a>
   </div>
@@ -53,6 +58,9 @@
   {% endif %}
   {% if q %}
     <span class="ms-2 badge text-bg-light">Recherche: "{{ q }}"</span>
+  {% endif %}
+  {% if periode %}
+    <span class="ms-2 badge text-bg-success">Payés {{ periode_libelle|lower }} : {{ total_count|intcomma }} abonnement{{ total_count|pluralize }} — {{ total_montant|intcomma }} GNF</span>
   {% endif %}
   
   <div class="mt-2 text-muted small">
@@ -220,7 +228,7 @@
         <div class="btn-group btn-group-sm">
           <a class="btn btn-outline-primary" href="{% url 'bus:modifier' a.id %}" title="Modifier"><i class="fas fa-edit"></i></a>
           <a class="btn btn-outline-secondary" href="{% url 'bus:recu_pdf' a.id %}" target="_blank" title="Reçu PDF"><i class="fas fa-file-pdf"></i></a>
-          <a class="btn btn-outline-dark" href="{% url 'bus:historique_abonnements' %}?eleve={{ a.eleve_id }}" title="Abonnements de l'élève"><i class="fas fa-id-card"></i></a>
+          <a class="btn btn-outline-dark" href="{% url 'bus:historique_abonnements' %}?eleve={{ a.eleve_id }}&type=bus" title="Voir tous les abonnements de l'élève"><i class="fas fa-list-ul me-1"></i>Détails</a>
           <a class="btn btn-outline-success" href="{% url 'bus:nouveau' %}?eleve={{ a.eleve_id }}" title="Nouveau paiement pour cet élève"><i class="fas fa-redo"></i></a>
           <button type="button" class="btn btn-success" onclick="envoyerAbonnementWhatsApp({{ a.id }})" title="Envoyer par WhatsApp"><i class="fab fa-whatsapp"></i></button>
         </div>
