@@ -1864,52 +1864,10 @@ def liste_paiements(request):
 
     # Situation de paiement de l'élève (basée sur l'échéancier)
     if situation in ('retard', 'reste', 'solde'):
-        from django.utils import timezone as _tz2
-        _today = _tz2.localdate() if hasattr(_tz2, 'localdate') else date.today()
-        exig = (
-            Case(When(date_echeance_inscription__lte=_today, then=F('frais_inscription_du')),
-                 default=Value(0), output_field=DecimalField(max_digits=12, decimal_places=0))
-            + Case(When(date_echeance_tranche_1__lte=_today, then=F('tranche_1_due')),
-                   default=Value(0), output_field=DecimalField(max_digits=12, decimal_places=0))
-            + Case(When(date_echeance_tranche_2__lte=_today, then=F('tranche_2_due')),
-                   default=Value(0), output_field=DecimalField(max_digits=12, decimal_places=0))
-            + Case(When(date_echeance_tranche_3__lte=_today, then=F('tranche_3_due')),
-                   default=Value(0), output_field=DecimalField(max_digits=12, decimal_places=0))
-        )
-        paye_eche = (F('frais_inscription_paye') + F('tranche_1_payee')
-                     + F('tranche_2_payee') + F('tranche_3_payee'))
-        du_total = (F('frais_inscription_du') + F('tranche_1_due')
-                    + F('tranche_2_due') + F('tranche_3_due'))
-        eche_qs = EcheancierPaiement.objects
-        situation_year = annee_filtre or annee_active
-        if situation_year:
-            eche_qs = eche_qs.filter(annee_scolaire=situation_year)
-        else:
-            eche_qs = eche_qs.filter(annee_scolaire=F('eleve__classe__annee_scolaire'))
-        eche_qs = eche_qs.annotate(
-            _remises=Coalesce(
-                Sum(
-                    'eleve__paiements__remises__montant_remise',
-                    filter=Q(
-                        eleve__paiements__statut='VALIDE',
-                        eleve__paiements__annee_scolaire=F('annee_scolaire'),
-                    ),
-                ),
-                Value(0),
-                output_field=DecimalField(max_digits=12, decimal_places=0),
-            ),
-        ).annotate(
-            _retard=ExpressionWrapper(exig - paye_eche - F('_remises'), output_field=DecimalField(max_digits=12, decimal_places=0)),
-            _reste=ExpressionWrapper(du_total - paye_eche - F('_remises'), output_field=DecimalField(max_digits=12, decimal_places=0)),
-        )
-        if situation == 'retard':          # en retard (échéance dépassée non soldée)
-            eche_qs = eche_qs.filter(_retard__gt=0)
-        elif situation == 'reste':         # reste à payer (à tout payer)
-            eche_qs = eche_qs.filter(_reste__gt=0)
-        elif situation == 'solde':         # entièrement soldé
-            eche_qs = eche_qs.filter(_reste__lte=0)
-        eleve_ids_situation = list(eche_qs.values_list('eleve_id', flat=True))
-        qs = qs.filter(eleve_id__in=eleve_ids_situation)
+        from .export_paiements_filtres import eleve_ids_par_situation
+        qs = qs.filter(eleve_id__in=eleve_ids_par_situation(
+            situation, annee_filtre or annee_active, today=timezone.localdate(),
+        ))
 
     # Calcul des totaux dynamiques (adaptés aux filtres en place)
     try:

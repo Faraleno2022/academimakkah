@@ -203,7 +203,7 @@ document.querySelectorAll('[data-accounting-export]').forEach(function (button) 
         const target = new URL(button.dataset.accountingExport, window.location.origin);
         const current = new URLSearchParams(window.location.search);
         current.forEach(function (value, key) { target.searchParams.set(key, value); });
-        window.open(target.toString(), '_blank');
+        ouvrirExport(target.toString());
     });
 });
 </script>

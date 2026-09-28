@@ -172,7 +172,7 @@
                     
                     showMessage('Génération du PDF en cours...', 'info');
                     const url = `{% url 'eleves:tickets_retrait_classe_pdf' 0 %}`.replace('0', classeId);
-                    window.open(url, '_blank');
+                    ouvrirExport(url);
                     setTimeout(() => showMessage('PDF généré avec succès !'), 1000);
                 });
             }
@@ -192,7 +192,7 @@
                     
                     showMessage('Génération du PDF en cours...', 'info');
                     const url = `{% url 'eleves:tickets_bus_classe_pdf' 0 %}`.replace('0', classeId);
-                    window.open(url, '_blank');
+                    ouvrirExport(url);
                     setTimeout(() => showMessage('PDF généré avec succès !'), 1000);
                 });
             }
@@ -212,7 +212,7 @@
 
                     showMessage('Génération du PDF en cours...', 'info');
                     const url = `{% url 'eleves:cartes_cantine_classe_pdf' 0 %}`.replace('0', classeId);
-                    window.open(url, '_blank');
+                    ouvrirExport(url);
                     setTimeout(() => showMessage('PDF généré avec succès !'), 1000);
                 });
             }

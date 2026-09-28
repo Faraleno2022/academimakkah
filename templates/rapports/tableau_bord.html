@@ -408,7 +408,7 @@ function genererRapport(type) {
     btn.disabled = true;
     
     // Générer le rapport
-    window.open(`{% url 'rapports:tableau_bord' %}${type}/`, '_blank');
+    ouvrirExport(`{% url 'rapports:tableau_bord' %}${type}/`);
     
     // Restaurer le bouton après un délai
     setTimeout(() => {
@@ -421,7 +421,7 @@ function exporterRapport(type) {
     const base = `{% url 'rapports:tableau_bord' %}`; // ex: /rapports/
     if (type === 'journalier') {
         const today = new Date().toISOString().slice(0,10);
-        window.open(`${base}journalier/export/excel/?date=${today}`, '_blank');
+        ouvrirExport(`${base}journalier/export/excel/?date=${today}`);
     } else if (type === 'hebdomadaire') {
         // Calcule le lundi de la semaine courante
         const d = new Date();
@@ -430,15 +430,15 @@ function exporterRapport(type) {
         const monday = new Date(d);
         monday.setDate(d.getDate() + diff);
         const debut = monday.toISOString().slice(0,10);
-        window.open(`${base}hebdomadaire/export/excel/?debut=${debut}`, '_blank');
+        ouvrirExport(`${base}hebdomadaire/export/excel/?debut=${debut}`);
     } else if (type === 'mensuel') {
         const now = new Date();
         const mois = now.getMonth() + 1;
         const annee = now.getFullYear();
-        window.open(`${base}mensuel/export/excel/?mois=${mois}&annee=${annee}`, '_blank');
+        ouvrirExport(`${base}mensuel/export/excel/?mois=${mois}&annee=${annee}`);
     } else if (type === 'annuel') {
         const annee = new Date().getFullYear();
-        window.open(`${base}annuel/export/excel/?annee=${annee}`, '_blank');
+        ouvrirExport(`${base}annuel/export/excel/?annee=${annee}`);
     }
 }
 
@@ -469,27 +469,27 @@ function choisirAnneeAnnuel() {
 
 function genererRapportAvecDate(type) {
     const date = document.getElementById('dateJournalier').value;
-    window.open(`{% url 'rapports:tableau_bord' %}${type}/?date=${date}`, '_blank');
+    ouvrirExport(`{% url 'rapports:tableau_bord' %}${type}/?date=${date}`);
     bootstrap.Modal.getInstance(document.getElementById('modalDateJournalier')).hide();
 }
 
 function exporterRapportAvecDate() {
     const date = document.getElementById('dateJournalier').value;
-    window.open(`{% url 'rapports:tableau_bord' %}journalier/export/excel/?date=${date}`, '_blank');
+    ouvrirExport(`{% url 'rapports:tableau_bord' %}journalier/export/excel/?date=${date}`);
     bootstrap.Modal.getInstance(document.getElementById('modalDateJournalier')).hide();
 }
 
 function genererRapportMensuelAvecDate() {
     const mois = document.getElementById('moisMensuel').value;
     const annee = document.getElementById('anneeMensuel').value;
-    window.open(`{% url 'rapports:tableau_bord' %}mensuel/?mois=${mois}&annee=${annee}`, '_blank');
+    ouvrirExport(`{% url 'rapports:tableau_bord' %}mensuel/?mois=${mois}&annee=${annee}`);
     bootstrap.Modal.getInstance(document.getElementById('modalMoisMensuel')).hide();
 }
 
 function exporterRapportMensuelAvecDate() {
     const mois = document.getElementById('moisMensuel').value;
     const annee = document.getElementById('anneeMensuel').value;
-    window.open(`{% url 'rapports:tableau_bord' %}mensuel/export/excel/?mois=${mois}&annee=${annee}`, '_blank');
+    ouvrirExport(`{% url 'rapports:tableau_bord' %}mensuel/export/excel/?mois=${mois}&annee=${annee}`);
     bootstrap.Modal.getInstance(document.getElementById('modalMoisMensuel')).hide();
 }
 

@@ -190,7 +190,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 const value = rawValue.toString().trim();
                 if (value) exportUrl.searchParams.set(key, value);
             }
-            window.open(exportUrl.toString(), '_blank');
+            ouvrirExport(exportUrl.toString());
         });
     });
     updateClassOptions();
