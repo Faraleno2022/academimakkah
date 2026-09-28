@@ -72,6 +72,19 @@
         updateNavigationMode();
         window.addEventListener('resize', updateNavigationMode, { passive: true });
         window.addEventListener('orientationchange', updateNavigationMode, { passive: true });
+
+        /* Exports PDF/Excel : sur tablette et téléphone, window.open(url, '_blank')
+           est souvent bloqué ou ouvre un onglet vide sans lancer le fichier.
+           On télécharge alors dans l'onglet courant : les exports sont servis en
+           pièce jointe, la page reste affichée. */
+        window.ouvrirExport = function (url) {
+            const cible = String(url);
+            if (!document.documentElement.classList.contains('compact-navigation')) {
+                const fenetre = window.open(cible, '_blank');
+                if (fenetre) return;
+            }
+            window.location.assign(cible);
+        };
     })();
     </script>
 

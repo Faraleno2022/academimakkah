@@ -607,10 +607,10 @@ function _urlTranchesParClasse(base) {
     return out.toString();
 }
 function exportTranchesParClassePdf() {
-    window.open(_urlTranchesParClasse('{% url "paiements:export_tranches_par_classe_pdf" %}'), '_blank');
+    ouvrirExport(_urlTranchesParClasse('{% url "paiements:export_tranches_par_classe_pdf" %}'));
 }
 function exportTranchesParClasseExcel() {
-    window.open(_urlTranchesParClasse('{% url "paiements:export_tranches_par_classe_excel" %}'), '_blank');
+    ouvrirExport(_urlTranchesParClasse('{% url "paiements:export_tranches_par_classe_excel" %}'));
 }
 
 // Export des résultats filtrés (reprend tous les filtres actifs du formulaire)
@@ -627,10 +627,10 @@ function _urlExportFiltres(base) {
     return out.toString();
 }
 function exportFiltresExcel() {
-    window.open(_urlExportFiltres('{% url "paiements:export_paiements_filtres_excel" %}'), '_blank');
+    ouvrirExport(_urlExportFiltres('{% url "paiements:export_paiements_filtres_excel" %}'));
 }
 function exportFiltresPdf() {
-    window.open(_urlExportFiltres('{% url "paiements:export_paiements_filtres_pdf" %}'), '_blank');
+    ouvrirExport(_urlExportFiltres('{% url "paiements:export_paiements_filtres_pdf" %}'));
 }
 
 // Tableau et rapports des montants par mode d'encaissement
@@ -655,7 +655,7 @@ function ouvrirRapportModesEncaissement(format) {
     const base = format === 'pdf'
         ? '{% url "paiements:export_modes_encaissement_pdf" %}'
         : '{% url "paiements:export_modes_encaissement_excel" %}';
-    window.open(_urlModesEncaissement(base), '_blank');
+    ouvrirExport(_urlModesEncaissement(base));
 }
 
 // Rapport comptable professionnel
@@ -680,7 +680,7 @@ function ouvrirRapportComptable(format) {
     const base = format === 'pdf'
         ? '{% url "paiements:export_comptabilite_pdf" %}'
         : '{% url "paiements:export_comptabilite_excel" %}';
-    window.open(_urlRapportComptable(base), '_blank');
+    ouvrirExport(_urlRapportComptable(base));
 }
 
 // Rapport professionnel regroupant les modules du recouvrement
@@ -697,7 +697,7 @@ function ouvrirRapportRecouvrement(format) {
     if (!classe && annee) out.searchParams.set('annee_scolaire', annee);
     if (du) out.searchParams.set('du', du);
     if (au) out.searchParams.set('au', au);
-    window.open(out.toString(), '_blank');
+    ouvrirExport(out.toString());
 }
 
 // Export Excel de la liste courante (préserve le filtre q)
@@ -709,7 +709,7 @@ function exportListeExcel() {
     const statut = u.searchParams.get('statut');
     if (q) out.searchParams.set('q', q);
     if (statut) out.searchParams.set('statut', statut);
-    window.open(out.toString(), '_blank');
+    ouvrirExport(out.toString());
 }
 
 function rejeterPaiement(paiementId) {

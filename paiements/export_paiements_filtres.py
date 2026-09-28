@@ -12,7 +12,7 @@ from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
 from django.db.models import (
-    Q, F, Case, When, Value, DecimalField, ExpressionWrapper, Sum,
+    Q, F, Case, When, Value, DecimalField, ExpressionWrapper, Sum, OuterRef, Subquery,
 )
 from django.db.models.functions import Coalesce
 from django.http import HttpResponse
@@ -21,6 +21,65 @@ from eleves.models import Classe, Ecole
 from utilisateurs.utils import filter_by_user_school, user_school
 from rapports.utils import _draw_header_and_watermark
 from .models import Paiement, EcheancierPaiement, ModePaiement, TypePaiement
+
+
+def eleve_ids_par_situation(situation, annee=None, today=None):
+    """Sous-requête des élèves dont l'échéancier est en retard / reste à payer / soldé.
+
+    Les remises validées sont sommées dans une sous-requête corrélée plutôt
+    que par jointure + agrégat : la version agrégée produisait un HAVING sur
+    des colonnes absentes du SELECT, que MySQL rejette (« Unknown column in
+    'having clause' ») dès qu'on ne garde que ``eleve_id``.
+    """
+    from .models import PaiementRemise
+
+    today = today or date.today()
+    montant_field = DecimalField(max_digits=12, decimal_places=0)
+    exig = (
+        Case(When(date_echeance_inscription__lte=today, then=F('frais_inscription_du')),
+             default=Value(0), output_field=montant_field)
+        + Case(When(date_echeance_tranche_1__lte=today, then=F('tranche_1_due')),
+               default=Value(0), output_field=montant_field)
+        + Case(When(date_echeance_tranche_2__lte=today, then=F('tranche_2_due')),
+               default=Value(0), output_field=montant_field)
+        + Case(When(date_echeance_tranche_3__lte=today, then=F('tranche_3_due')),
+               default=Value(0), output_field=montant_field)
+    )
+    paye = (F('frais_inscription_paye') + F('tranche_1_payee')
+            + F('tranche_2_payee') + F('tranche_3_payee'))
+    du_total = (F('frais_inscription_du') + F('tranche_1_due')
+                + F('tranche_2_due') + F('tranche_3_due'))
+    remises_sq = (
+        PaiementRemise.objects
+        .filter(
+            paiement__eleve_id=OuterRef('eleve_id'),
+            paiement__statut='VALIDE',
+            paiement__annee_scolaire=OuterRef('annee_scolaire'),
+        )
+        .order_by()
+        .values('paiement__eleve_id')
+        .annotate(total=Sum('montant_remise'))
+        .values('total')
+    )
+    eche = EcheancierPaiement.objects.all()
+    if annee:
+        eche = eche.filter(annee_scolaire=annee)
+    else:
+        eche = eche.filter(annee_scolaire=F('eleve__classe__annee_scolaire'))
+    eche = eche.annotate(
+        _remises=Coalesce(Subquery(remises_sq, output_field=montant_field),
+                          Value(Decimal('0')), output_field=montant_field),
+    ).annotate(
+        _retard=ExpressionWrapper(exig - paye - F('_remises'), output_field=montant_field),
+        _reste=ExpressionWrapper(du_total - paye - F('_remises'), output_field=montant_field),
+    )
+    if situation == 'retard':
+        eche = eche.filter(_retard__gt=0)
+    elif situation == 'reste':
+        eche = eche.filter(_reste__gt=0)
+    elif situation == 'solde':
+        eche = eche.filter(_reste__lte=0)
+    return eche.values('eleve_id')
 
 
 def _fmt_gnf(v):
@@ -102,53 +161,12 @@ def filtrer_paiements(request):
         libelles.append(f'Nature : {t.nom}' if t else 'Nature')
 
     if situation in ('retard', 'reste', 'solde'):
-        today = date.today()
-        exig = (
-            Case(When(date_echeance_inscription__lte=today, then=F('frais_inscription_du')),
-                 default=Value(0), output_field=DecimalField(max_digits=12, decimal_places=0))
-            + Case(When(date_echeance_tranche_1__lte=today, then=F('tranche_1_due')),
-                   default=Value(0), output_field=DecimalField(max_digits=12, decimal_places=0))
-            + Case(When(date_echeance_tranche_2__lte=today, then=F('tranche_2_due')),
-                   default=Value(0), output_field=DecimalField(max_digits=12, decimal_places=0))
-            + Case(When(date_echeance_tranche_3__lte=today, then=F('tranche_3_due')),
-                   default=Value(0), output_field=DecimalField(max_digits=12, decimal_places=0))
-        )
-        paye = (F('frais_inscription_paye') + F('tranche_1_payee')
-                + F('tranche_2_payee') + F('tranche_3_payee'))
-        du_total = (F('frais_inscription_du') + F('tranche_1_due')
-                    + F('tranche_2_due') + F('tranche_3_due'))
-        montant_field = DecimalField(max_digits=12, decimal_places=0)
-        eche = EcheancierPaiement.objects
-        if annee:
-            eche = eche.filter(annee_scolaire=annee)
-        else:
-            eche = eche.filter(annee_scolaire=F('eleve__classe__annee_scolaire'))
-        eche = eche.annotate(
-            _remises=Coalesce(
-                Sum(
-                    'eleve__paiements__remises__montant_remise',
-                    filter=Q(
-                        eleve__paiements__statut='VALIDE',
-                        eleve__paiements__annee_scolaire=F('annee_scolaire'),
-                    ),
-                ),
-                Value(Decimal('0')),
-                output_field=montant_field,
-            ),
-        ).annotate(
-            _retard=ExpressionWrapper(exig - paye - F('_remises'), output_field=montant_field),
-            _reste=ExpressionWrapper(du_total - paye - F('_remises'), output_field=montant_field),
-        )
-        if situation == 'retard':
-            eche = eche.filter(_retard__gt=0)
-            libelles.append('Niveau : en retard')
-        elif situation == 'reste':
-            eche = eche.filter(_reste__gt=0)
-            libelles.append('Niveau : reste à payer')
-        elif situation == 'solde':
-            eche = eche.filter(_reste__lte=0)
-            libelles.append('Niveau : soldé')
-        qs = qs.filter(eleve_id__in=list(eche.values_list('eleve_id', flat=True)))
+        qs = qs.filter(eleve_id__in=eleve_ids_par_situation(situation, annee))
+        libelles.append({
+            'retard': 'Niveau : en retard',
+            'reste': 'Niveau : reste à payer',
+            'solde': 'Niveau : soldé',
+        }[situation])
 
     return qs, libelles
 
