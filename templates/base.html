@@ -58,6 +58,8 @@
         const isIOS = /iPad|iPhone|iPod/i.test(userAgent)
             || (/Macintosh/i.test(userAgent) && navigator.maxTouchPoints > 1);
         const isAndroid = /Android/i.test(userAgent);
+        // iPad et iPhone : Safari a ses propres règles de clic au toucher (voir CSS).
+        document.documentElement.classList.toggle('ios-tactile', isIOS);
 
         function updateNavigationMode() {
             const narrowScreen = window.matchMedia('(max-width: 991.98px)').matches;
@@ -279,7 +281,6 @@
             max-height: calc(100dvh - 64px);
             overflow-y: auto;
             overscroll-behavior: contain;
-            -webkit-overflow-scrolling: touch;
             padding: 0.5rem 0 1rem;
         }
         html.compact-navigation .app-navbar.navbar-expand-lg .navbar-collapse.collapse:not(.show) {
@@ -305,6 +306,17 @@
             transform: none;
             min-width: 0;
             margin: 0 0.75rem 0.35rem;
+        }
+
+        /* iPad / iPhone au doigt : Safari ne transmet un toucher aux scripts qui
+           écoutent les clics de toute la page (boutons des modules) que si
+           l'élément touché paraît cliquable. Sans curseur visible au doigt, ce
+           réglage n'a pas d'effet à l'écran. */
+        @media (hover: none) {
+            html.ios-tactile body {
+                cursor: pointer;
+                -webkit-tap-highlight-color: transparent;
+            }
         }
 
         /* Footer */
@@ -836,6 +848,75 @@
                 const isOpen = !menu.classList.contains('show');
                 menu.classList.toggle('show', isOpen);
                 updateMenuState(isOpen);
+            });
+        }
+    });
+
+    /* Menus déroulants de la barre (Élèves, Bibliothèque, Transport, compte).
+       Sur iPad, Safari peut traiter le premier toucher comme un simple survol et
+       ne jamais envoyer le clic dont Bootstrap a besoin : le menu ne s'ouvre pas.
+       On l'ouvre donc dès que le doigt se lève, et les menus restent utilisables
+       même si Bootstrap n'a pas pu être chargé. */
+    document.addEventListener('DOMContentLoaded', function () {
+        const nav = document.querySelector('.app-navbar');
+        if (!nav) return;
+        const boutons = Array.from(nav.querySelectorAll('[data-bs-toggle="dropdown"]'));
+        const avecBootstrap = !!(window.bootstrap && window.bootstrap.Dropdown);
+
+        function menuDe(bouton) { return bouton.nextElementSibling; }
+
+        function marquer(bouton, ouvert) {
+            menuDe(bouton).classList.toggle('show', ouvert);
+            bouton.classList.toggle('show', ouvert);
+            bouton.setAttribute('aria-expanded', String(ouvert));
+        }
+
+        function fermer(bouton) {
+            if (!menuDe(bouton).classList.contains('show')) return;
+            const instance = avecBootstrap && window.bootstrap.Dropdown.getInstance(bouton);
+            if (instance) instance.hide(); else marquer(bouton, false);
+        }
+
+        function basculer(bouton) {
+            boutons.forEach(function (autre) { if (autre !== bouton) fermer(autre); });
+            if (avecBootstrap) {
+                window.bootstrap.Dropdown.getOrCreateInstance(bouton).toggle();
+            } else {
+                marquer(bouton, !menuDe(bouton).classList.contains('show'));
+            }
+        }
+
+        boutons.forEach(function (bouton) {
+            let depart = null;
+            bouton.addEventListener('touchstart', function (event) {
+                const doigt = event.touches[0];
+                depart = { x: doigt.clientX, y: doigt.clientY };
+            }, { passive: true });
+            bouton.addEventListener('touchcancel', function () { depart = null; });
+            bouton.addEventListener('touchend', function (event) {
+                if (!depart) return;
+                const doigt = event.changedTouches[0];
+                const glissement = Math.abs(doigt.clientX - depart.x) > 10
+                    || Math.abs(doigt.clientY - depart.y) > 10;
+                depart = null;
+                if (glissement) return;  // le doigt faisait défiler le menu
+                // Sans clic simulé ensuite : il rouvrirait ou refermerait le menu.
+                event.preventDefault();
+                basculer(bouton);
+            });
+            if (!avecBootstrap) {
+                bouton.addEventListener('click', function (event) {
+                    event.preventDefault();
+                    basculer(bouton);
+                });
+            }
+        });
+
+        if (!avecBootstrap) {
+            document.addEventListener('click', function (event) {
+                boutons.forEach(function (bouton) {
+                    if (!bouton.parentElement.contains(event.target)) fermer(bouton);
+                });
             });
         }
     });
