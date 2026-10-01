@@ -684,6 +684,63 @@ class EtatSalaireAjustementForm(forms.ModelForm):
         return cleaned_data
 
 
+class PeriodePrimesChoiceField(forms.ModelChoiceField):
+    def label_from_instance(self, obj):
+        return obj.nom_periode
+
+
+class PrimesEnseignantForm(forms.Form):
+    """Saisie des primes d'un enseignant pour une période ouverte."""
+
+    LABELS_PRIMES = {
+        'prime_fonction': 'Fonction',
+        'prime_craie': 'Craie / révision',
+        'prime_anciennete': 'Ancienneté',
+        'prime_eloignement': 'Éloignement',
+        'prime_performance': 'Performance',
+        'prime_exceptionnelle': 'Exceptionnelle',
+    }
+
+    periode = PeriodePrimesChoiceField(
+        queryset=PeriodeSalaire.objects.none(),
+        label='Période',
+        empty_label=None,
+        widget=forms.Select(attrs={'class': 'form-select'}),
+    )
+    motif = forms.CharField(
+        label='Motif',
+        required=False,
+        max_length=255,
+        widget=forms.TextInput(attrs={
+            'class': 'form-control',
+            'placeholder': 'Ex. prime de fin de trimestre, bonne performance…',
+        }),
+    )
+
+    def __init__(self, *args, enseignant=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.enseignant = enseignant
+        if enseignant is not None:
+            self.fields['periode'].queryset = PeriodeSalaire.objects.filter(
+                ecole=enseignant.ecole, cloturee=False
+            ).order_by('-annee', '-mois')
+        for champ in EtatSalaire.CHAMPS_PRIMES:
+            # Un champ laissé vide garde la valeur actuelle de l'état.
+            self.fields[champ] = forms.DecimalField(
+                label=self.LABELS_PRIMES[champ],
+                required=False,
+                min_value=Decimal('0'),
+                max_digits=12,
+                decimal_places=2,
+                widget=forms.NumberInput(attrs={
+                    'class': 'form-control', 'min': '0', 'step': '1',
+                }),
+            )
+
+    def champs_primes(self):
+        return [self[champ] for champ in EtatSalaire.CHAMPS_PRIMES]
+
+
 class ParametresPeriodeForm(forms.ModelForm):
     """Barème des primes et mentions des documents d'une période."""
 

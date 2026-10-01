@@ -266,6 +266,87 @@
         </div>
     </div>
 
+    <!-- Primes -->
+    <div class="row" id="primes">
+        <div class="col-12">
+            <div class="teacher-info-card">
+                <h5 class="card-title mb-3">
+                    <i class="fas fa-gift me-2 text-success"></i>
+                    Primes de l'enseignant
+                </h5>
+
+                <div class="row g-4">
+                    <div class="col-lg-4">
+                        <div class="border rounded p-3 h-100 bg-light">
+                            <h6 class="fw-bold mb-2">Prime de fonction mensuelle par défaut</h6>
+                            <p class="small text-muted mb-3">
+                                Reprise automatiquement dans chaque nouvel état de salaire.
+                            </p>
+                            <form method="post" action="{% url 'salaires:primes_enseignant' enseignant.id %}">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="defaut">
+                                <div class="input-group mb-2">
+                                    <input type="number" name="prime_mensuelle" class="form-control" min="0" step="1"
+                                           value="{{ enseignant.prime_mensuelle|floatformat:0 }}" aria-label="Prime mensuelle par défaut">
+                                    <span class="input-group-text">GNF</span>
+                                </div>
+                                <button type="submit" class="btn btn-outline-success w-100">
+                                    <i class="fas fa-save me-1"></i>Enregistrer la prime par défaut
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <div class="col-lg-8">
+                        <h6 class="fw-bold mb-2">Ajouter / modifier les primes d'un mois</h6>
+                        {% if primes_form.fields.periode.queryset.exists %}
+                        <form method="post" action="{% url 'salaires:primes_enseignant' enseignant.id %}" id="form-primes">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="periode">
+                            <div class="row g-2 align-items-end mb-2">
+                                <div class="col-md-5">
+                                    <label class="form-label small mb-1" for="{{ primes_form.periode.id_for_label }}">{{ primes_form.periode.label }}</label>
+                                    {{ primes_form.periode }}
+                                </div>
+                                <div class="col-md-7">
+                                    <div id="primes-statut" class="small"></div>
+                                </div>
+                            </div>
+                            <div class="row g-2">
+                                {% for champ in primes_form.champs_primes %}
+                                <div class="col-6 col-md-4">
+                                    <label class="form-label small mb-1" for="{{ champ.id_for_label }}">{{ champ.label }}</label>
+                                    {{ champ }}
+                                </div>
+                                {% endfor %}
+                            </div>
+                            <div class="row g-2 mt-1 align-items-end">
+                                <div class="col-md-8">
+                                    <label class="form-label small mb-1" for="{{ primes_form.motif.id_for_label }}">{{ primes_form.motif.label }} (facultatif)</label>
+                                    {{ primes_form.motif }}
+                                </div>
+                                <div class="col-md-4 text-md-end">
+                                    <div class="small text-muted mb-1">Total : <strong id="primes-total">0</strong> GNF</div>
+                                    <button type="submit" class="btn btn-success w-100" id="primes-enregistrer">
+                                        <i class="fas fa-plus-circle me-1"></i>Enregistrer les primes
+                                    </button>
+                                </div>
+                            </div>
+                        </form>
+                        {{ primes_par_periode|json_script:"primes-par-periode" }}
+                        {% else %}
+                        <div class="alert alert-warning mb-0">
+                            Aucune période de paie ouverte pour cette école.
+                            <a href="{% url 'salaires:gestion_periodes' %}" class="alert-link">Créer une période</a>
+                            pour saisir les primes du mois.
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Affectations de Classes -->
     {% if enseignant.type_enseignant == 'MATERNELLE' or enseignant.type_enseignant == 'PRIMAIRE' or enseignant.type_enseignant == 'SECONDAIRE' %}
     <div class="row">
@@ -484,6 +565,47 @@ function changerStatut(nouveauStatut) {
         alert('Fonctionnalité en développement');
     }
 }
+
+// Zone primes : pré-remplit les montants de la période choisie
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('form-primes');
+    const source = document.getElementById('primes-par-periode');
+    if (!form || !source) return;
+    const donnees = JSON.parse(source.textContent);
+    const selectPeriode = form.querySelector('select[name="periode"]');
+    const champs = Array.from(form.querySelectorAll('input[name^="prime_"]'));
+    const statut = document.getElementById('primes-statut');
+    const total = document.getElementById('primes-total');
+    const bouton = document.getElementById('primes-enregistrer');
+    const format = (n) => Math.round(n).toLocaleString('fr-FR');
+
+    function majTotal() {
+        const somme = champs.reduce((s, c) => s + (parseFloat(c.value) || 0), 0);
+        total.textContent = format(somme);
+    }
+
+    function remplir() {
+        const info = donnees[selectPeriode.value];
+        if (!info) return;
+        champs.forEach((c) => {
+            c.value = Math.round(info.primes[c.name] || 0);
+            c.readOnly = info.statut === 'valide' || (c.name === 'prime_craie' && info.craie_calculee);
+        });
+        bouton.disabled = info.statut === 'valide';
+        if (info.statut === 'valide') {
+            statut.innerHTML = '<span class="badge bg-success">État validé</span> les primes ne sont plus modifiables.';
+        } else if (info.statut === 'nouveau') {
+            statut.innerHTML = '<span class="badge bg-info">Nouvel état</span> l\'état de salaire du mois sera créé à l\'enregistrement.';
+        } else {
+            statut.innerHTML = '<span class="badge bg-warning text-dark">En attente</span> état non validé, modifiable.';
+        }
+        majTotal();
+    }
+
+    selectPeriode.addEventListener('change', remplir);
+    champs.forEach((c) => c.addEventListener('input', majTotal));
+    remplir();
+});
 
 // Animation d'apparition des cartes
 document.addEventListener('DOMContentLoaded', function() {
