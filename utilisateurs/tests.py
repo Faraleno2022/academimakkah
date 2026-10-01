@@ -269,6 +269,8 @@ class ComptesPrincipauxTests(TestCase):
             response = self.client.get(reverse('eleves:gestion_classes'))
 
         self.assertContains(response, "addEventListener('touchend'")
+        self.assertContains(response, 'activerAuToucher(toggler, basculerMenu)')
+        self.assertContains(response, 'Collapse.getOrCreateInstance(menu, { toggle: false }).toggle()')
         self.assertContains(response, 'bootstrap.Dropdown.getOrCreateInstance(bouton).toggle()')
         self.assertContains(response, "classList.toggle('ios-tactile', isIOS)")
         self.assertContains(response, 'html.ios-tactile body')

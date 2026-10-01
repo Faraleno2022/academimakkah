@@ -825,10 +825,36 @@
     <!-- Bootstrap local : indispensable au hamburger et aux menus déroulants. -->
     <script src="{% static 'vendor/bootstrap/bootstrap.bundle.min.js' %}"></script>
     <script>
+    /* Boutons de la barre (☰, Élèves, Bibliothèque, Transport, compte).
+       Sur iPad, Safari peut traiter le premier toucher comme un simple survol et
+       ne jamais envoyer le clic dont Bootstrap a besoin : le bouton ne réagit pas.
+       L'action part donc dès que le doigt se lève, sans clic simulé ensuite (il
+       rouvrirait ou refermerait aussitôt). Un doigt qui glisse fait défiler le
+       menu : il ne déclenche rien. */
+    function activerAuToucher(element, action) {
+        let depart = null;
+        element.addEventListener('touchstart', function (event) {
+            const doigt = event.touches[0];
+            depart = { x: doigt.clientX, y: doigt.clientY };
+        }, { passive: true });
+        element.addEventListener('touchcancel', function () { depart = null; });
+        element.addEventListener('touchend', function (event) {
+            if (!depart) return;
+            const doigt = event.changedTouches[0];
+            const glissement = Math.abs(doigt.clientX - depart.x) > 10
+                || Math.abs(doigt.clientY - depart.y) > 10;
+            depart = null;
+            if (glissement) return;
+            event.preventDefault();
+            action();
+        });
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
         const toggler = document.querySelector('[data-bs-target="#navbarNav"]');
         const menu = document.getElementById('navbarNav');
         if (!toggler || !menu) return;
+        const avecBootstrap = !!(window.bootstrap && window.bootstrap.Collapse);
 
         function updateMenuState(isOpen) {
             toggler.setAttribute('aria-expanded', String(isOpen));
@@ -838,25 +864,31 @@
             );
         }
 
+        function basculerMenu() {
+            if (avecBootstrap) {
+                // toggle: false, sinon la création de l'instance basculerait déjà le menu.
+                window.bootstrap.Collapse.getOrCreateInstance(menu, { toggle: false }).toggle();
+                return;
+            }
+            const isOpen = !menu.classList.contains('show');
+            menu.classList.toggle('show', isOpen);
+            updateMenuState(isOpen);
+        }
+
         menu.addEventListener('shown.bs.collapse', function () { updateMenuState(true); });
         menu.addEventListener('hidden.bs.collapse', function () { updateMenuState(false); });
 
+        activerAuToucher(toggler, basculerMenu);
+
         /* Secours sans dépendance : garde le bouton actif si Bootstrap ne peut pas
            être initialisé (cache incomplet ou ressource statique momentanément absente). */
-        if (!(window.bootstrap && window.bootstrap.Collapse)) {
-            toggler.addEventListener('click', function () {
-                const isOpen = !menu.classList.contains('show');
-                menu.classList.toggle('show', isOpen);
-                updateMenuState(isOpen);
-            });
+        if (!avecBootstrap) {
+            toggler.addEventListener('click', basculerMenu);
         }
     });
 
-    /* Menus déroulants de la barre (Élèves, Bibliothèque, Transport, compte).
-       Sur iPad, Safari peut traiter le premier toucher comme un simple survol et
-       ne jamais envoyer le clic dont Bootstrap a besoin : le menu ne s'ouvre pas.
-       On l'ouvre donc dès que le doigt se lève, et les menus restent utilisables
-       même si Bootstrap n'a pas pu être chargé. */
+    /* Menus déroulants de la barre : ouverts au toucher (voir activerAuToucher),
+       un seul à la fois, et utilisables même si Bootstrap n'a pas pu être chargé. */
     document.addEventListener('DOMContentLoaded', function () {
         const nav = document.querySelector('.app-navbar');
         if (!nav) return;
@@ -887,23 +919,7 @@
         }
 
         boutons.forEach(function (bouton) {
-            let depart = null;
-            bouton.addEventListener('touchstart', function (event) {
-                const doigt = event.touches[0];
-                depart = { x: doigt.clientX, y: doigt.clientY };
-            }, { passive: true });
-            bouton.addEventListener('touchcancel', function () { depart = null; });
-            bouton.addEventListener('touchend', function (event) {
-                if (!depart) return;
-                const doigt = event.changedTouches[0];
-                const glissement = Math.abs(doigt.clientX - depart.x) > 10
-                    || Math.abs(doigt.clientY - depart.y) > 10;
-                depart = null;
-                if (glissement) return;  // le doigt faisait défiler le menu
-                // Sans clic simulé ensuite : il rouvrirait ou refermerait le menu.
-                event.preventDefault();
-                basculer(bouton);
-            });
+            activerAuToucher(bouton, function () { basculer(bouton); });
             if (!avecBootstrap) {
                 bouton.addEventListener('click', function (event) {
                     event.preventDefault();
