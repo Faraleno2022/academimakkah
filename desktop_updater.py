@@ -22,7 +22,9 @@ from urllib.request import Request, urlopen
 from app_version import APP_VERSION
 
 
-GITHUB_REPOSITORY = "Faraleno2022/GS_hadja_kanfing_dian-"
+# Dépôt public ne contenant que les installateurs : le dépôt du code est
+# privé, et l'API GitHub répond 404 aux postes qui l'interrogent sans compte.
+GITHUB_REPOSITORY = "Faraleno2022/MySchoolGN-Desktop"
 LATEST_RELEASE_URL = (
     f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases/latest"
 )
