@@ -19,8 +19,12 @@ from django.views.decorators.http import require_GET, require_POST, require_http
 from eleves.models import Ecole
 from utilisateurs.utils import user_is_admin, user_school
 
-from .engine import apply_sync_change, snapshot_changes_for_ecole, snapshot_page_for_ecole, get_model, queryset_for_ecole, serialize_instance
+from .engine import (
+    apply_sync_change, dependances_pour_poste, snapshot_changes_for_ecole, snapshot_page_for_ecole,
+    get_model, model_label_for, queryset_for_ecole, serialize_instance,
+)
 from .models import SyncChange, SyncDevice
+from .sequence import attribuer_sequences
 
 
 PULL_PAGE_SIZE = 500
@@ -331,15 +335,19 @@ def pull(request):
             'server_time': timezone.now().isoformat(),
         })
 
+    # Le curseur des postes porte sur le numéro de diffusion, attribué après
+    # validation : un lot validé en retard ne peut plus être sauté.
+    attribuer_sequences()
     changes = (
         SyncChange.objects
-        .filter(ecole=device.ecole).filter(Q(statut=SyncChange.STATUT_APPLIED) | Q(device__isnull=True, statut=SyncChange.STATUT_PENDING))
+        .filter(ecole=device.ecole, sequence__isnull=False)
+        .filter(Q(statut=SyncChange.STATUT_APPLIED) | Q(device__isnull=True, statut=SyncChange.STATUT_PENDING))
         .exclude(device=device)
         .select_related('device')
     )
     if since_id:
         try:
-            changes = changes.filter(id__gt=int(since_id))
+            changes = changes.filter(sequence__gt=int(since_id))
         except (TypeError, ValueError):
             return JsonResponse({'ok': False, 'error': 'since_id invalide.'}, status=400)
     elif since:
@@ -350,9 +358,10 @@ def pull(request):
             parsed_since = timezone.make_aware(parsed_since, timezone.get_current_timezone())
         changes = changes.filter(date_creation__gt=parsed_since)
 
-    changes = changes.order_by('id')[:PULL_PAGE_SIZE]
+    changes = changes.order_by('sequence')[:PULL_PAGE_SIZE]
     changes = list(changes)
     serialized_changes = []
+    deja_vus = set()
     for change in changes:
         model = get_model(change.model_label)
         if model is None:
@@ -363,6 +372,10 @@ def pull(request):
             if obj is None:
                 continue
             payload = serialize_instance(obj)
+            # Les parents passent avant : un poste qui les a manqués peut
+            # quand même appliquer ce changement au lieu de bloquer dessus.
+            deja_vus.add((model_label_for(model), obj.pk))
+            serialized_changes.extend(dependances_pour_poste(obj, device.ecole, deja_vus))
         else:
             # A deletion conveys no historical personal data.
             payload = {'sync_uuid': str(change.object_uuid)}
@@ -383,7 +396,7 @@ def pull(request):
         'since': since,
         'since_id': since_id,
         'changes': serialized_changes,
-        'latest_change_id': changes[-1].id if changes else since_id,
+        'latest_change_id': changes[-1].sequence if changes else since_id,
         'has_more': len(changes) == PULL_PAGE_SIZE,
         'server_time': timezone.now().isoformat(),
     })

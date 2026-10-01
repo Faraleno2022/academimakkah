@@ -221,6 +221,48 @@ def queryset_for_ecole(model, ecole):
     return scoped_queryset(model, ecole)
 
 
+def ligne_etat_courant(label, obj, origine='Snapshot initial'):
+    """Changement UPDATE portant l'état actuel d'un objet, sans id serveur."""
+    return {
+        'id': None, 'model': label, 'model_label': label,
+        'object_uuid': str(obj.sync_uuid), 'operation': 'UPDATE',
+        'payload': {**serialize_instance(obj), 'sync_uuid': str(obj.sync_uuid)},
+        'device_id': None, 'device_name': origine,
+        'date_creation': timezone.now().isoformat(),
+    }
+
+
+def dependances_pour_poste(obj, ecole, deja_vus):
+    """Objets référencés par ``obj`` (parents d'abord), à livrer avant lui.
+
+    Un poste qui a manqué la création d'un parent (élève, classe…) ne peut
+    pas appliquer un changement qui y fait référence ; sans ce complément,
+    il bute indéfiniment sur ce changement. ``deja_vus`` évite de renvoyer
+    deux fois le même objet dans une page.
+    """
+    lignes = []
+    for field in obj._meta.concrete_fields:
+        if not isinstance(field, models.ForeignKey):
+            continue
+        related_model = field.remote_field.model
+        related_pk = getattr(obj, field.attname, None)
+        if not related_pk or related_model == get_user_model():
+            continue
+        label = model_label_for(related_model)
+        if label not in SYNC_MODEL_SET or label == 'eleves.Ecole':
+            continue
+        cle = (label, related_pk)
+        if cle in deja_vus:
+            continue
+        deja_vus.add(cle)
+        parent = queryset_for_ecole(related_model, ecole).filter(pk=related_pk).first()
+        if parent is None:
+            continue
+        lignes.extend(dependances_pour_poste(parent, ecole, deja_vus))
+        lignes.append(ligne_etat_courant(label, parent, origine='Dependance'))
+    return lignes
+
+
 def snapshot_changes_for_ecole(ecole):
     snapshot = []
     for label in SYNC_MODEL_LABELS:
@@ -228,17 +270,7 @@ def snapshot_changes_for_ecole(ecole):
         if not model:
             continue
         for obj in queryset_for_ecole(model, ecole).order_by('pk').iterator():
-            snapshot.append({
-                'id': None,
-                'model': label,
-                'model_label': label,
-                'object_uuid': str(obj.sync_uuid),
-                'operation': 'UPDATE',
-                'payload': {**serialize_instance(obj), 'sync_uuid': str(obj.sync_uuid)},
-                'device_id': None,
-                'device_name': 'Snapshot initial',
-                'date_creation': timezone.now().isoformat(),
-            })
+            snapshot.append(ligne_etat_courant(label, obj))
     return snapshot
 
 
@@ -258,21 +290,18 @@ def snapshot_page_for_ecole(ecole, cursor=None, page_size=500):
         except (signing.BadSignature, KeyError, TypeError) as exc:
             raise ValueError('Curseur de synchronisation invalide ou expiré.') from exc
     else:
+        from .sequence import attribuer_sequences
         index, last_pk = 0, 0
-        watermark = SyncChange.objects.filter(ecole=ecole).filter(Q(statut=SyncChange.STATUT_APPLIED) | Q(device__isnull=True, statut=SyncChange.STATUT_PENDING)).aggregate(n=Max('pk'))['n'] or 0
+        # Point de reprise exprimé en numéro de diffusion, comme le curseur du pull.
+        attribuer_sequences()
+        watermark = SyncChange.objects.filter(ecole=ecole).filter(Q(statut=SyncChange.STATUT_APPLIED) | Q(device__isnull=True, statut=SyncChange.STATUT_PENDING)).aggregate(n=Max('sequence'))['n'] or 0
     rows = []
     while index < len(SYNC_MODEL_LABELS):
         label = SYNC_MODEL_LABELS[index]
         model = get_model(label)
         objects = list(queryset_for_ecole(model, ecole).filter(pk__gt=last_pk).order_by('pk')[:page_size-len(rows)]) if model else []
         for obj in objects:
-            rows.append({
-                'id': None, 'model': label, 'model_label': label,
-                'object_uuid': str(obj.sync_uuid), 'operation': 'UPDATE',
-                'payload': {**serialize_instance(obj), 'sync_uuid': str(obj.sync_uuid)},
-                'device_id': None, 'device_name': 'Snapshot initial',
-                'date_creation': timezone.now().isoformat(),
-            })
+            rows.append(ligne_etat_courant(label, obj))
             last_pk = obj.pk
         if len(rows) == page_size:
             next_cursor = signing.dumps({
