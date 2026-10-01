@@ -69,6 +69,11 @@ class SyncChange(models.Model):
     erreur = models.TextField(blank=True)
     date_creation = models.DateTimeField(auto_now_add=True, db_index=True)
     date_application = models.DateTimeField(null=True, blank=True)
+    # Ordre de diffusion aux postes, attribué seulement une fois la ligne
+    # validée en base (voir synchronisation.sequence). L'id ne convient pas :
+    # il est réservé à l'insertion, et un gros lot reçu d'un poste revenu en
+    # ligne devient visible après des lignes d'id supérieur.
+    sequence = models.PositiveBigIntegerField(null=True, blank=True, unique=True)
 
     class Meta:
         verbose_name = 'Changement synchronise'
@@ -80,6 +85,11 @@ class SyncChange(models.Model):
 
     def __str__(self):
         return f'{self.operation} {self.model_label} ({self.statut})'
+
+
+class SyncSequence(models.Model):
+    """Compteur unique (pk=1) de l'ordre de diffusion ; sa ligne sert de verrou."""
+    valeur = models.PositiveBigIntegerField(default=0)
 
 
 class SyncOwnership(models.Model):

@@ -13,7 +13,7 @@ class SyncDeviceAdmin(admin.ModelAdmin):
 
 @admin.register(SyncChange)
 class SyncChangeAdmin(admin.ModelAdmin):
-    list_display = ('model_label', 'operation', 'statut', 'ecole', 'device', 'date_creation')
+    list_display = ('model_label', 'operation', 'statut', 'ecole', 'device', 'sequence', 'date_creation')
     list_filter = ('operation', 'statut', 'ecole', 'model_label')
     search_fields = ('model_label', 'object_uuid', 'device__nom', 'ecole__nom')
-    readonly_fields = ('date_creation', 'date_application')
+    readonly_fields = ('date_creation', 'date_application', 'sequence')

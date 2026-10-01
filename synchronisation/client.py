@@ -16,7 +16,10 @@ from requests.adapters import HTTPAdapter
 from .models import SyncChange
 
 
-PUSH_BATCH_SIZE = 300
+# Lots courts : un lot doit tenir largement dans PUSH_TIMEOUT, sinon le poste
+# croit a un echec et renvoie le meme lot a chaque cycle.
+PUSH_BATCH_SIZE = 100
+PUSH_TIMEOUT = 120
 PULL_PAGE_SIZE = 500
 MAX_CYCLES_PAR_APPEL = 25  # garde-fou anti-boucle-infinie
 GZIP_SEUIL_OCTETS = 512
@@ -121,6 +124,7 @@ def push_pending(server_url, device_id, token, ecole, batch_size=PUSH_BATCH_SIZE
                     for change in pending
                 ]
             },
+            timeout=PUSH_TIMEOUT,
         )
         if not response.get('ok'):
             raise SyncTransportError(response.get('error') or 'Push refuse.')
@@ -160,15 +164,78 @@ def push_pending(server_url, device_id, token, ecole, batch_size=PUSH_BATCH_SIZE
     return total
 
 
+# Marque, dans le payload, un changement recu du serveur qui n'a pas pu etre
+# applique : il est reessaye a chaque cycle et ne doit jamais etre renvoye.
+MARQUEUR_RECU = '_recu_du_serveur'
+REESSAIS_PAR_CYCLE = 200
+
+
 def rejouer_refuses(ecole):
     """Remet en file les changements refuses, une fois leur cause corrigee."""
-    return SyncChange.objects.filter(ecole=ecole, statut=SyncChange.STATUT_FAILED).update(
-        statut=SyncChange.STATUT_PENDING, erreur='',
+    return SyncChange.objects.filter(ecole=ecole, statut=SyncChange.STATUT_FAILED).exclude(
+        payload__has_key=MARQUEUR_RECU,
+    ).update(statut=SyncChange.STATUT_PENDING, erreur='')
+
+
+def _garder_pour_nouvel_essai(ecole, item, payload, exc):
+    from django.utils import timezone
+    SyncChange.objects.create(
+        ecole=ecole, model_label=item['model_label'],
+        object_uuid=item.get('object_uuid') or None,
+        operation=item['operation'], payload={**payload, MARQUEUR_RECU: True},
+        statut=SyncChange.STATUT_FAILED, erreur=str(exc)[:2000],
+        date_application=timezone.now(),
+    )
+    logger.warning(
+        '[Sync] Changement recu non applique, nouvel essai au prochain cycle : %s %s (%s) -> %s',
+        item.get('operation'), item.get('model_label'), item.get('object_uuid'), exc,
     )
 
 
+def reessayer_recus_en_echec(ecole, apply_change=None, limite=REESSAIS_PAR_CYCLE):
+    """Reapplique les changements recus mis de cote (parent arrive depuis, base
+    momentanement verrouillee...). Un changement remplace par un plus recent
+    du meme objet est abandonne. Retourne le nombre de changements rattrapes."""
+    from django.db import transaction
+    from django.utils import timezone
+    if apply_change is None:
+        from .engine import apply_sync_change
+        apply_change = apply_sync_change
+    reussis = 0
+    en_echec = list(
+        SyncChange.objects.filter(
+            ecole=ecole, statut=SyncChange.STATUT_FAILED, payload__has_key=MARQUEUR_RECU,
+        ).order_by('id')[:limite]
+    )
+    for change in en_echec:
+        if change.object_uuid and SyncChange.objects.filter(
+            ecole=ecole, statut=SyncChange.STATUT_APPLIED, model_label=change.model_label,
+            object_uuid=change.object_uuid, id__gt=change.id,
+        ).exists():
+            change.delete()
+            continue
+        try:
+            with transaction.atomic():
+                apply_change(change)
+            reussis += 1
+        except Exception as exc:
+            SyncChange.objects.filter(pk=change.pk).update(
+                statut=SyncChange.STATUT_FAILED, erreur=str(exc)[:2000],
+                date_application=timezone.now(),
+            )
+    if reussis:
+        print(f'[Sync] {reussis} changement(s) recu(s) rattrape(s).')
+    return reussis
+
+
 def pull_changes(server_url, device_id, token, ecole, since_id=None, initial=False, apply_change=None):
-    """Import paginé et reprenable ; un lot en échec ne fait jamais avancer le curseur."""
+    """Import paginé et reprenable.
+
+    Un changement qui ne s'applique pas est mis de côté pour un nouvel essai au
+    lieu de bloquer toute la file : avant, un seul changement en échec (parent
+    manquant, conflit) arrêtait définitivement la réception sur ce poste. Seul
+    un incident sur le lot entier (transport, base) laisse le curseur en place.
+    """
     from django.db import transaction
     from .models import SyncCheckpoint
     from .engine import build_change_instance
@@ -197,6 +264,15 @@ def pull_changes(server_url, device_id, token, ecole, since_id=None, initial=Fal
         if not isinstance(items, list):
             raise SyncTransportError('Lot de synchronisation invalide.')
         applied = 0
+        # Un changement serveur deja applique (lot recu deux fois, ou reemis par
+        # `sync_reemettre`) est ignore : une seule requete pour toute la page.
+        ids_serveur = [item.get('id') for item in items if item.get('id')]
+        deja_appliques = set(
+            SyncChange.objects.filter(
+                statut=SyncChange.STATUT_APPLIED,
+                payload__server_change_id__in=ids_serveur,
+            ).values_list('payload__server_change_id', flat=True)
+        ) if ids_serveur else set()
         try:
             with transaction.atomic():
                 if ecole is None:
@@ -209,20 +285,22 @@ def pull_changes(server_url, device_id, token, ecole, since_id=None, initial=Fal
                     )
                 for item in items:
                     server_change_id = item.get('id')
-                    if server_change_id and SyncChange.objects.filter(
-                        ecole=ecole, statut=SyncChange.STATUT_APPLIED,
-                        payload__server_change_id=server_change_id,
-                    ).exists():
+                    if server_change_id and server_change_id in deja_appliques:
                         continue
                     payload = item.get('payload') or {}
                     if server_change_id:
                         payload = {**payload, 'server_change_id': server_change_id}
-                    change = SyncChange.objects.create(
-                        ecole=ecole, model_label=item['model_label'],
-                        object_uuid=item.get('object_uuid') or None,
-                        operation=item['operation'], payload=payload,
-                    )
-                    apply_change(change)
+                    try:
+                        with transaction.atomic():
+                            change = SyncChange.objects.create(
+                                ecole=ecole, model_label=item['model_label'],
+                                object_uuid=item.get('object_uuid') or None,
+                                operation=item['operation'], payload=payload,
+                            )
+                            apply_change(change)
+                    except Exception as exc:
+                        _garder_pour_nouvel_essai(ecole, item, payload, exc)
+                        continue
                     applied += 1
                 if bootstrapping:
                     next_cursor = response.get('next_snapshot_cursor') or ''
@@ -243,4 +321,6 @@ def pull_changes(server_url, device_id, token, ecole, since_id=None, initial=Fal
             continue
         if not response.get('has_more', len(items) >= PULL_PAGE_SIZE):
             break
+    if ecole is not None:
+        total += reessayer_recus_en_echec(ecole, apply_change)
     return total

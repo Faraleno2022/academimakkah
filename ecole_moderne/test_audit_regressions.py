@@ -441,21 +441,27 @@ class AuditRegressions(TestCase):
         checkpoint.refresh_from_db()
         self.assertEqual(checkpoint.last_change_id,12)
 
-    def test_client_lot_echoue_sans_avancer_curseur(self):
+    def test_client_changement_en_echec_mis_de_cote_sans_bloquer_la_file(self):
+        # Avant : un seul changement inapplicable bloquait définitivement la réception.
         from uuid import uuid4
-        from synchronisation.client import pull_changes, SyncTransportError
+        from synchronisation.client import MARQUEUR_RECU, pull_changes, reessayer_recus_en_echec
         from synchronisation.models import SyncCheckpoint, SyncChange
         device_id=str(uuid4())
         checkpoint=SyncCheckpoint.objects.create(device_id=device_id,initial_complete=True,last_change_id=3)
-        response={'ok':True,'changes':[{'id':4,'model_label':'eleves.Eleve','object_uuid':str(self.eleve1.sync_uuid),'operation':'UPDATE','payload':{'nom':'Sans effet'}}],'latest_change_id':4}
+        response={'ok':True,'changes':[{'id':4,'model_label':'eleves.Eleve','object_uuid':str(self.eleve1.sync_uuid),'operation':'UPDATE','payload':{'nom':'Apres essai'}}],'latest_change_id':4,'has_more':False}
         with patch('synchronisation.client._get_json',return_value=response):
-            with self.assertRaises(SyncTransportError):
-                pull_changes('https://sync.invalid',device_id,'test',self.ecole1,apply_change=lambda change: (_ for _ in ()).throw(ValueError('Essai')))
+            pull_changes('https://sync.invalid',device_id,'test',self.ecole1,apply_change=lambda change: (_ for _ in ()).throw(ValueError('Essai')))
         checkpoint.refresh_from_db()
-        self.assertEqual(checkpoint.last_change_id,3)
-        self.assertFalse(SyncChange.objects.filter(payload__server_change_id=4).exists())
+        self.assertEqual(checkpoint.last_change_id,4)
+        echec=SyncChange.objects.get(payload__server_change_id=4)
+        self.assertEqual(echec.statut,SyncChange.STATUT_FAILED)
+        self.assertTrue(echec.payload[MARQUEUR_RECU])
         self.eleve1.refresh_from_db()
-        self.assertNotEqual(self.eleve1.nom,'Sans effet')
+        self.assertNotEqual(self.eleve1.nom,'Apres essai')
+        # Au cycle suivant, le changement mis de côté est appliqué.
+        self.assertEqual(reessayer_recus_en_echec(self.ecole1),1)
+        self.eleve1.refresh_from_db()
+        self.assertEqual(self.eleve1.nom.casefold(),'apres essai')
 
     def test_rapport_periode_ne_reprend_pas_autres_dates_ni_ecoles(self):
         from rapports.utils import collecter_donnees_periode
