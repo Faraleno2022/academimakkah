@@ -261,6 +261,19 @@ class ComptesPrincipauxTests(TestCase):
         self.assertContains(response, '(hover: hover) and (pointer: fine)')
         self.assertContains(response, 'aria-controls="navbarNav" aria-expanded="false"')
 
+    def test_navbar_menus_deroulants_utilisables_au_doigt_sur_ipad(self):
+        # Safari iPad n'envoyait pas le clic : Élèves, Bibliothèque et Transport
+        # ne s'ouvraient pas. Ils s'ouvrent désormais dès que le doigt se lève.
+        self.client.force_login(self.principal)
+        with self.settings(MIDDLEWARE=middleware_sans_licence()):
+            response = self.client.get(reverse('eleves:gestion_classes'))
+
+        self.assertContains(response, "addEventListener('touchend'")
+        self.assertContains(response, 'bootstrap.Dropdown.getOrCreateInstance(bouton).toggle()')
+        self.assertContains(response, "classList.toggle('ios-tactile', isIOS)")
+        self.assertContains(response, 'html.ios-tactile body')
+        self.assertNotContains(response, '-webkit-overflow-scrolling')
+
     def test_validation_nouvelle_ecole_active_toutes_les_nouvelles_fonctions(self):
         user = User.objects.create_user(
             username='nouvelle_direction',

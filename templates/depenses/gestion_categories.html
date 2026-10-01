@@ -20,6 +20,12 @@
     .category-card:hover .category-actions {
         opacity: 1;
     }
+    /* Au doigt (tablette), pas de survol : les actions restent visibles. */
+    @media (hover: none) {
+        .category-actions {
+            opacity: 1;
+        }
+    }
 </style>
 {% endblock %}
 
