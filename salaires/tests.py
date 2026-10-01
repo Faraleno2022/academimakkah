@@ -1413,3 +1413,72 @@ class ClasseurPaieTests(TestCase):
         self.assertEqual(montant_en_lettres(280000), 'Deux cent quatre-vingt mille francs guinéens')
         self.assertEqual(montant_en_lettres(71), 'Soixante et onze francs guinéens')
         self.assertEqual(formater_gnf(Decimal('20867500.00')), '20 867 500')
+
+    def test_fiche_enseignant_affiche_la_zone_des_primes(self):
+        maitre = self.creer_maitre()
+        response = self.client.get(reverse('salaires:detail_enseignant', args=[maitre.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="form-primes"')
+        self.assertContains(response, 'primes-par-periode')
+        self.assertEqual(
+            response.context['primes_par_periode'][str(self.periode.pk)]['statut'],
+            'nouveau',
+        )
+
+    def test_primes_depuis_la_fiche_creent_l_etat_du_mois(self):
+        maitre = self.creer_maitre()
+        response = self.client.post(
+            reverse('salaires:primes_enseignant', args=[maitre.pk]),
+            {
+                'action': 'periode', 'periode': self.periode.pk,
+                'prime_fonction': '250000', 'prime_performance': '100000',
+                'prime_exceptionnelle': '50000', 'motif': 'Prime de fin de trimestre',
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        etat = EtatSalaire.objects.get(enseignant=maitre, periode=self.periode)
+        self.assertEqual(etat.prime_performance, Decimal('100000.00'))
+        self.assertEqual(etat.prime_exceptionnelle, Decimal('50000.00'))
+        # Les primes du barème non saisies restent calculées.
+        self.assertEqual(etat.prime_anciennete, Decimal('20000.00'))
+        self.assertEqual(etat.primes, Decimal('447500.00'))
+        self.assertEqual(etat.salaire_net, Decimal('997500.00'))
+        self.assertIn('Prime de fin de trimestre', etat.observations)
+        self.assertFalse(etat.ajuste_manuellement)
+
+        # Un recalcul conserve les primes saisies.
+        calculer_etat_salaire_reel(maitre, self.periode, self.user)
+        etat.refresh_from_db()
+        self.assertEqual(etat.prime_performance, Decimal('100000.00'))
+
+    def test_prime_du_bareme_saisie_sur_la_fiche_est_conservee(self):
+        maitre = self.creer_maitre()
+        calculer_etat_salaire_reel(maitre, self.periode, self.user)
+        self.client.post(
+            reverse('salaires:primes_enseignant', args=[maitre.pk]),
+            {'action': 'periode', 'periode': self.periode.pk, 'prime_eloignement': '40000'},
+        )
+        calculer_etat_salaire_reel(maitre, self.periode, self.user)
+        etat = EtatSalaire.objects.get(enseignant=maitre, periode=self.periode)
+        self.assertEqual(etat.prime_eloignement, Decimal('40000.00'))
+
+    def test_primes_refusees_sur_un_etat_valide(self):
+        maitre = self.creer_maitre()
+        etat, _ = calculer_etat_salaire_reel(maitre, self.periode, self.user)
+        EtatSalaire.objects.filter(pk=etat.pk).update(valide=True)
+        self.client.post(
+            reverse('salaires:primes_enseignant', args=[maitre.pk]),
+            {'action': 'periode', 'periode': self.periode.pk, 'prime_performance': '90000'},
+        )
+        etat.refresh_from_db()
+        self.assertEqual(etat.prime_performance, Decimal('0'))
+
+    def test_prime_mensuelle_par_defaut_depuis_la_fiche(self):
+        maitre = self.creer_maitre()
+        response = self.client.post(
+            reverse('salaires:primes_enseignant', args=[maitre.pk]),
+            {'action': 'defaut', 'prime_mensuelle': '300000'},
+        )
+        self.assertEqual(response.status_code, 302)
+        maitre.refresh_from_db()
+        self.assertEqual(maitre.prime_mensuelle, Decimal('300000.00'))

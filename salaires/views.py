@@ -36,6 +36,7 @@ from .forms import (
     EtatSalaireAjustementForm,
     ParametresPeriodeForm,
     PresenceForm,
+    PrimesEnseignantForm,
 )
 from .documents_paie import (
     acomptes_pdf,
@@ -571,6 +572,7 @@ def detail_enseignant(request, enseignant_id):
     else:
         stats['salaire_moyen'] = 0
     
+    primes_form = PrimesEnseignantForm(enseignant=enseignant)
     context = {
         'enseignant': enseignant,
         'affectations_actuelles': affectations_actuelles,
@@ -578,9 +580,155 @@ def detail_enseignant(request, enseignant_id):
         'etats_salaire': etats_salaire,
         'avances_salaire': avances_salaire,
         'stats': stats,
+        'primes_form': primes_form,
+        'primes_par_periode': _primes_par_periode(
+            enseignant, primes_form.fields['periode'].queryset
+        ),
     }
-    
+
     return render(request, 'salaires/detail_enseignant.html', context)
+
+
+def _craie_calculee(enseignant, periode):
+    """La prime de craie d'un vacataire suit les heures de révision."""
+    return bool(enseignant.est_taux_horaire and periode.taux_heure_revision)
+
+
+def _primes_par_periode(enseignant, periodes):
+    """Primes actuelles de l'enseignant pour chaque période ouverte (pré-remplissage)."""
+    etats = {
+        etat.periode_id: etat
+        for etat in enseignant.etats_salaire.filter(periode__in=periodes)
+    }
+    donnees = {}
+    for periode in periodes:
+        etat = etats.get(periode.pk)
+        if etat is None:
+            valeurs = {champ: 0 for champ in EtatSalaire.CHAMPS_PRIMES}
+            valeurs['prime_fonction'] = float(enseignant.prime_mensuelle or 0)
+            statut = 'nouveau'
+        else:
+            valeurs = {
+                champ: float(getattr(etat, champ) or 0)
+                for champ in EtatSalaire.CHAMPS_PRIMES
+            }
+            statut = 'valide' if etat.valide else 'ouvert'
+        donnees[str(periode.pk)] = {
+            'primes': valeurs,
+            'statut': statut,
+            'craie_calculee': _craie_calculee(enseignant, periode),
+        }
+    return donnees
+
+
+@login_required
+@require_POST
+@require_school_object(model=Enseignant, pk_kwarg='enseignant_id', field_path='ecole')
+def primes_enseignant(request, enseignant_id):
+    """Enregistre la prime par défaut ou les primes d'une période depuis la fiche."""
+    ecole_user = _ecole_utilisateur(request)
+    qs = Enseignant.objects.all()
+    if not user_is_admin(request.user) and ecole_user is not None:
+        qs = qs.filter(ecole=ecole_user)
+    enseignant = get_object_or_404(qs, id=enseignant_id)
+    retour = reverse('salaires:detail_enseignant', args=[enseignant.id]) + '#primes'
+
+    if request.POST.get('action') == 'defaut':
+        try:
+            montant = Decimal(
+                (request.POST.get('prime_mensuelle') or '0').replace(' ', '').replace(',', '.')
+            )
+        except InvalidOperation:
+            montant = None
+        if montant is None or montant < 0:
+            messages.error(request, "La prime mensuelle doit être un montant positif.")
+            return redirect(retour)
+        enseignant.prime_mensuelle = arrondir_montant(montant)
+        enseignant.save()
+        messages.success(
+            request,
+            f"Prime de fonction par défaut de {enseignant.nom_complet} : "
+            f"{enseignant.prime_mensuelle:,.0f} GNF (reprise dans les prochains états).".replace(',', ' '),
+        )
+        return redirect(retour)
+
+    form = PrimesEnseignantForm(request.POST, enseignant=enseignant)
+    if not form.is_valid():
+        for champ, erreurs in form.errors.items():
+            libelle = form.fields[champ].label if champ in form.fields else ''
+            for erreur in erreurs:
+                messages.error(request, f"{libelle} : {erreur}" if libelle else erreur)
+        return redirect(retour)
+
+    periode = form.cleaned_data['periode']
+    try:
+        with transaction.atomic():
+            etat = (
+                EtatSalaire.objects.select_for_update()
+                .select_related('enseignant', 'periode')
+                .filter(enseignant=enseignant, periode=periode)
+                .first()
+            )
+            if etat is None:
+                if not enseignants_eligibles(periode).filter(pk=enseignant.pk).exists():
+                    messages.error(
+                        request,
+                        "Impossible de créer l'état de salaire : l'enseignant n'est pas "
+                        "actif ou n'était pas encore embauché sur cette période.",
+                    )
+                    return redirect(retour)
+                etat, _ = calculer_etat_salaire(enseignant, periode, request.user)
+
+            if etat.valide or etat.periode.cloturee:
+                messages.error(
+                    request,
+                    "L'état de cette période est validé ou clôturé : les primes ne "
+                    "peuvent plus être modifiées.",
+                )
+                return redirect(retour)
+
+            # Primes recalculées par le barème de la période : une saisie
+            # manuelle doit être conservée lors des prochains recalculs.
+            primes_bareme = {
+                'prime_anciennete': periode.taux_prime_anciennete,
+                'prime_eloignement': periode.taux_prime_eloignement,
+                'prime_craie': periode.taux_prime_craie,
+            }
+            modifiees = []
+            for champ in EtatSalaire.CHAMPS_PRIMES:
+                valeur = form.cleaned_data.get(champ)
+                if valeur is None:
+                    continue
+                if champ == 'prime_craie' and _craie_calculee(enseignant, periode):
+                    continue
+                valeur = arrondir_montant(valeur)
+                if valeur != (getattr(etat, champ) or Decimal('0')):
+                    setattr(etat, champ, valeur)
+                    modifiees.append(champ)
+                    if primes_bareme.get(champ) and not enseignant.est_taux_horaire:
+                        etat.ajuste_manuellement = True
+
+            motif = form.cleaned_data.get('motif', '').strip()
+            if motif:
+                etat.observations = (
+                    f"{etat.observations}\n{motif}" if etat.observations else motif
+                )
+            etat.save()
+    except ValidationError as exc:
+        for erreur in exc.messages:
+            messages.error(request, erreur)
+        return redirect(retour)
+
+    if modifiees or motif:
+        messages.success(
+            request,
+            f"Primes de {enseignant.nom_complet} enregistrées pour "
+            f"{periode.nom_periode} : total {etat.primes:,.0f} GNF, "
+            f"net {etat.salaire_net:,.0f} GNF.".replace(',', ' '),
+        )
+    else:
+        messages.info(request, "Aucune prime modifiée.")
+    return redirect(retour)
 
 
 def _reporter_erreurs_validation(form, exc):

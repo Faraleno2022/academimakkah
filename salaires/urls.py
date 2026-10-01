@@ -18,6 +18,7 @@ urlpatterns = [
     ),
     path('enseignants/ajouter/', views.ajouter_enseignant, name='ajouter_enseignant'),
     path('enseignants/<int:enseignant_id>/', views.detail_enseignant, name='detail_enseignant'),
+    path('enseignants/<int:enseignant_id>/primes/', views.primes_enseignant, name='primes_enseignant'),
     path('enseignants/<int:enseignant_id>/modifier/', views.modifier_enseignant, name='modifier_enseignant'),
     path('enseignants/<int:enseignant_id>/supprimer/', views.supprimer_enseignant, name='supprimer_enseignant'),
     # Affectations de classes
