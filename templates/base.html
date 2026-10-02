@@ -53,36 +53,40 @@
     <link href="{% static 'vendor/fontawesome/all.min.css' %}" rel="stylesheet">
 
     <script>
+    /* ES5 uniquement (var, function) : doit rester lisible par Safari iOS 9. */
     (function () {
-        const userAgent = navigator.userAgent || '';
-        const isIOS = /iPad|iPhone|iPod/i.test(userAgent)
+        var racine = document.documentElement;
+        var userAgent = navigator.userAgent || '';
+        var isIOS = /iPad|iPhone|iPod/i.test(userAgent)
             || (/Macintosh/i.test(userAgent) && navigator.maxTouchPoints > 1);
-        const isAndroid = /Android/i.test(userAgent);
+        var isAndroid = /Android/i.test(userAgent);
+
+        function marquer(classe, actif) {
+            if (actif) racine.classList.add(classe); else racine.classList.remove(classe);
+        }
+
         // iPad et iPhone : Safari a ses propres règles de clic au toucher (voir CSS).
-        document.documentElement.classList.toggle('ios-tactile', isIOS);
+        marquer('ios-tactile', isIOS);
 
         function updateNavigationMode() {
-            const narrowScreen = window.matchMedia('(max-width: 991.98px)').matches;
-            const touchTablet = window.matchMedia('(hover: none) and (pointer: coarse)').matches
+            var narrowScreen = window.matchMedia('(max-width: 991.98px)').matches;
+            var touchTablet = window.matchMedia('(hover: none) and (pointer: coarse)').matches
                 && window.innerWidth <= 1366;
-            document.documentElement.classList.toggle(
-                'compact-navigation',
-                narrowScreen || touchTablet || isIOS || isAndroid
-            );
+            marquer('compact-navigation', narrowScreen || touchTablet || isIOS || isAndroid);
         }
 
         updateNavigationMode();
-        window.addEventListener('resize', updateNavigationMode, { passive: true });
-        window.addEventListener('orientationchange', updateNavigationMode, { passive: true });
+        window.addEventListener('resize', updateNavigationMode, false);
+        window.addEventListener('orientationchange', updateNavigationMode, false);
 
         /* Exports PDF/Excel : sur tablette et téléphone, window.open(url, '_blank')
            est souvent bloqué ou ouvre un onglet vide sans lancer le fichier.
            On télécharge alors dans l'onglet courant : les exports sont servis en
            pièce jointe, la page reste affichée. */
         window.ouvrirExport = function (url) {
-            const cible = String(url);
-            if (!document.documentElement.classList.contains('compact-navigation')) {
-                const fenetre = window.open(cible, '_blank');
+            var cible = String(url);
+            if (!racine.classList.contains('compact-navigation')) {
+                var fenetre = window.open(cible, '_blank');
                 if (fenetre) return;
             }
             window.location.assign(cible);
@@ -317,6 +321,17 @@
                 cursor: pointer;
                 -webkit-tap-highlight-color: transparent;
             }
+        }
+
+        /* Bootstrap absent (anciens iPad) : le secours ouvre les menus sans
+           Popper ; on les place sous leur bouton. */
+        html.sans-bootstrap .dropdown-menu.show {
+            top: 100%;
+            left: 0;
+        }
+        html.sans-bootstrap .dropdown-menu-end.show {
+            right: 0;
+            left: auto;
         }
 
         /* Footer */
@@ -824,118 +839,290 @@
 
     <!-- Bootstrap local : indispensable au hamburger et aux menus déroulants. -->
     <script src="{% static 'vendor/bootstrap/bootstrap.bundle.min.js' %}"></script>
+    <!-- Barre de navigation et secours de Bootstrap.
+         Écrit en JavaScript ES5 uniquement (var, function, pas de let/const ni
+         de fonctions fléchées) : les anciens iPad (iOS 9 à 11.2) rejettent tout
+         Bootstrap 5, dont la syntaxe est trop récente pour leur Safari. Ce
+         script doit rester lisible par eux pour prendre le relais. -->
     <script>
-    /* Boutons de la barre (☰, Élèves, Bibliothèque, Transport, compte).
-       Sur iPad, Safari peut traiter le premier toucher comme un simple survol et
-       ne jamais envoyer le clic dont Bootstrap a besoin : le bouton ne réagit pas.
-       L'action part donc dès que le doigt se lève, sans clic simulé ensuite (il
-       rouvrirait ou refermerait aussitôt). Un doigt qui glisse fait défiler le
-       menu : il ne déclenche rien. */
-    function activerAuToucher(element, action) {
-        let depart = null;
-        element.addEventListener('touchstart', function (event) {
-            const doigt = event.touches[0];
-            depart = { x: doigt.clientX, y: doigt.clientY };
-        }, { passive: true });
-        element.addEventListener('touchcancel', function () { depart = null; });
-        element.addEventListener('touchend', function (event) {
-            if (!depart) return;
-            const doigt = event.changedTouches[0];
-            const glissement = Math.abs(doigt.clientX - depart.x) > 10
-                || Math.abs(doigt.clientY - depart.y) > 10;
-            depart = null;
-            if (glissement) return;
-            event.preventDefault();
-            action();
-        });
-    }
+    (function () {
+        var bs = window.bootstrap;
+        var avecBootstrap = !!(bs && bs.Dropdown && bs.Collapse && bs.Modal);
+        var racine = document.documentElement;
+        if (!avecBootstrap) racine.className += ' sans-bootstrap';
 
-    document.addEventListener('DOMContentLoaded', function () {
-        const toggler = document.querySelector('[data-bs-target="#navbarNav"]');
-        const menu = document.getElementById('navbarNav');
-        if (!toggler || !menu) return;
-        const avecBootstrap = !!(window.bootstrap && window.bootstrap.Collapse);
+        function chaque(liste, action) { Array.prototype.forEach.call(liste, action); }
 
-        function updateMenuState(isOpen) {
-            toggler.setAttribute('aria-expanded', String(isOpen));
-            toggler.setAttribute(
-                'aria-label',
-                isOpen ? 'Fermer le menu principal' : 'Ouvrir le menu principal'
-            );
-        }
-
-        function basculerMenu() {
-            if (avecBootstrap) {
-                // toggle: false, sinon la création de l'instance basculerait déjà le menu.
-                window.bootstrap.Collapse.getOrCreateInstance(menu, { toggle: false }).toggle();
-                return;
+        var correspond = Element.prototype.matches || Element.prototype.webkitMatchesSelector;
+        function plusProche(element, selecteur) {
+            while (element && element.nodeType === 1) {
+                if (correspond.call(element, selecteur)) return element;
+                element = element.parentElement;
             }
-            const isOpen = !menu.classList.contains('show');
-            menu.classList.toggle('show', isOpen);
-            updateMenuState(isOpen);
+            return null;
         }
 
-        menu.addEventListener('shown.bs.collapse', function () { updateMenuState(true); });
-        menu.addEventListener('hidden.bs.collapse', function () { updateMenuState(false); });
-
-        activerAuToucher(toggler, basculerMenu);
-
-        /* Secours sans dépendance : garde le bouton actif si Bootstrap ne peut pas
-           être initialisé (cache incomplet ou ressource statique momentanément absente). */
-        if (!avecBootstrap) {
-            toggler.addEventListener('click', basculerMenu);
-        }
-    });
-
-    /* Menus déroulants de la barre : ouverts au toucher (voir activerAuToucher),
-       un seul à la fois, et utilisables même si Bootstrap n'a pas pu être chargé. */
-    document.addEventListener('DOMContentLoaded', function () {
-        const nav = document.querySelector('.app-navbar');
-        if (!nav) return;
-        const boutons = Array.from(nav.querySelectorAll('[data-bs-toggle="dropdown"]'));
-        const avecBootstrap = !!(window.bootstrap && window.bootstrap.Dropdown);
-
-        function menuDe(bouton) { return bouton.nextElementSibling; }
-
-        function marquer(bouton, ouvert) {
-            menuDe(bouton).classList.toggle('show', ouvert);
-            bouton.classList.toggle('show', ouvert);
-            bouton.setAttribute('aria-expanded', String(ouvert));
+        function marquer(element, classe, actif) {
+            if (actif) element.classList.add(classe); else element.classList.remove(classe);
         }
 
-        function fermer(bouton) {
-            if (!menuDe(bouton).classList.contains('show')) return;
-            const instance = avecBootstrap && window.bootstrap.Dropdown.getInstance(bouton);
-            if (instance) instance.hide(); else marquer(bouton, false);
+        function selecteurCible(declencheur) {
+            var selecteur = declencheur.getAttribute('data-bs-target') || declencheur.getAttribute('href');
+            return selecteur && selecteur.length > 1 && selecteur.charAt(0) === '#' ? selecteur : null;
         }
 
-        function basculer(bouton) {
-            boutons.forEach(function (autre) { if (autre !== bouton) fermer(autre); });
-            if (avecBootstrap) {
-                window.bootstrap.Dropdown.getOrCreateInstance(bouton).toggle();
-            } else {
-                marquer(bouton, !menuDe(bouton).classList.contains('show'));
+        function cibles(declencheur) {
+            var selecteur = selecteurCible(declencheur);
+            if (!selecteur) return [];
+            try { return document.querySelectorAll(selecteur); } catch (erreur) { return []; }
+        }
+
+        function declencher(element, nom) {
+            var evenement;
+            try {
+                evenement = new CustomEvent(nom, { bubbles: true });
+            } catch (erreur) {
+                evenement = document.createEvent('CustomEvent');
+                evenement.initCustomEvent(nom, true, false, null);
             }
+            element.dispatchEvent(evenement);
         }
 
-        boutons.forEach(function (bouton) {
-            activerAuToucher(bouton, function () { basculer(bouton); });
-            if (!avecBootstrap) {
-                bouton.addEventListener('click', function (event) {
-                    event.preventDefault();
-                    basculer(bouton);
-                });
-            }
-        });
+        /* Sur iPad, Safari peut traiter le premier toucher comme un simple survol
+           et ne jamais envoyer le clic : l'action part dès que le doigt se lève,
+           sans clic simulé ensuite (il rouvrirait ou refermerait aussitôt). Un
+           doigt qui glisse fait défiler le menu : il ne déclenche rien. */
+        function activerAuToucher(element, action) {
+            var depart = null;
+            element.addEventListener('touchstart', function (evenement) {
+                var doigt = evenement.touches[0];
+                depart = { x: doigt.clientX, y: doigt.clientY };
+            }, false);
+            element.addEventListener('touchcancel', function () { depart = null; }, false);
+            element.addEventListener('touchend', function (evenement) {
+                if (!depart) return;
+                var doigt = evenement.changedTouches[0];
+                var glissement = Math.abs(doigt.clientX - depart.x) > 10
+                    || Math.abs(doigt.clientY - depart.y) > 10;
+                depart = null;
+                if (glissement) return;
+                evenement.preventDefault();
+                action();
+            }, false);
+        }
 
-        if (!avecBootstrap) {
-            document.addEventListener('click', function (event) {
-                boutons.forEach(function (bouton) {
-                    if (!bouton.parentElement.contains(event.target)) fermer(bouton);
-                });
+        /* ---- Menus déroulants ---- */
+        function menuDe(bouton) {
+            var suivant = bouton.nextElementSibling;
+            if (suivant && suivant.classList.contains('dropdown-menu')) return suivant;
+            return bouton.parentElement ? bouton.parentElement.querySelector('.dropdown-menu') : null;
+        }
+
+        function marquerMenu(bouton, ouvert) {
+            var menu = menuDe(bouton);
+            if (!menu) return;
+            marquer(menu, 'show', ouvert);
+            marquer(bouton, 'show', ouvert);
+            bouton.setAttribute('aria-expanded', ouvert ? 'true' : 'false');
+        }
+
+        function fermerMenus(sauf) {
+            chaque(document.querySelectorAll('[data-bs-toggle="dropdown"]'), function (bouton) {
+                var menu = menuDe(bouton);
+                if (bouton === sauf || !menu || !menu.classList.contains('show')) return;
+                var instance = avecBootstrap && bs.Dropdown.getInstance(bouton);
+                if (instance) instance.hide(); else marquerMenu(bouton, false);
             });
         }
-    });
+
+        function basculerMenu(bouton) {
+            fermerMenus(bouton);
+            if (avecBootstrap) {
+                bs.Dropdown.getOrCreateInstance(bouton).toggle();
+                return;
+            }
+            var menu = menuDe(bouton);
+            marquerMenu(bouton, !(menu && menu.classList.contains('show')));
+        }
+
+        /* ---- Sections dépliables (dont le menu ☰) ---- */
+        function marquerDeclencheurs(cible, ouvert) {
+            if (!cible.id) return;
+            chaque(document.querySelectorAll('[data-bs-toggle="collapse"]'), function (declencheur) {
+                if (selecteurCible(declencheur) !== '#' + cible.id) return;
+                marquer(declencheur, 'collapsed', !ouvert);
+                declencheur.setAttribute('aria-expanded', ouvert ? 'true' : 'false');
+                if (declencheur.classList.contains('navbar-toggler')) {
+                    declencheur.setAttribute('aria-label', ouvert ? 'Fermer le menu principal' : 'Ouvrir le menu principal');
+                }
+            });
+        }
+
+        function afficherSection(cible, ouvrir) {
+            if (ouvrir && cible.getAttribute('data-bs-parent')) {
+                var conteneur = document.querySelector(cible.getAttribute('data-bs-parent'));
+                if (conteneur) {
+                    chaque(conteneur.querySelectorAll('.collapse.show'), function (autre) {
+                        if (autre !== cible) afficherSection(autre, false);
+                    });
+                }
+            }
+            marquer(cible, 'show', ouvrir);
+            marquerDeclencheurs(cible, ouvrir);
+            declencher(cible, ouvrir ? 'shown.bs.collapse' : 'hidden.bs.collapse');
+        }
+
+        function basculerSections(declencheur) {
+            chaque(cibles(declencheur), function (cible) {
+                afficherSection(cible, !cible.classList.contains('show'));
+            });
+        }
+
+        /* ---- Fenêtres (modal) et panneaux latéraux (offcanvas) ---- */
+        var fonds = {};
+        function ouvrirCalque(calque, type) {
+            if (!calque || calque.classList.contains('show')) return;
+            if (type === 'modal') calque.style.display = 'block';
+            calque.classList.add('show');
+            calque.removeAttribute('aria-hidden');
+            calque.setAttribute('aria-modal', 'true');
+            document.body.classList.add(type === 'modal' ? 'modal-open' : 'offcanvas-open');
+            if (!fonds[type]) {
+                fonds[type] = document.createElement('div');
+                fonds[type].className = type + '-backdrop fade show';
+                fonds[type].addEventListener('click', function () {
+                    chaque(document.querySelectorAll('.' + type + '.show'), function (ouvert) {
+                        if (ouvert.getAttribute('data-bs-backdrop') !== 'static') fermerCalque(ouvert, type);
+                    });
+                }, false);
+                document.body.appendChild(fonds[type]);
+            }
+            declencher(calque, 'shown.bs.' + type);
+        }
+
+        function fermerCalque(calque, type) {
+            if (!calque || !calque.classList.contains('show')) return;
+            calque.classList.remove('show');
+            if (type === 'modal') calque.style.display = 'none';
+            calque.setAttribute('aria-hidden', 'true');
+            calque.removeAttribute('aria-modal');
+            if (!document.querySelector('.' + type + '.show')) {
+                document.body.classList.remove(type === 'modal' ? 'modal-open' : 'offcanvas-open');
+                if (fonds[type] && fonds[type].parentNode) fonds[type].parentNode.removeChild(fonds[type]);
+                fonds[type] = null;
+            }
+            declencher(calque, 'hidden.bs.' + type);
+        }
+
+        /* ---- Onglets ---- */
+        function activerOnglet(lien) {
+            var groupe = plusProche(lien, '.nav, .list-group');
+            if (groupe) {
+                chaque(groupe.querySelectorAll('[data-bs-toggle="tab"], [data-bs-toggle="pill"]'), function (autre) {
+                    marquer(autre, 'active', false);
+                    autre.setAttribute('aria-selected', 'false');
+                    chaque(cibles(autre), function (panneau) {
+                        marquer(panneau, 'active', false);
+                        marquer(panneau, 'show', false);
+                    });
+                });
+            }
+            marquer(lien, 'active', true);
+            lien.setAttribute('aria-selected', 'true');
+            chaque(cibles(lien), function (panneau) {
+                marquer(panneau, 'active', true);
+                marquer(panneau, 'show', true);
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            var toggler = document.querySelector('[data-bs-target="#navbarNav"]');
+            var menuPrincipal = document.getElementById('navbarNav');
+
+            if (toggler && menuPrincipal) {
+                if (avecBootstrap) {
+                    menuPrincipal.addEventListener('shown.bs.collapse', function () { marquerDeclencheurs(menuPrincipal, true); }, false);
+                    menuPrincipal.addEventListener('hidden.bs.collapse', function () { marquerDeclencheurs(menuPrincipal, false); }, false);
+                }
+                activerAuToucher(toggler, function () {
+                    if (avecBootstrap) {
+                        // toggle: false, sinon la création de l'instance basculerait déjà le menu.
+                        bs.Collapse.getOrCreateInstance(menuPrincipal, { toggle: false }).toggle();
+                    } else {
+                        basculerSections(toggler);
+                    }
+                });
+            }
+
+            chaque(document.querySelectorAll('.app-navbar [data-bs-toggle="dropdown"]'), function (bouton) {
+                activerAuToucher(bouton, function () { basculerMenu(bouton); });
+            });
+        }, false);
+
+        if (avecBootstrap) return;
+
+        /* ---- Bootstrap absent : les boutons de toutes les pages restent actifs ---- */
+        document.addEventListener('click', function (evenement) {
+            var declencheur = plusProche(evenement.target, '[data-bs-toggle], [data-bs-dismiss]');
+            if (declencheur) {
+                var bascule = declencheur.getAttribute('data-bs-toggle');
+                var fermeture = declencheur.getAttribute('data-bs-dismiss');
+                if (bascule === 'dropdown') {
+                    evenement.preventDefault();
+                    basculerMenu(declencheur);
+                    return;
+                }
+                if (bascule === 'collapse') {
+                    evenement.preventDefault();
+                    basculerSections(declencheur);
+                } else if (bascule === 'modal' || bascule === 'offcanvas') {
+                    evenement.preventDefault();
+                    chaque(cibles(declencheur), function (calque) { ouvrirCalque(calque, bascule); });
+                } else if (bascule === 'tab' || bascule === 'pill') {
+                    evenement.preventDefault();
+                    activerOnglet(declencheur);
+                } else if (fermeture === 'modal' || fermeture === 'offcanvas') {
+                    fermerCalque(plusProche(declencheur, '.' + fermeture), fermeture);
+                } else if (fermeture === 'alert') {
+                    var alerte = plusProche(declencheur, '.alert');
+                    if (alerte && alerte.parentNode) alerte.parentNode.removeChild(alerte);
+                }
+            }
+            if (!plusProche(evenement.target, '.dropdown-menu')) fermerMenus(null);
+            var calque = evenement.target;
+            if (calque.classList && calque.classList.contains('modal')
+                && calque.getAttribute('data-bs-backdrop') !== 'static') {
+                fermerCalque(calque, 'modal');
+            }
+        }, false);
+
+        /* Équivalent minimal de l'objet bootstrap pour les scripts des pages
+           (bootstrap.Modal.getOrCreateInstance(el).show(), etc.). */
+        function composant(ouvrir, fermer, estOuvert) {
+            function Instance(element) {
+                if (typeof element === 'string') element = document.querySelector(element);
+                return {
+                    show: function () { ouvrir(element); },
+                    hide: function () { fermer(element); },
+                    toggle: function () { if (estOuvert(element)) fermer(element); else ouvrir(element); },
+                    dispose: function () {}
+                };
+            }
+            Instance.getInstance = Instance;
+            Instance.getOrCreateInstance = Instance;
+            return Instance;
+        }
+        function estAffiche(element) { return !!(element && element.classList.contains('show')); }
+        window.bootstrap = {
+            secours: true,
+            Modal: composant(function (el) { ouvrirCalque(el, 'modal'); }, function (el) { fermerCalque(el, 'modal'); }, estAffiche),
+            Offcanvas: composant(function (el) { ouvrirCalque(el, 'offcanvas'); }, function (el) { fermerCalque(el, 'offcanvas'); }, estAffiche),
+            Collapse: composant(function (el) { afficherSection(el, true); }, function (el) { afficherSection(el, false); }, estAffiche),
+            Dropdown: composant(function (el) { fermerMenus(el); marquerMenu(el, true); }, function (el) { marquerMenu(el, false); },
+                                function (el) { return estAffiche(menuDe(el)); }),
+            Tab: composant(activerOnglet, function () {}, function () { return false; })
+        };
+    })();
     </script>
 
     <!-- Global phone normalization (+224) -->
