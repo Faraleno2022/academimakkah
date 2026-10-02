@@ -65,6 +65,7 @@
     .status-conge { background: #fff3cd; color: #856404; }
     .status-suspendu { background: #f8d7da; color: #721c24; }
     .status-demissionnaire { background: #f1f3f4; color: #5f6368; }
+    .status-inactif { background: #e2e3e5; color: #41464b; }
     
     .type-badge {
         padding: 0.3rem 0.6rem;
@@ -542,14 +543,30 @@
                     </a>
                     
                     {% if enseignant.statut == 'ACTIF' %}
-                    <button class="btn btn-outline-warning btn-action" onclick="changerStatut('CONGE')">
-                        <i class="fas fa-pause me-2"></i>Mettre en congé
-                    </button>
-                    {% elif enseignant.statut == 'CONGE' %}
-                    <button class="btn btn-outline-success btn-action" onclick="changerStatut('ACTIF')">
-                        <i class="fas fa-play me-2"></i>Réactiver
-                    </button>
+                    <form method="post" action="{% url 'salaires:changer_statut_enseignant' enseignant.id %}" class="d-inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="nouveau_statut" value="CONGE">
+                        <input type="hidden" name="retour" value="detail">
+                        <button type="submit" class="btn btn-outline-warning btn-action"
+                                onclick="return confirm('Mettre {{ enseignant.nom_complet|escapejs }} en congé ?');">
+                            <i class="fas fa-pause me-2"></i>Mettre en congé
+                        </button>
+                    </form>
+                    {% else %}
+                    <form method="post" action="{% url 'salaires:changer_statut_enseignant' enseignant.id %}" class="d-inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="nouveau_statut" value="ACTIF">
+                        <input type="hidden" name="retour" value="detail">
+                        <button type="submit" class="btn btn-outline-success btn-action"
+                                onclick="return confirm('Réactiver {{ enseignant.nom_complet|escapejs }} ? Son salaire sera de nouveau calculé.');">
+                            <i class="fas fa-play me-2"></i>Réactiver
+                        </button>
+                    </form>
                     {% endif %}
+
+                    <a href="{% url 'salaires:supprimer_enseignant' enseignant.id %}" class="btn btn-outline-danger btn-action">
+                        <i class="fas fa-trash-alt me-2"></i>Supprimer
+                    </a>
                 </div>
             </div>
         </div>
@@ -559,13 +576,6 @@
 
 {% block extra_js %}
 <script>
-function changerStatut(nouveauStatut) {
-    if (confirm(`Êtes-vous sûr de vouloir changer le statut de cet enseignant ?`)) {
-        // TODO: Implémenter la logique de changement de statut
-        alert('Fonctionnalité en développement');
-    }
-}
-
 // Zone primes : pré-remplit les montants de la période choisie
 document.addEventListener('DOMContentLoaded', function() {
     const form = document.getElementById('form-primes');

@@ -1482,3 +1482,91 @@ class ClasseurPaieTests(TestCase):
         self.assertEqual(response.status_code, 302)
         maitre.refresh_from_db()
         self.assertEqual(maitre.prime_mensuelle, Decimal('300000.00'))
+
+    def test_enseignant_jamais_paye_va_a_la_corbeille_et_se_restaure(self):
+        from datetime import time as heure
+        from administration.audit import restaurer_element
+        from administration.models import CorbeilleElement
+        from notes.models import ClasseNote, CreneauEmploiDuTemps
+
+        maitre = self.creer_maitre()
+        calculer_etat_salaire_reel(maitre, self.periode, self.user)  # brouillon non validé
+        classe_note = ClasseNote.objects.create(
+            ecole=self.ecole, nom='CE1', niveau='PRIMAIRE_3',
+            niveau_enseignement='PRIMAIRE', annee_scolaire='2025-2026',
+        )
+        creneau = CreneauEmploiDuTemps.objects.create(
+            classe=classe_note, jour='LUNDI', heure_debut=heure(8), heure_fin=heure(9),
+            enseignant=maitre,
+        )
+        url = reverse('salaires:supprimer_enseignant', args=[maitre.pk])
+        self.assertContains(self.client.get(url), 'Mettre à la corbeille')
+
+        response = self.client.post(url, {'action': 'corbeille', 'motif': 'Saisi en double'})
+        self.assertRedirects(response, reverse('salaires:liste_enseignants'))
+        self.assertFalse(Enseignant.objects.filter(pk=maitre.pk).exists())
+        entree = CorbeilleElement.objects.get(app_label='salaires', model_name='Enseignant')
+        self.assertEqual(entree.motif, 'Saisi en double')
+        self.assertEqual(entree.ecole_nom, self.ecole.nom)
+        self.assertIn('salaires.AffectationClasse', entree.donnees['relations'])
+        self.assertIn('salaires.EtatSalaire', entree.donnees['relations'])
+        creneau.refresh_from_db()
+        self.assertIsNone(creneau.enseignant)
+
+        restaure, _ = restaurer_element(entree, utilisateur=self.user)
+        self.assertEqual(restaure.nom, maitre.nom)
+        self.assertEqual(restaure.affectations.count(), 1)
+        self.assertEqual(restaure.etats_salaire.count(), 1)
+        creneau.refresh_from_db()
+        self.assertEqual(creneau.enseignant, restaure)
+
+    def test_enseignant_deja_paye_est_desactive_et_plus_calcule(self):
+        from salaires.models import StatutEnseignant
+        from salaires.services import enseignants_eligibles
+
+        maitre = self.creer_maitre()
+        etat, _ = calculer_etat_salaire_reel(maitre, self.periode, self.user)
+        EtatSalaire.objects.filter(pk=etat.pk).update(valide=True)
+        url = reverse('salaires:supprimer_enseignant', args=[maitre.pk])
+
+        page = self.client.get(url)
+        self.assertContains(page, 'Suppression impossible')
+        self.assertNotContains(page, 'value="corbeille"')
+
+        # Même en forçant la requête, la suppression est refusée.
+        self.client.post(url, {'action': 'corbeille'})
+        self.assertTrue(Enseignant.objects.filter(pk=maitre.pk).exists())
+
+        response = self.client.post(url, {'action': 'desactiver', 'motif': 'Fin de contrat'})
+        self.assertRedirects(response, reverse('salaires:detail_enseignant', args=[maitre.pk]))
+        maitre.refresh_from_db()
+        self.assertEqual(maitre.statut, StatutEnseignant.INACTIF)
+        self.assertTrue(EtatSalaire.objects.filter(pk=etat.pk).exists())
+
+        juin = PeriodeSalaire.objects.create(mois=6, annee=2026, ecole=self.ecole, cree_par=self.user)
+        self.assertNotIn(maitre, enseignants_eligibles(juin))
+
+        # Réactivation depuis la fiche : il est de nouveau payé.
+        response = self.client.post(
+            reverse('salaires:changer_statut_enseignant', args=[maitre.pk]),
+            {'nouveau_statut': 'ACTIF', 'retour': 'detail'},
+        )
+        self.assertRedirects(response, reverse('salaires:detail_enseignant', args=[maitre.pk]))
+        self.assertIn(maitre, enseignants_eligibles(juin))
+
+    def test_avance_versee_empeche_la_suppression(self):
+        maitre = self.creer_maitre()
+        AvanceSalaire.objects.create(
+            enseignant=maitre, periode=self.periode, montant=Decimal('50000'),
+            date_avance=date(2026, 5, 10), cree_par=self.user,
+        )
+        self.assertEqual(maitre.raisons_conservation(), ['1 avance(s) sur salaire versée(s)'])
+        self.client.post(reverse('salaires:supprimer_enseignant', args=[maitre.pk]), {'action': 'corbeille'})
+        self.assertTrue(Enseignant.objects.filter(pk=maitre.pk).exists())
+
+    def test_fiche_enseignant_propose_supprimer_et_conge(self):
+        maitre = self.creer_maitre()
+        page = self.client.get(reverse('salaires:detail_enseignant', args=[maitre.pk]))
+        self.assertContains(page, reverse('salaires:supprimer_enseignant', args=[maitre.pk]))
+        self.assertContains(page, 'name="nouveau_statut" value="CONGE"')
+        self.assertNotContains(page, 'Fonctionnalité en développement')

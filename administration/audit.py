@@ -203,6 +203,9 @@ RELATIONS_CORBEILLE = {
     'bus.AbonnementBus': [],
     'bus.AbonnementCantine': [],
     'eleves.Responsable': [],
+    # Seuls les enseignants jamais payés vont à la corbeille : leurs états de
+    # salaire sont donc de simples brouillons (voir raisons_conservation).
+    'salaires.Enseignant': ['affectations', 'presences', 'etats_salaire'],
 }
 
 
@@ -263,6 +266,13 @@ def construire_snapshot_objet(instance):
             )
         except Exception:
             donnees['echeancier'] = None
+
+    if label == 'salaires.Enseignant':
+        # Les créneaux d'emploi du temps perdent leur enseignant à la
+        # suppression (SET_NULL) : on les mémorise pour les lui rendre.
+        donnees['creneaux_ids'] = list(
+            instance.creneaux_edt.values_list('pk', flat=True)
+        )
 
     return donnees
 
@@ -376,6 +386,16 @@ def restaurer_element(entree, utilisateur=None, request=None):
                 objet.eleve_id,
                 objet.annee_scolaire,
             )
+
+        if entree.app_label == 'salaires' and entree.model_name == 'Enseignant':
+            # Créneaux restés sans enseignant depuis la suppression. Un save()
+            # par créneau (pas d'update()) pour que les postes synchronisés
+            # reçoivent aussi le rattachement.
+            for creneau in objet.creneaux_edt.model.objects.filter(
+                pk__in=donnees.get('creneaux_ids') or [], enseignant__isnull=True,
+            ):
+                creneau.enseignant = objet
+                creneau.save()
 
     if utilisateur is None and request is not None:
         utilisateur = getattr(request, 'user', None)

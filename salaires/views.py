@@ -25,7 +25,7 @@ from reportlab.lib.units import cm
 from .models import (
     Enseignant, AffectationClasse, AvanceSalaire, PeriodeSalaire,
     EtatSalaire, DetailHeuresClasse, GroupePaie, ModeCalculHoraire,
-    SourceHeuresSalaire, TypeEnseignant, PresenceEnseignant,
+    SourceHeuresSalaire, StatutEnseignant, TypeEnseignant, PresenceEnseignant,
     niveaux_classes_pour_type_enseignant,
 )
 from .forms import (
@@ -60,7 +60,7 @@ from .services import (
 )
 from eleves.models import Ecole, Classe
 from utilisateurs.utils import user_is_admin, user_school
-from utilisateurs.permissions import can_add_teachers
+from utilisateurs.permissions import can_add_teachers, permission_required
 from ecole_moderne.security_decorators import delete_permission_required, require_school_object
 
 # Importer les vues de présence
@@ -2166,7 +2166,7 @@ def changer_statut_enseignant(request, enseignant_id):
     if request.method == 'POST':
         nouveau_statut = request.POST.get('nouveau_statut')
         
-        if nouveau_statut in ['ACTIF', 'CONGE', 'SUSPENDU', 'DEMISSIONNAIRE']:
+        if nouveau_statut in StatutEnseignant.values:
             ancien_statut = enseignant.get_statut_display()
             enseignant.statut = nouveau_statut
             enseignant.save()
@@ -2180,7 +2180,9 @@ def changer_statut_enseignant(request, enseignant_id):
             messages.error(request, "Statut invalide.")
     else:
         messages.info(request, "Méthode non autorisée pour cette action.")
-    
+
+    if request.POST.get('retour') == 'detail':
+        return redirect('salaires:detail_enseignant', enseignant_id=enseignant.id)
     return redirect('salaires:liste_enseignants')
 
 
@@ -2338,143 +2340,93 @@ def classes_affectables_enseignant(request):
 
 
 @login_required
+@permission_required(
+    'peut_ajouter_enseignants',
+    "Vous n'êtes pas autorisé à supprimer ou désactiver des enseignants.",
+)
+@require_school_object(model=Enseignant, pk_kwarg='enseignant_id', field_path='ecole')
 def supprimer_enseignant(request, enseignant_id):
-    """Vue pour supprimer un enseignant avec ses états de salaire (avec code de vérification)"""
-    # Filtrer selon les permissions
-    qs = Enseignant.objects.all()
-    if not user_is_admin(request.user):
-        qs = qs.filter(ecole=user_school(request.user))
-    
-    try:
-        enseignant = qs.get(id=enseignant_id)
-    except Enseignant.DoesNotExist:
-        messages.error(request, f"L'enseignant avec l'ID {enseignant_id} n'existe pas ou a déjà été supprimé.")
-        return redirect('salaires:liste_enseignants')
-    
+    """Met un enseignant à la corbeille, ou le désactive s'il a déjà été payé.
+
+    - Jamais payé : l'enseignant part dans la corbeille avec ses affectations,
+      présences et brouillons d'états de salaire ; il reste restaurable.
+    - Déjà payé (état validé ou payé, avance versée) : la suppression ferait
+      disparaître une paie réelle. On le désactive : son historique est gardé
+      et son salaire n'est plus calculé les mois suivants.
+    """
+    from administration.audit import enregistrer_modification, mettre_en_corbeille
+    from django.db.models import ProtectedError
+
+    ecole_user = _ecole_utilisateur(request)
+    qs = Enseignant.objects.select_related('ecole')
+    if not user_is_admin(request.user) and ecole_user is not None:
+        qs = qs.filter(ecole=ecole_user)
+    enseignant = get_object_or_404(qs, id=enseignant_id)
     nom_complet = enseignant.nom_complet
-    
-    # Vérifier la permission de suppression définitive
-    peut_supprimer_definitivement = user_is_admin(request.user) or (
-        hasattr(request.user, 'profil') and 
-        request.user.profil.peut_supprimer_enseignants_definitivement
-    )
-    
-    # Compter les éléments associés
-    etats_salaire_count = enseignant.etats_salaire.count()
-    affectations_count = enseignant.affectations.count()
-    presences_count = enseignant.presences.count()
-    
+
     if request.method == 'POST':
-        # Vérifier le code de sécurité
-        code_verification = request.POST.get('code_verification', '').strip()
-        suppression_definitive = request.POST.get('suppression_definitive') == 'on'
-        
-        # Pour les admins, toujours activer la suppression définitive par défaut
-        if user_is_admin(request.user):
-            suppression_definitive = request.POST.get('suppression_definitive') != 'off'
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.info(f"Admin {request.user.username} - Suppression définitive enseignant: {suppression_definitive}")
-        
-        from django.conf import settings as django_settings
-        expected_code = django_settings.SECURITY_VERIFICATION_CODE
-        if not expected_code or code_verification != expected_code:
-            messages.error(request, "Code de vérification incorrect. Suppression annulée.")
-            return render(request, 'salaires/confirmer_suppression_enseignant.html', {
-                'enseignant': enseignant,
-                'etats_salaire_count': etats_salaire_count,
-                'affectations_count': affectations_count,
-                'presences_count': presences_count,
-                'peut_supprimer_definitivement': peut_supprimer_definitivement,
-                'titre_page': f'Supprimer {nom_complet}'
-            })
-        
-        # Vérifier la permission pour suppression définitive
-        if suppression_definitive and not peut_supprimer_definitivement:
-            messages.error(request, "Vous n'avez pas la permission de supprimer définitivement un enseignant.")
+        action = request.POST.get('action')
+        motif = (request.POST.get('motif') or '').strip()
+
+        if action == 'desactiver':
+            if enseignant.statut != StatutEnseignant.INACTIF:
+                ancien = enseignant.get_statut_display()
+                enseignant.statut = StatutEnseignant.INACTIF
+                enseignant.save()
+                enregistrer_modification(
+                    enseignant,
+                    {'statut': {'avant': ancien, 'apres': enseignant.get_statut_display()}},
+                    request=request,
+                    commentaire=motif or "Désactivation : salaire non calculé les mois suivants",
+                )
+            messages.success(
+                request,
+                f"{nom_complet} est désactivé : son historique de paie est conservé et "
+                "son salaire ne sera plus calculé les mois suivants. "
+                "Vous pouvez le réactiver depuis sa fiche.",
+            )
             return redirect('salaires:detail_enseignant', enseignant_id=enseignant.id)
-        
-        # Procéder à la suppression avec le code correct
-        from django.db import transaction
-        try:
-            with transaction.atomic():
-                if suppression_definitive and peut_supprimer_definitivement:
-                    # Suppression définitive pour les utilisateurs autorisés
-                    # Collecter les informations avant suppression
-                    etats_supprimes = []
-                    for etat in enseignant.etats_salaire.all():
-                        etats_supprimes.append(f"{etat.periode.nom_periode} - {etat.salaire_net} GNF")
-                    
-                    affectations_supprimees = []
-                    for affectation in enseignant.affectations.all():
-                        affectations_supprimees.append(f"{affectation.classe.nom} - {affectation.matiere or 'Toutes matières'}")
-                    
-                    # Créer l'entrée dans la corbeille avant suppression
-                    from administration.models import SystemLog
-                    SystemLog.objects.create(
-                        action='SUPPRESSION_DEFINITIVE_ENSEIGNANT',
-                        description=f"Suppression définitive de l'enseignant {nom_complet} avec {etats_salaire_count} état(s) de salaire, {affectations_count} affectation(s) et {presences_count} présence(s)",
-                        user=request.user,
-                        ip_address=request.META.get('REMOTE_ADDR', ''),
-                        details={
-                            'enseignant_id': enseignant.id,
-                            'nom_complet': nom_complet,
-                            'ecole': enseignant.ecole.nom,
-                            'type_enseignant': enseignant.type_enseignant,
-                            'salaire_fixe': str(enseignant.salaire_fixe) if enseignant.salaire_fixe else None,
-                            'taux_horaire': str(enseignant.taux_horaire) if enseignant.taux_horaire else None,
-                            'etats_supprimes': etats_supprimes,
-                            'affectations_supprimees': affectations_supprimees,
-                            'verification_code_used': True,
-                            'user_agent': request.META.get('HTTP_USER_AGENT', '')
-                        }
-                    )
-                    
-                    # Supprimer les états de salaire
-                    enseignant.etats_salaire.all().delete()
-                    
-                    # Supprimer les affectations
-                    enseignant.affectations.all().delete()
-                    
-                    # Supprimer les présences
-                    enseignant.presences.all().delete()
-                    
-                    # Supprimer l'enseignant définitivement
-                    enseignant.delete()
-                    
-                    total_elements = etats_salaire_count + affectations_count + presences_count
-                    messages.success(request, f"L'enseignant {nom_complet} et tous ses éléments associés ({total_elements} au total) ont été supprimés définitivement et sauvegardés dans la corbeille.")
-                else:
-                    # Soft delete - changer le statut au lieu de supprimer
-                    enseignant.statut = 'DEMISSIONNAIRE'
-                    enseignant.save()
-                    
-                    # Log de l'activité
-                    from utilisateurs.models import JournalActivite
-                    JournalActivite.objects.create(
-                        user=request.user,
-                        action='DESACTIVATION',
-                        type_objet='ENSEIGNANT',
-                        objet_id=enseignant.id,
-                        description=f"Désactivation de l'enseignant {nom_complet} (statut → Démissionnaire)",
-                        adresse_ip=request.META.get('REMOTE_ADDR', ''),
-                        user_agent=request.META.get('HTTP_USER_AGENT', '')
-                    )
-                    
-                    messages.success(request, f"L'enseignant {nom_complet} a été marqué comme démissionnaire (soft delete).")
-                    
-        except Exception as e:
-            messages.error(request, f"Erreur lors de la suppression: {e}")
-            return redirect('salaires:detail_enseignant', enseignant_id=enseignant.id)
-        
-        return redirect('salaires:liste_enseignants')
-    
-    # Afficher le formulaire de confirmation
+
+        if action == 'corbeille':
+            raisons = enseignant.raisons_conservation()
+            if raisons:
+                messages.error(
+                    request,
+                    f"{nom_complet} a déjà été payé ({', '.join(raisons)}) : il ne peut pas "
+                    "être supprimé. Désactivez-le pour arrêter le calcul de son salaire.",
+                )
+                return redirect('salaires:supprimer_enseignant', enseignant_id=enseignant.id)
+            try:
+                mettre_en_corbeille(
+                    enseignant,
+                    request=request,
+                    motif=motif or "Suppression depuis la gestion des salaires",
+                )
+            except ProtectedError:
+                messages.error(
+                    request,
+                    f"{nom_complet} est encore utilisé ailleurs dans l'application : "
+                    "désactivez-le plutôt.",
+                )
+                return redirect('salaires:supprimer_enseignant', enseignant_id=enseignant.id)
+            messages.success(
+                request,
+                f"{nom_complet} a été placé dans la corbeille. Vous pouvez le restaurer "
+                "depuis Administration › Corbeille des éléments.",
+            )
+            return redirect('salaires:liste_enseignants')
+
+        messages.error(request, "Action inconnue.")
+
+    raisons = enseignant.raisons_conservation()
     return render(request, 'salaires/confirmer_suppression_enseignant.html', {
         'enseignant': enseignant,
-        'etats_salaire_count': etats_salaire_count,
-        'affectations_count': affectations_count,
-        'presences_count': presences_count,
-        'peut_supprimer_definitivement': peut_supprimer_definitivement,
-        'titre_page': f'Supprimer {nom_complet}'
+        'raisons_conservation': raisons,
+        'peut_aller_en_corbeille': not raisons,
+        'deja_desactive': enseignant.statut == StatutEnseignant.INACTIF,
+        'affectations_count': enseignant.affectations.count(),
+        'presences_count': enseignant.presences.count(),
+        'brouillons_count': enseignant.etats_salaire.count(),
+        'creneaux_count': enseignant.creneaux_edt.count(),
+        'titre_page': f'Supprimer {nom_complet}',
     })
