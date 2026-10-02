@@ -1,4 +1,4 @@
 """Version publique de l'application Desktop MySchoolGN."""
 
-APP_VERSION = "1.3.8"
+APP_VERSION = "1.3.9"
 
