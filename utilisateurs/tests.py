@@ -269,12 +269,36 @@ class ComptesPrincipauxTests(TestCase):
             response = self.client.get(reverse('eleves:gestion_classes'))
 
         self.assertContains(response, "addEventListener('touchend'")
-        self.assertContains(response, 'activerAuToucher(toggler, basculerMenu)')
-        self.assertContains(response, 'Collapse.getOrCreateInstance(menu, { toggle: false }).toggle()')
-        self.assertContains(response, 'bootstrap.Dropdown.getOrCreateInstance(bouton).toggle()')
-        self.assertContains(response, "classList.toggle('ios-tactile', isIOS)")
+        self.assertContains(response, 'activerAuToucher(toggler, function ()')
+        self.assertContains(response, 'Collapse.getOrCreateInstance(menuPrincipal, { toggle: false }).toggle()')
+        self.assertContains(response, 'bs.Dropdown.getOrCreateInstance(bouton).toggle()')
+        self.assertContains(response, "marquer('ios-tactile', isIOS)")
         self.assertContains(response, 'html.ios-tactile body')
         self.assertNotContains(response, '-webkit-overflow-scrolling')
+
+    def test_navbar_reste_lisible_par_safari_ios_9(self):
+        # iOS 9 à 11.2 rejettent Bootstrap 5 (syntaxe trop récente) : le script
+        # de la barre prend le relais et doit donc rester en ES5. Un seul « let »
+        # ou une fonction fléchée et Safari ignore tout le script (☰ inactif).
+        import re
+
+        self.client.force_login(self.principal)
+        with self.settings(MIDDLEWARE=middleware_sans_licence()):
+            html = self.client.get(reverse('eleves:gestion_classes')).content.decode()
+
+        self.assertIn('window.bootstrap = {', html)
+        self.assertIn("racine.className += ' sans-bootstrap'", html)
+        scripts = [
+            bloc for bloc in re.findall(r'<script>(.*?)</script>', html, re.S)
+            if 'ES5 uniquement' in bloc or 'activerAuToucher' in bloc
+        ]
+        self.assertEqual(len(scripts), 2)
+        for bloc in scripts:
+            code = re.sub(r'/\*.*?\*/', '', bloc, flags=re.S)
+            code = re.sub(r'//[^\n]*', '', code)
+            for interdit in (r'\blet\s', r'\bconst\s', r'=>', r'`', r'\.\.\.',
+                             r'querySelectorAll\([^)]*\)\.forEach', r'classList\.toggle\([^,)]+,'):
+                self.assertNotRegex(code, interdit)
 
     def test_validation_nouvelle_ecole_active_toutes_les_nouvelles_fonctions(self):
         user = User.objects.create_user(
