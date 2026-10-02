@@ -2550,6 +2550,37 @@ def supprimer_paiement(request, paiement_id: int):
     })
 
 
+def _classes_pour_paiement(eleves):
+    """Élèves payables regroupés par classe, pour le choix Classe puis Élève.
+
+    ``eleves`` est déjà limité à l'école de l'utilisateur (PaiementForm) ;
+    le nom de l'école n'est ajouté que si plusieurs écoles sont visibles.
+    """
+    classes = {}
+    ecoles = set()
+    for e in eleves.order_by('classe__ecole__nom', 'classe__nom', 'nom', 'prenom'):
+        if not e.classe_id:
+            continue
+        ecoles.add(e.classe.ecole_id)
+        classe = classes.setdefault(e.classe_id, {
+            'id': e.classe_id,
+            'nom': e.classe.nom,
+            'ecole': getattr(e.classe.ecole, 'nom', ''),
+            'eleves': [],
+        })
+        classe['eleves'].append({
+            'id': e.id,
+            'matricule': e.matricule,
+            'nom': f"{e.nom} {e.prenom}".strip(),
+        })
+    plusieurs_ecoles = len(ecoles) > 1
+    for classe in classes.values():
+        classe['libelle'] = (
+            f"{classe['ecole']} — {classe['nom']}" if plusieurs_ecoles else classe['nom']
+        )
+    return list(classes.values())
+
+
 @login_required
 def ajouter_paiement(request, eleve_id:int=None):
     """Créer un paiement.
@@ -2574,7 +2605,7 @@ def ajouter_paiement(request, eleve_id:int=None):
             request.session.modified = True
 
     if request.method == 'POST':
-        form = PaiementForm(request.POST)
+        form = PaiementForm(request.POST, user=request.user)
         if form.is_valid():
             # Pré-valider la cohérence métier avant d'enregistrer
             paiement: Paiement = form.save(commit=False)
@@ -2615,6 +2646,7 @@ def ajouter_paiement(request, eleve_id:int=None):
                     'action': action,
                     'form': form,
                     'eleve': eleve,
+                    'classes_paiement': [] if eleve else _classes_pour_paiement(form.fields['eleve'].queryset),
                 })
 
             # 1) Validation du montant saisi vs montant du type de paiement
@@ -3092,6 +3124,7 @@ def ajouter_paiement(request, eleve_id:int=None):
                     'action': action,
                     'form': form,
                     'eleve': eleve,
+                    'classes_paiement': [] if eleve else _classes_pour_paiement(form.fields['eleve'].queryset),
                 })
 
             # Si tout est cohérent, on peut enregistrer
@@ -3132,7 +3165,7 @@ def ajouter_paiement(request, eleve_id:int=None):
         else:
             messages.error(request, "Veuillez corriger les erreurs du formulaire.")
     else:
-        form = PaiementForm(initial=initial)
+        form = PaiementForm(initial=initial, user=request.user)
         # Si l'élève est imposé, fixer la valeur initiale proprement
         if eleve:
             form.fields['eleve'].initial = eleve
@@ -3142,6 +3175,7 @@ def ajouter_paiement(request, eleve_id:int=None):
         'action': action,
         'form': form,
         'eleve': eleve,
+        'classes_paiement': [] if eleve else _classes_pour_paiement(form.fields['eleve'].queryset),
     }
     return render(request, 'paiements/form_paiement.html', context)
 
@@ -5048,16 +5082,27 @@ def ajax_eleve_info(request):
     Attend un paramètre `matricule` (GET). Utilisé par `templates/paiements/form_paiement.html`.
     """
     matricule = request.GET.get('matricule') or request.POST.get('matricule')
-    if not matricule:
+    # Le choix Classe → Élève envoie l'identifiant : un matricule peut exister
+    # dans deux écoles pour un superadmin qui les voit toutes.
+    eleve_id = request.GET.get('eleve_id') or request.POST.get('eleve_id')
+    if not matricule and not eleve_id:
         return JsonResponse({'success': False, 'error': 'Matricule requis.'}, status=400)
 
     try:
         eleve_qs = Eleve.objects.select_related('classe', 'classe__ecole')
         # Sécurité: restreindre aux élèves de l'école de l'utilisateur
         eleve_qs = filter_by_user_school(eleve_qs, request.user, 'classe__ecole')
-        eleve = eleve_qs.get(matricule__iexact=matricule)
-    except Eleve.DoesNotExist:
+        if eleve_id:
+            eleve = eleve_qs.get(pk=int(eleve_id))
+        else:
+            eleve = eleve_qs.get(matricule__iexact=matricule)
+    except (Eleve.DoesNotExist, ValueError):
         return JsonResponse({'success': False, 'error': 'Élève introuvable.'}, status=404)
+    except Eleve.MultipleObjectsReturned:
+        return JsonResponse({
+            'success': False,
+            'error': "Plusieurs élèves portent ce matricule : choisissez la classe puis l'élève.",
+        }, status=409)
 
     # Construire la réponse
     # Sécuriser l'accès à l'URL de la photo (FieldFile.url peut lever une exception si vide)

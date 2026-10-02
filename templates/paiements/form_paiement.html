@@ -215,6 +215,35 @@
                     
                     <div class="row">
                         {% if not eleve %}
+                        {% if classes_paiement %}
+                        <!-- Choix guidé : la classe, puis l'élève de cette classe -->
+                        <div class="col-12" id="choixClasseEleve">
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="classeChoix" class="form-label">
+                                        <i class="fas fa-school me-1"></i>Classe <span class="required-field">*</span>
+                                    </label>
+                                    <select id="classeChoix" class="form-select">
+                                        <option value="">— Choisir la classe —</option>
+                                        {% for classe in classes_paiement %}
+                                        <option value="{{ classe.id }}">{{ classe.libelle }} ({{ classe.eleves|length }} élève{{ classe.eleves|length|pluralize }})</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="eleveChoix" class="form-label">
+                                        <i class="fas fa-user-graduate me-1"></i>Élève <span class="required-field">*</span>
+                                    </label>
+                                    <select id="eleveChoix" class="form-select" disabled>
+                                        <option value="">— Choisir d'abord la classe —</option>
+                                    </select>
+                                    <div id="eleveChoixError" class="text-danger small" style="display:none;"></div>
+                                </div>
+                            </div>
+                            <p class="small text-muted mb-2">Ou retrouvez l'élève par son matricule ou son nom :</p>
+                        </div>
+                        {{ classes_paiement|json_script:"classes-paiement" }}
+                        {% endif %}
                         <!-- Recherche par matricule -->
                         <div class="col-md-6 mb-3">
                             <label for="matriculeInput" class="form-label">
@@ -248,7 +277,12 @@
                         <!-- Informations de l'élève chargées -->
                         <div class="col-md-12 mb-3" id="eleveInfoSection" style="display:none;">
                             <div class="eleve-info">
-                                <h6><i class="fas fa-user me-2"></i>Élève sélectionné :</h6>
+                                <h6 class="d-flex justify-content-between align-items-center">
+                                    <span><i class="fas fa-user me-2"></i>Élève sélectionné :</span>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary" id="changerEleveBtn">
+                                        <i class="fas fa-edit"></i> Changer d'élève
+                                    </button>
+                                </h6>
                                 <div class="row">
                                     <div class="col-md-8">
                                         <p class="mb-1" id="eleveNomPrenom"><strong></strong></p>
@@ -271,28 +305,23 @@
                                 <div id="echeancierResume" class="mt-3" style="display:none;">
                                     <h6><i class="fas fa-money-bill-wave me-2"></i>Situation financière :</h6>
                                     <div class="row text-center">
-                                        <div class="col-md-3">
+                                        <div class="col-md-4">
                                             <div class="bg-light p-2 rounded">
                                                 <small class="text-muted">Total dû</small><br>
                                                 <strong id="totalDu">0 GNF</strong>
                                             </div>
                                         </div>
-                                        <div class="col-md-3">
+                                        <div class="col-md-4">
                                             <div class="bg-light p-2 rounded">
                                                 <small class="text-muted">Déjà payé</small><br>
                                                 <strong class="text-success" id="totalPaye">0 GNF</strong>
                                             </div>
                                         </div>
-                                        <div class="col-md-3">
+                                        <div class="col-md-4">
                                             <div class="bg-light p-2 rounded">
                                                 <small class="text-muted">Reste à payer</small><br>
                                                 <strong class="text-danger" id="resteAPayer">0 GNF</strong>
                                             </div>
-                                        </div>
-                                        <div class="col-md-3">
-                                            <button type="button" class="btn btn-sm btn-outline-secondary" id="changerEleveBtn">
-                                                <i class="fas fa-edit"></i> Changer
-                                            </button>
                                         </div>
                                     </div>
                                 </div>
@@ -1455,6 +1484,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Masquer les champs de recherche
         matriculeInput.parentElement.parentElement.style.display = 'none';
         eleveInputInit.parentElement.style.display = 'none';
+        if (choixClasseEleve) choixClasseEleve.style.display = 'none';
         
         // Effacer les erreurs
         matriculeError.style.display = 'none';
@@ -1478,6 +1508,67 @@ document.addEventListener('DOMContentLoaded', function() {
         matriculeInput.value = '';
         eleveInputInit.value = '';
         matriculeError.style.display = 'none';
+        if (choixClasseEleve) {
+            choixClasseEleve.style.display = 'block';
+            eleveChoix.value = '';
+        }
+    }
+
+    // Choix guidé : la classe, puis l'élève de cette classe
+    const choixClasseEleve = document.getElementById('choixClasseEleve');
+    const classeChoix = document.getElementById('classeChoix');
+    const eleveChoix = document.getElementById('eleveChoix');
+    const eleveChoixError = document.getElementById('eleveChoixError');
+    const sourceClasses = document.getElementById('classes-paiement');
+    const classesPaiement = sourceClasses ? JSON.parse(sourceClasses.textContent) : [];
+
+    function remplirElevesDeLaClasse(classeId) {
+        const classe = classesPaiement.find(c => String(c.id) === String(classeId));
+        eleveChoix.innerHTML = '';
+        const invite = document.createElement('option');
+        invite.value = '';
+        invite.textContent = classe ? "— Choisir l'élève —" : "— Choisir d'abord la classe —";
+        eleveChoix.appendChild(invite);
+        eleveChoixError.style.display = 'none';
+        if (!classe) {
+            eleveChoix.disabled = true;
+            return;
+        }
+        classe.eleves.forEach(e => {
+            const option = document.createElement('option');
+            option.value = e.id;
+            option.textContent = `${e.nom} (${e.matricule})`;
+            eleveChoix.appendChild(option);
+        });
+        eleveChoix.disabled = false;
+        eleveChoix.focus();
+    }
+
+    function chargerEleveChoisi(eleveId) {
+        eleveChoix.disabled = true;
+        eleveChoixError.style.display = 'none';
+        fetch(`{% url 'paiements:ajax_eleve_info' %}?eleve_id=${encodeURIComponent(eleveId)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    afficherEleveInfo(data);
+                } else {
+                    eleveChoixError.textContent = data.error || 'Élève introuvable.';
+                    eleveChoixError.style.display = 'block';
+                }
+            })
+            .catch(error => {
+                eleveChoixError.textContent = 'Erreur de connexion : ' + error.message;
+                eleveChoixError.style.display = 'block';
+            })
+            .finally(() => { eleveChoix.disabled = false; });
+    }
+
+    if (classeChoix && eleveChoix) {
+        classeChoix.addEventListener('change', () => remplirElevesDeLaClasse(classeChoix.value));
+        eleveChoix.addEventListener('change', () => {
+            if (eleveChoix.value) chargerEleveChoisi(eleveChoix.value);
+        });
     }
     
     // Recherche par matricule
