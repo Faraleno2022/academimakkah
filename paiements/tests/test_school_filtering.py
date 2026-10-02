@@ -357,3 +357,49 @@ class SchoolFilteringTests(TestCase):
             [item.pk for item in response.context["remises_appliquees"]],
             [remise_ecole1.pk],
         )
+
+    def test_ajout_paiement_propose_classe_puis_eleve_de_son_ecole(self):
+        self.login1()
+        response = self.client.get(reverse("paiements:ajouter_paiement"))
+        self.assertEqual(response.status_code, 200)
+        classes = response.context["classes_paiement"]
+        self.assertEqual([c["id"] for c in classes], [self.classe1.id])
+        self.assertEqual(classes[0]["libelle"], self.classe1.nom)
+        self.eleve1.refresh_from_db()  # nom passé en majuscules à l'enregistrement
+        self.assertEqual(
+            classes[0]["eleves"],
+            [{"id": self.eleve1.id, "matricule": "A-001",
+              "nom": f"{self.eleve1.nom} {self.eleve1.prenom}"}],
+        )
+        self.assertContains(response, 'id="classeChoix"')
+        self.assertContains(response, 'id="eleveChoix"')
+        # La saisie assistée ne révèle plus les élèves d'une autre école.
+        self.assertNotContains(response, self.eleve2.matricule)
+
+    def test_ajout_paiement_refuse_un_eleve_d_une_autre_ecole(self):
+        self.login1()
+        response = self.client.post(reverse("paiements:ajouter_paiement"), {
+            "eleve": self.eleve2.id,
+            "type_paiement": self.type_insc.id,
+            "mode_paiement": self.mode_espece.id,
+            "montant": "10000",
+            "date_paiement": "2024-09-15",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("eleve", response.context["form"].errors)
+        self.assertFalse(Paiement.objects.filter(eleve=self.eleve2, montant=10000).exists())
+
+    def test_ajout_paiement_exige_une_connexion(self):
+        self.client.logout()
+        response = self.client.get(reverse("paiements:ajouter_paiement"))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("login", response["Location"])
+
+    def test_ajax_eleve_info_par_identifiant(self):
+        self.login1()
+        url = reverse("paiements:ajax_eleve_info")
+        data = self.client.get(url, {"eleve_id": self.eleve1.id}).json()
+        self.assertTrue(data["success"])
+        self.assertEqual(data["eleve"]["matricule"], "A-001")
+        self.assertEqual(self.client.get(url, {"eleve_id": self.eleve2.id}).status_code, 404)
+        self.assertEqual(self.client.get(url, {"eleve_id": "abc"}).status_code, 404)

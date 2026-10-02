@@ -127,12 +127,18 @@ class PaiementForm(forms.ModelForm):
             }),
         }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, user=None, **kwargs):
         super().__init__(*args, **kwargs)
         # Ordonner les élèves par nom
-        self.fields['eleve'].queryset = Eleve.objects.select_related(
+        eleves = Eleve.objects.select_related(
             'classe', 'classe__ecole'
         ).filter(statut__in=['ACTIF', 'ATTENTE_PAIEMENT']).order_by('nom', 'prenom')
+        if user is not None:
+            # La liste de choix (et la saisie assistée) ne montre que les
+            # élèves de l'école de l'utilisateur ; le superadmin voit tout.
+            from utilisateurs.utils import filter_by_user_school
+            eleves = filter_by_user_school(eleves, user, 'classe__ecole')
+        self.fields['eleve'].queryset = eleves
         
         # Filtrer les types et modes actifs
         self.fields['type_paiement'].queryset = TypePaiement.objects.filter(actif=True)
