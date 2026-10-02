@@ -276,6 +276,7 @@
                     <option value="CONGE" {% if request.GET.statut == "CONGE" %}selected{% endif %}>En congé</option>
                     <option value="SUSPENDU" {% if request.GET.statut == "SUSPENDU" %}selected{% endif %}>Suspendu</option>
                     <option value="DEMISSIONNAIRE" {% if request.GET.statut == "DEMISSIONNAIRE" %}selected{% endif %}>Démissionnaire</option>
+                    <option value="INACTIF" {% if request.GET.statut == "INACTIF" %}selected{% endif %}>Désactivé</option>
                 </select>
             </div>
             <div class="col-md-3">
@@ -411,11 +412,11 @@
                         <i class="fas fa-file-invoice-dollar"></i> Salaires
                     </a>
                     
-                    <button class="btn btn-danger btn-action" 
-                            onclick="confirmerSuppression({{ enseignant.id }}, '{{ enseignant.nom_complet|escapejs }}')"
-                            title="Supprimer l'enseignant">
+                    <a href="{% url 'salaires:supprimer_enseignant' enseignant.id %}"
+                       class="btn btn-danger btn-action"
+                       title="Mettre à la corbeille, ou désactiver s'il a déjà été payé">
                         <i class="fas fa-trash"></i> Supprimer
-                    </button>
+                    </a>
                     
                     {% if enseignant.statut == 'ACTIF' %}
                     <button class="btn btn-outline-warning btn-action" 
@@ -570,28 +571,6 @@
             });
         });
     });
-
-    function confirmerSuppression(enseignantId, nomComplet) {
-        if (confirm(`⚠️ ATTENTION ⚠️\n\nÊtes-vous sûr de vouloir supprimer l'enseignant "${nomComplet}" ?\n\nCette action est irréversible. Si l'enseignant a des états de salaire ou des affectations, la suppression sera refusée.`)) {
-            // Créer un formulaire pour envoyer la requête POST
-            const form = document.createElement('form');
-            form.method = 'POST';
-            form.action = `/salaires/enseignants/${enseignantId}/supprimer/`;
-            
-            // Ajouter le token CSRF
-            const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]');
-            if (csrfToken) {
-                const csrfInput = document.createElement('input');
-                csrfInput.type = 'hidden';
-                csrfInput.name = 'csrfmiddlewaretoken';
-                csrfInput.value = csrfToken.value;
-                form.appendChild(csrfInput);
-            }
-            
-            document.body.appendChild(form);
-            form.submit();
-        }
-    }
 
     function changerStatut(enseignantId, nouveauStatut) {
         const action = nouveauStatut === 'ACTIF' ? 'réactiver' : 'mettre en congé';

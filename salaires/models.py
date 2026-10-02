@@ -30,6 +30,9 @@ class StatutEnseignant(models.TextChoices):
     CONGE = 'CONGE', 'En congé'
     SUSPENDU = 'SUSPENDU', 'Suspendu'
     DEMISSIONNAIRE = 'DEMISSIONNAIRE', 'Démissionnaire'
+    # Enseignant déjà payé qu'on ne peut plus supprimer : conservé pour
+    # l'historique, mais exclu du calcul des salaires suivants.
+    INACTIF = 'INACTIF', 'Désactivé'
 
 
 class ModeCalculHoraire(models.TextChoices):
@@ -235,6 +238,27 @@ class Enseignant(SyncTrackedModel):
     def groupe_paie(self):
         """Rubrique de l'état de salaire : direction, primaire, secondaire, appui."""
         return GROUPE_PAIE_PAR_TYPE.get(self.type_enseignant, GroupePaie.APPUI)
+
+    def raisons_conservation(self):
+        """Ce qui interdit la mise à la corbeille : l'enseignant a déjà été payé.
+
+        Retourne une liste de libellés (vide si la suppression est possible).
+        Supprimer ces données ferait disparaître une paie réellement versée ; on
+        désactive alors l'enseignant au lieu de le supprimer.
+        """
+        raisons = []
+        etats = self.etats_salaire.filter(models.Q(valide=True) | models.Q(paye=True)).count()
+        if etats:
+            raisons.append(f"{etats} état(s) de salaire validé(s) ou payé(s)")
+        avances = self.avances_salaire.count()
+        if avances:
+            raisons.append(f"{avances} avance(s) sur salaire versée(s)")
+        # Accès par lien pour la saisie des notes / présences : l'historique de
+        # saisie doit rester rattaché à l'enseignant (relation protégée).
+        acces = self.acces_notes.count()
+        if acces:
+            raisons.append(f"{acces} accès enseignant (notes ou présences)")
+        return raisons
 
     def anciennete_annees(self, annee_reference):
         """Années d'ancienneté comptées comme sur l'état : année - année d'embauche."""
