@@ -22,10 +22,18 @@
 <form method="get" class="row g-2 mb-3">
   {% if periode %}<input type="hidden" name="periode" value="{{ periode }}">{% endif %}
   <div class="col-md-4">
-    <input type="text" name="q" class="form-control" placeholder="Rechercher (élève, zone, arrêt, contact)" value="{{ q }}">
+    <input type="text" name="q" class="form-control" placeholder="Rechercher (élève, zone, itinéraire, arrêt, contact)" value="{{ q }}">
   </div>
   <div class="col-md-2">
     <button class="btn btn-primary w-100" type="submit"><i class="fas fa-search me-1"></i>Rechercher</button>
+  </div>
+  <div class="col-md-6 text-md-end">
+    <div class="btn-group" role="group" aria-label="Liste de contrôle du chauffeur">
+      <span class="btn btn-outline-secondary disabled"><i class="fas fa-clipboard-check me-1"></i>Liste chauffeur</span>
+      <a class="btn btn-outline-danger" href="{% url 'bus:export_controle' 'pdf' %}?q={{ q|urlencode }}&filtre={{ filtre|urlencode }}&periode={{ periode|urlencode }}" target="_blank" title="Liste de contrôle du chauffeur (PDF) : itinéraire, élève, contact"><i class="fas fa-file-pdf me-1"></i>PDF</a>
+      <a class="btn btn-outline-success" href="{% url 'bus:export_controle' 'excel' %}?q={{ q|urlencode }}&filtre={{ filtre|urlencode }}&periode={{ periode|urlencode }}" title="Liste de contrôle du chauffeur (Excel) : itinéraire, élève, contact"><i class="fas fa-file-excel me-1"></i>Excel</a>
+    </div>
+    <div class="form-text">Un élève par ligne, classé par itinéraire. Respecte la recherche et les filtres (ex. rechercher un itinéraire).</div>
   </div>
 </form>
 

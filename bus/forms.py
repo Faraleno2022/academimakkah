@@ -3,7 +3,7 @@ from django import forms
 from eleves.models import Classe, Eleve
 from paiements.models import ModePaiement
 
-from .models import AbonnementBus, AbonnementCantine, GrilleTarifaireBus
+from .models import PERIODICITES_GRILLE, AbonnementBus, AbonnementCantine, GrilleTarifaireBus
 
 
 class EleveAbonnementChoiceField(forms.ModelChoiceField):
@@ -116,9 +116,21 @@ class AbonnementBusForm(forms.ModelForm):
         model = AbonnementBus
         fields = [
             'classe', 'eleve', 'grille', 'periodicite', 'montant', 'date_debut',
-            'mode_paiement', 'reference_externe', 'observations',
+            'mode_paiement', 'reference_externe', 'itineraire', 'point_arret',
+            'contact_parent', 'observations',
         ]
+        labels = {
+            'itineraire': "Itinéraire",
+            'point_arret': "Point d'arrêt",
+            'contact_parent': "Contact parent",
+        }
         widgets = {
+            'itineraire': forms.TextInput(attrs={
+                'class': 'form-control', 'list': 'itinerairesBus',
+                'placeholder': 'Ex. Circuit A — Kipé / Cosa',
+            }),
+            'point_arret': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Ex. Carrefour Kipé'}),
+            'contact_parent': forms.TextInput(attrs={'class': 'form-control', 'placeholder': '+224XXXXXXXXX'}),
             'grille': forms.Select(attrs={'class': 'form-select'}),
             'periodicite': forms.Select(attrs={'class': 'form-select'}),
             'montant': forms.NumberInput(attrs={'class': 'form-control', 'min': 1}),
@@ -147,13 +159,21 @@ class AbonnementBusForm(forms.ModelForm):
         self.fields['mode_paiement'].queryset = ModePaiement.objects.filter(actif=True).order_by('nom')
         self.fields['date_debut'].label = "Date du paiement"
         self.fields['periodicite'].label = "Type de paiement / tranche"
+        P = AbonnementBus.Periodicite
         self.fields['periodicite'].choices = [
-            (AbonnementBus.Periodicite.ANNUEL, "Annuel — totalité des 3 tranches"),
-            (AbonnementBus.Periodicite.TRANCHE_1, "1ère tranche"),
-            (AbonnementBus.Periodicite.TRANCHE_2, "2ème tranche"),
-            (AbonnementBus.Periodicite.TRANCHE_3, "3ème tranche"),
+            ("Une tranche", [
+                (P.TRANCHE_1, "1ère tranche"),
+                (P.TRANCHE_2, "2ème tranche"),
+                (P.TRANCHE_3, "3ème tranche"),
+            ]),
+            ("Plusieurs tranches", [
+                (P.T1_DEMI_T2, "Tranche 1 + ½ Tranche 2"),
+                (P.T1_T2, "Tranche 1 + Tranche 2"),
+                (P.T1_T2_DEMI_T3, "Tranche 1 + Tranche 2 + ½ Tranche 3"),
+                (P.ANNUEL, "Tranche 1 + Tranche 2 + Tranche 3 (annuel)"),
+            ]),
         ]
-        if self.instance and self.instance.pk and self.instance.periodicite not in {'ANNUEL', 'T1', 'T2', 'T3'}:
+        if self.instance and self.instance.pk and self.instance.periodicite not in PERIODICITES_GRILLE:
             self.fields['periodicite'].choices = [
                 (self.instance.periodicite, self.instance.get_periodicite_display()),
                 *self.fields['periodicite'].choices,
@@ -188,7 +208,7 @@ class AbonnementBusForm(forms.ModelForm):
             if self.ecole_autorisee and grille.ecole_id != self.ecole_autorisee.pk:
                 self.add_error('grille', "Cette grille n'appartient pas à votre école.")
 
-        if grille and eleve and periodicite in {'ANNUEL', 'T1', 'T2', 'T3'} and montant is not None:
+        if grille and eleve and periodicite in PERIODICITES_GRILLE and montant is not None:
             situation = grille.situation_paiements(
                 eleve,
                 exclude_pk=self.instance.pk if self.instance and self.instance.pk else None,

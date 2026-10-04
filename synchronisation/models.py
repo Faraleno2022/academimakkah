@@ -1,11 +1,22 @@
+import hashlib
 import uuid
 
 from django.contrib.auth.hashers import check_password, make_password
 from django.db import models
+from django.utils.crypto import constant_time_compare
 from django.utils import timezone
 
 from eleves.models import Ecole
 from .mixins import SyncTrackedModel
+
+
+# Jetons déjà vérifiés, par (appareil, empreinte stockée). check_password
+# (PBKDF2, un million d'itérations) coûte 1 à 2 s : le refaire à chaque
+# requête, toutes les quelques secondes et pour chaque poste, retardait la
+# synchronisation et occupait le serveur. Le jeton est aléatoire (32 octets),
+# un SHA-256 suffit pour reconnaître ensuite le même jeton. Changer le jeton
+# change la clé : l'ancien n'est plus reconnu.
+_JETONS_VERIFIES = {}
 
 
 class SyncDevice(models.Model):
@@ -30,7 +41,17 @@ class SyncDevice(models.Model):
         self.token_hash = make_password(token)
 
     def verifier_token(self, token):
-        return bool(token) and check_password(token, self.token_hash)
+        if not token:
+            return False
+        empreinte = hashlib.sha256(token.encode('utf-8')).hexdigest()
+        cle = (self.pk, self.token_hash)
+        connue = _JETONS_VERIFIES.get(cle)
+        if connue is not None:
+            return constant_time_compare(connue, empreinte)
+        if not check_password(token, self.token_hash):
+            return False
+        _JETONS_VERIFIES[cle] = empreinte
+        return True
 
     def marquer_connexion(self):
         self.derniere_connexion = timezone.now()
@@ -108,3 +129,7 @@ class SyncCheckpoint(models.Model):
     snapshot_cursor = models.TextField(blank=True)
     initial_complete = models.BooleanField(default=False)
     last_change_id = models.PositiveBigIntegerField(default=0)
+    # Version du registre déjà reçue. Un poste mis à jour rattrape l'historique
+    # des modèles ajoutés depuis, que le serveur ne lui envoyait pas avant.
+    registre = models.PositiveSmallIntegerField(default=1)
+    rattrapage_id = models.PositiveBigIntegerField(default=0)

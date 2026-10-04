@@ -12,6 +12,7 @@ urlpatterns = [
     path('', views.liste_abonnements, name='index'),
     path('liste/', views.liste_abonnements, name='liste'),
     path('export/breakdown/<str:kind>.csv', views.export_abonnements_breakdown_csv, name='export_breakdown_csv'),
+    path('export/controle/<str:fmt>/', views.export_controle_chauffeur, name='export_controle'),
     path('grilles/', views.grilles_bus, name='grilles'),
     path('grilles/nouvelle/', views.grille_bus_form, name='grille_nouvelle'),
     path('grilles/<int:grille_id>/modifier/', views.grille_bus_form, name='grille_modifier'),

@@ -16,10 +16,11 @@ import io
 import csv
 
 from eleves.models import Eleve
-from .models import AbonnementBus, GrilleTarifaireBus
+from .models import PERIODICITES_GRILLE, AbonnementBus, GrilleTarifaireBus, tranches_couvertes
 from .forms import AbonnementBusForm, GrilleTarifaireBusForm
 from .suivi_classes import contexte_suivi_classe
 from .historique_eleve import infos_logistiques_bus, reprise_bus
+from .controle_chauffeur import FORMATS_CONTROLE, export_controle, lignes_controle
 from .recettes import CHAMP_DATE_BUS, LIBELLES_PERIODES, filtrer_periode, recettes_par_periode
 from utilisateurs.utils import user_is_superadmin, user_school, filter_by_user_school
 from utilisateurs.permissions import can_delete_subscriptions, permission_required
@@ -73,18 +74,26 @@ def tableau_bord(request):
     return render(request, 'bus/tableau_bord.html', context)
 
 
-@login_required
-def liste_abonnements(request):
+def _abonnements_visibles(user):
     qs = AbonnementBus.objects.select_related(
         'eleve', 'eleve__classe', 'eleve__classe__ecole', 'grille', 'mode_paiement'
     )
     # IMPORTANT: Seul le superuser peut voir toutes les écoles
-    if not user_is_superadmin(request.user):
-        qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
+    if not user_is_superadmin(user):
+        qs = filter_by_user_school(qs, user, 'eleve__classe__ecole')
+    return qs
 
-    # Recettes de l'école sur les périodes, indépendamment de la recherche
-    recettes = recettes_par_periode(qs, CHAMP_DATE_BUS)
 
+def _itineraires_connus(user):
+    """Itinéraires déjà saisis dans l'école, proposés pour garder une orthographe unique."""
+    return sorted(set(
+        _abonnements_visibles(user).exclude(itineraire='')
+        .values_list('itineraire', flat=True).distinct()
+    ))
+
+
+def _filtrer_abonnements(request, qs):
+    """Recherche, période et filtre de statut de la liste (réutilisés par les exports)."""
     q = (request.GET.get('q') or '').strip()
     filtre = (request.GET.get('filtre') or '').strip().lower()
     periode = request.GET.get('periode') or ''
@@ -100,6 +109,7 @@ def liste_abonnements(request):
             Q(numero_recu__icontains=q) |
             Q(reference_externe__icontains=q) |
             Q(zone__icontains=q) |
+            Q(itineraire__icontains=q) |
             Q(point_arret__icontains=q) |
             Q(contact_parent__icontains=q)
         )
@@ -122,6 +132,18 @@ def liste_abonnements(request):
                     if 0 <= delta <= (alerte_jours or 7):
                         ids_proches.append(a_id)
         qs = qs.filter(id__in=ids_proches)
+    return qs, q, filtre, periode
+
+
+@login_required
+def liste_abonnements(request):
+    qs = _abonnements_visibles(request.user)
+
+    # Recettes de l'école sur les périodes, indépendamment de la recherche
+    recettes = recettes_par_periode(qs, CHAMP_DATE_BUS)
+
+    qs, q, filtre, periode = _filtrer_abonnements(request, qs)
+    today = timezone.localdate()
 
     # Aggregates for dashboard (sur le queryset filtré)
     total_count = qs.count()
@@ -193,6 +215,27 @@ def liste_abonnements(request):
     }
     context.update(contexte_suivi_classe(request))
     return render(request, 'bus/liste.html', context)
+
+
+@login_required
+def export_controle_chauffeur(request, fmt):
+    """Liste de contrôle du chauffeur (PDF ou Excel) : un élève par ligne, itinéraire en tête."""
+    if fmt not in FORMATS_CONTROLE:
+        return HttpResponse('Format invalide', status=400)
+    visibles = _abonnements_visibles(request.user)
+    filtres, q, filtre, periode = _filtrer_abonnements(request, visibles)
+    lignes = lignes_controle(visibles, filtres)
+    ecole = _ecole_utilisateur(request.user)
+    if ecole is None and lignes:
+        ecole = getattr(getattr(lignes[0]['eleve'], 'classe', None), 'ecole', None)
+    precisions = [
+        libelle for libelle in (
+            f"Recherche : « {q} »" if q else '',
+            f"Filtre : {filtre}" if filtre else '',
+            f"Payés {LIBELLES_PERIODES[periode].lower()}" if periode else '',
+        ) if libelle
+    ]
+    return export_controle(fmt, lignes, ecole, precisions)
 
 
 @login_required
@@ -278,7 +321,7 @@ def tarif_bus_json(request):
         return JsonResponse({'success': False, 'message': 'Paramètres invalides.'}, status=400)
 
     periodicite = request.GET.get('periodicite', '')
-    if periodicite not in {'ANNUEL', 'T1', 'T2', 'T3'}:
+    if periodicite not in PERIODICITES_GRILLE:
         return JsonResponse({'success': False, 'message': 'Type de paiement invalide.'}, status=400)
 
     eleves = Eleve.objects.select_related('classe', 'classe__ecole')
@@ -326,6 +369,7 @@ def abonnement_create(request):
             initial['eleve'] = eleves.get(id=int(eleve_id))
             # Élève déjà abonné : reprendre zone, tranche suivante et mode de paiement.
             initial.update(reprise_bus(initial['eleve']))
+            initial.update(infos_logistiques_bus(initial['eleve']))
         except Exception:
             pass
     if request.method == 'POST':
@@ -354,6 +398,7 @@ def abonnement_create(request):
         'form': form,
         'titre_page': 'Nouveau paiement Bus',
         'aucune_grille': not form.fields['grille'].queryset.exists(),
+        'itineraires_connus': _itineraires_connus(request.user),
     })
 
 
@@ -380,6 +425,7 @@ def abonnement_edit(request, abo_id):
         'form': form,
         'titre_page': 'Modifier le paiement Bus',
         'aucune_grille': not form.fields['grille'].queryset.exists(),
+        'itineraires_connus': _itineraires_connus(request.user),
     })
 
 
@@ -629,6 +675,7 @@ def generer_recu_abonnement_pdf(request, abo_id):
         total_du = 0
         total_paye = 0
         situation_grille = abo.grille.situation_paiements(abo.eleve)
+        couvertes = tranches_couvertes(abo.periodicite)
         tranche_defs = [
             ('T1', 'Tranche 1', abo.grille.tranche_1, abo.grille.date_echeance_tranche_1),
             ('T2', 'Tranche 2', abo.grille.tranche_2, abo.grille.date_echeance_tranche_2),
@@ -639,12 +686,12 @@ def generer_recu_abonnement_pdf(request, abo_id):
             reste = situation_grille[code]['reste']
             total_du += montant_du
             total_paye += montant_paye
-            if code == abo.periodicite:
+            if code in couvertes:
                 c.setFillColor(colors.HexColor('#e8f4fd'))
                 c.rect(38, y - 5, 520, 20, fill=1, stroke=0)
             c.setFillColor(colors.black)
-            c.setFont('Helvetica-Bold' if code == abo.periodicite else 'Helvetica', 8)
-            c.drawString(40, y, label + (' (ce reçu)' if code == abo.periodicite else ''))
+            c.setFont('Helvetica-Bold' if code in couvertes else 'Helvetica', 8)
+            c.drawString(40, y, label + (' (ce reçu)' if code in couvertes else ''))
             c.drawString(150, y, echeance.strftime('%d/%m/%Y') if echeance else '—')
             c.drawRightString(340, y, f"{int(montant_du):,}".replace(',', ' '))
             c.setFillColor(colors.HexColor('#198754'))

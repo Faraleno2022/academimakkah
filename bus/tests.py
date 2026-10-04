@@ -201,10 +201,8 @@ class GrilleEtPaiementBusTests(TestCase):
 
     def test_paiement_bus_annuel_utilise_le_total_des_trois_tranches(self):
         form = AbonnementBusForm(ecole=self.ecole)
-        self.assertIn(
-            ('ANNUEL', 'Annuel — totalité des 3 tranches'),
-            list(form.fields['periodicite'].choices),
-        )
+        plusieurs = dict(dict(form.fields['periodicite'].choices)['Plusieurs tranches'])
+        self.assertEqual(plusieurs['ANNUEL'], 'Tranche 1 + Tranche 2 + Tranche 3 (annuel)')
 
         suggestion = self.client.get(reverse('bus:tarif_bus_json'), {
             'eleve_id': self.eleve.pk,
@@ -279,7 +277,8 @@ class GrilleEtPaiementBusTests(TestCase):
         self.assertContains(bus_response, 'Filtrer par classe')
         self.assertContains(bus_response, libelle_eleve)
         self.assertNotContains(bus_response, 'BUS-B-001')
-        self.assertContains(bus_response, 'Annuel — totalité des 3 tranches')
+        self.assertContains(bus_response, 'Tranche 1 + Tranche 2 + Tranche 3 (annuel)')
+        self.assertContains(bus_response, 'Tranche 1 + ½ Tranche 2')
 
         cantine_response = self.client.get(reverse('bus:creer_abonnement_cantine'))
         self.assertEqual(cantine_response.status_code, 200)

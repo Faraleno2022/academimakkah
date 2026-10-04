@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from eleves.models import Eleve
 from eleves.suivi_listes import classes_visibles
-from .models import AbonnementBus, GrilleTarifaireBus
+from .models import PERIODICITES_GRILLE, AbonnementBus, GrilleTarifaireBus
 
 
 def contexte_suivi_classe(request):
@@ -112,7 +112,7 @@ def resume_transport_par_classe(versements):
         eleves[classe_id].add(groupe['eleve_id'])
         row['total_paye'] += groupe['montant'] or Decimal('0')
         grille = grilles.get(groupe['grille_id'])
-        if not grille or groupe['periodicite'] not in {'ANNUEL', 'T1', 'T2', 'T3'}:
+        if not grille or groupe['periodicite'] not in PERIODICITES_GRILLE:
             row['total_du'] = row['reste'] = None
             continue
         key = (classe_id, groupe['eleve_id'], grille.pk)

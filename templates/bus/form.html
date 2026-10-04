@@ -161,6 +161,33 @@
         </div>
       </div>
 
+      <!-- Transport : repris sur la liste de contrôle du chauffeur -->
+      <div class="form-section">
+        <h5 class="d-flex align-items-center"><i class="fas fa-route me-2"></i>Transport</h5>
+        <div class="row">
+          <div class="col-md-5 mb-3">
+            <label class="form-label small-label" for="{{ form.itineraire.id_for_label }}">Itinéraire</label>
+            {{ form.itineraire }}
+            <datalist id="itinerairesBus">
+              {% for nom in itineraires_connus %}<option value="{{ nom }}">{% endfor %}
+            </datalist>
+            <div class="help-text">Affiché en tête de la liste du chauffeur. Reprenez le même libellé pour les élèves du même bus.</div>
+            {% if form.itineraire.errors %}<div class="text-danger small">{{ form.itineraire.errors.0 }}</div>{% endif %}
+          </div>
+          <div class="col-md-4 mb-3">
+            <label class="form-label small-label" for="{{ form.point_arret.id_for_label }}">Point d'arrêt</label>
+            {{ form.point_arret }}
+            {% if form.point_arret.errors %}<div class="text-danger small">{{ form.point_arret.errors.0 }}</div>{% endif %}
+          </div>
+          <div class="col-md-3 mb-3">
+            <label class="form-label small-label" for="{{ form.contact_parent.id_for_label }}">Contact parent</label>
+            {{ form.contact_parent }}
+            {% if form.contact_parent.errors %}<div class="text-danger small">{{ form.contact_parent.errors.0 }}</div>{% endif %}
+          </div>
+        </div>
+        <div class="hint">Laissés vides, ces champs sont repris du dernier abonnement de l'élève.</div>
+      </div>
+
       <div class="form-section">
         <label class="form-label small-label" for="{{ form.observations.id_for_label }}">Observations (facultatif)</label>
         {{ form.observations }}
@@ -240,7 +267,16 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
+  function appliquerLogistique(data) {
+    const infos = data.logistique_bus || {};
+    ['itineraire', 'point_arret', 'contact_parent'].forEach(champ => {
+      const input = document.getElementById('id_' + champ);
+      if (input) input.value = infos[champ] || '';
+    });
+  }
+
   function appliquerRepriseBus(data, reprendre) {
+    if (reprendre && !paiementEnModification) appliquerLogistique(data);
     const nb = data.nb_abonnements_bus || 0;
     if (!repriseBus) return;
     if (!nb) { repriseBus.style.display = 'none'; return; }
