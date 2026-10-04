@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator, RegexValidator
@@ -12,6 +12,27 @@ ANNEE_SCOLAIRE_VALIDATOR = RegexValidator(
     regex=r'^\d{4}-\d{4}$',
     message="L'année scolaire doit être au format AAAA-AAAA.",
 )
+
+DEMI = Decimal('0.5')
+
+# Part de chaque tranche couverte par un type de paiement (1 = totalité, 0,5 = moitié).
+PORTEES_PAIEMENT_BUS = {
+    'ANNUEL': {'T1': 1, 'T2': 1, 'T3': 1},
+    'T1': {'T1': 1},
+    'T2': {'T2': 1},
+    'T3': {'T3': 1},
+    'T1_T2M': {'T1': 1, 'T2': DEMI},
+    'T1_T2': {'T1': 1, 'T2': 1},
+    'T1_T2_T3M': {'T1': 1, 'T2': 1, 'T3': DEMI},
+}
+PERIODICITES_GRILLE = frozenset(PORTEES_PAIEMENT_BUS)
+# Paiements répartis sur T1, puis T2, puis T3 (comme l'annuel).
+PERIODICITES_CUMULEES = frozenset({'ANNUEL', 'T1_T2M', 'T1_T2', 'T1_T2_T3M'})
+
+
+def tranches_couvertes(periodicite):
+    """Codes des tranches concernées par un paiement (pour les reçus)."""
+    return set(PORTEES_PAIEMENT_BUS.get(periodicite, {}))
 
 
 class GrilleTarifaireBus(SyncTrackedModel):
@@ -92,29 +113,32 @@ class GrilleTarifaireBus(SyncTrackedModel):
     def montant_annuel(self):
         return (self.tranche_1 or 0) + (self.tranche_2 or 0) + (self.tranche_3 or 0)
 
-    def montant_pour(self, periodicite):
+    def _tranches(self):
         return {
-            'ANNUEL': self.montant_annuel,
-            'T1': self.tranche_1,
-            'T2': self.tranche_2,
-            'T3': self.tranche_3,
-        }.get(periodicite, Decimal('0'))
+            'T1': Decimal(self.tranche_1 or 0),
+            'T2': Decimal(self.tranche_2 or 0),
+            'T3': Decimal(self.tranche_3 or 0),
+        }
+
+    def parts_dues(self, periodicite):
+        """Montant dû de chaque tranche pour ce type de paiement (moitié arrondie au franc)."""
+        tranches = self._tranches()
+        return {
+            code: (tranches[code] * Decimal(fraction)).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+            for code, fraction in PORTEES_PAIEMENT_BUS.get(periodicite, {}).items()
+        }
+
+    def montant_pour(self, periodicite):
+        return sum(self.parts_dues(periodicite).values(), Decimal('0'))
 
     def echeance_pour(self, periodicite):
-        if periodicite == 'ANNUEL':
-            echeances = [
-                date_value for date_value in (
-                    self.date_echeance_tranche_1,
-                    self.date_echeance_tranche_2,
-                    self.date_echeance_tranche_3,
-                ) if date_value
-            ]
-            return max(echeances) if echeances else None
-        return {
+        echeances = {
             'T1': self.date_echeance_tranche_1,
             'T2': self.date_echeance_tranche_2,
             'T3': self.date_echeance_tranche_3,
-        }.get(periodicite)
+        }
+        dates = [echeances[code] for code in PORTEES_PAIEMENT_BUS.get(periodicite, {}) if echeances[code]]
+        return max(dates) if dates else None
 
     def situation_paiements(self, eleve, exclude_pk=None):
         """Répartit un paiement annuel sur T1, T2 puis T3 sans double compte."""
@@ -128,35 +152,42 @@ class GrilleTarifaireBus(SyncTrackedModel):
         return self.situation_depuis_totaux(directs)
 
     def situation_depuis_totaux(self, directs):
-        """Même calcul pour les reçus et les versements préchargés du tableau de bord."""
-        annuel_restant = directs.get('ANNUEL', Decimal('0'))
+        """Même calcul pour les reçus et les versements préchargés du tableau de bord.
+
+        Les paiements annuels et combinés (T1 + ½ T2, T1 + T2...) remplissent
+        T1, puis T2, puis T3, sans double compte avec les paiements directs.
+        """
+        cumul_restant = sum(
+            (Decimal(directs.get(code) or 0) for code in PERIODICITES_CUMULEES), Decimal('0')
+        )
         situation = {}
-        for code, montant_du in (
-            ('T1', Decimal(self.tranche_1 or 0)),
-            ('T2', Decimal(self.tranche_2 or 0)),
-            ('T3', Decimal(self.tranche_3 or 0)),
-        ):
-            paiement_direct = directs.get(code, Decimal('0'))
+        for code, montant_du in self._tranches().items():
+            paiement_direct = Decimal(directs.get(code) or 0)
             manque = max(montant_du - paiement_direct, Decimal('0'))
-            part_annuelle = min(manque, annuel_restant)
-            annuel_restant -= part_annuelle
-            montant_paye = paiement_direct + part_annuelle
+            part_cumulee = min(manque, cumul_restant)
+            cumul_restant -= part_cumulee
+            montant_paye = paiement_direct + part_cumulee
             situation[code] = {
                 'du': montant_du,
                 'paye': montant_paye,
                 'reste': max(montant_du - montant_paye, Decimal('0')),
             }
-        total_paye = (
-            directs.get('ANNUEL', Decimal('0'))
-            + directs.get('T1', Decimal('0'))
-            + directs.get('T2', Decimal('0'))
-            + directs.get('T3', Decimal('0'))
+        total_paye = sum(
+            (Decimal(directs.get(code) or 0) for code in PERIODICITES_GRILLE), Decimal('0')
         )
         situation['ANNUEL'] = {
             'du': Decimal(self.montant_annuel or 0),
             'paye': total_paye,
             'reste': max(Decimal(self.montant_annuel or 0) - total_paye, Decimal('0')),
         }
+        for code in PERIODICITES_CUMULEES - {'ANNUEL'}:
+            parts = self.parts_dues(code)
+            du = sum(parts.values(), Decimal('0'))
+            paye = sum(
+                (min(situation[tranche]['paye'], part) for tranche, part in parts.items()),
+                Decimal('0'),
+            )
+            situation[code] = {'du': du, 'paye': paye, 'reste': max(du - paye, Decimal('0'))}
         return situation
 
 
@@ -172,6 +203,9 @@ class AbonnementBus(SyncTrackedModel):
         TRANCHE_1 = 'T1', "1ère Tranche"
         TRANCHE_2 = 'T2', "2ème Tranche"
         TRANCHE_3 = 'T3', "3ème Tranche"
+        T1_DEMI_T2 = 'T1_T2M', "Tranche 1 + ½ Tranche 2"
+        T1_T2 = 'T1_T2', "Tranche 1 + Tranche 2"
+        T1_T2_DEMI_T3 = 'T1_T2_T3M', "Tranche 1 + Tranche 2 + ½ Tranche 3"
 
     eleve = models.ForeignKey(Eleve, on_delete=models.CASCADE, related_name='abonnements_bus')
     grille = models.ForeignKey(

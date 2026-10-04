@@ -206,6 +206,7 @@ def resume_reprise_json(eleve):
         'nb_abonnements_cantine': nb_cantine,
         'reprise_bus': _serialiser(reprise_bus(eleve)) if nb_bus else None,
         'reprise_cantine': _serialiser(reprise_cantine(eleve)) if nb_cantine else None,
+        'logistique_bus': infos_logistiques_bus(eleve),
         'historique_url': f"{reverse('bus:historique_abonnements')}?eleve={eleve.pk}",
     }
 

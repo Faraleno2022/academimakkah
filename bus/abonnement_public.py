@@ -12,7 +12,7 @@ from django.http import HttpResponse, Http404
 from django.shortcuts import get_object_or_404
 import logging
 
-from .models import AbonnementBus
+from .models import AbonnementBus, tranches_couvertes
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +199,7 @@ def abonnement_public_pdf(request, abonnement_id):
             total_du = 0
             total_paye = 0
             situation_grille = abonnement.grille.situation_paiements(abonnement.eleve)
+            couvertes = tranches_couvertes(abonnement.periodicite)
             for code, libelle, montant_du in (
                 ('T1', 'Tranche 1', abonnement.grille.tranche_1),
                 ('T2', 'Tranche 2', abonnement.grille.tranche_2),
@@ -209,8 +210,8 @@ def abonnement_public_pdf(request, abonnement_id):
                 total_du += montant_du
                 total_paye += montant_paye
                 c.setFillColor(colors.black)
-                c.setFont('Helvetica-Bold' if code == abonnement.periodicite else 'Helvetica', 8)
-                c.drawString(left, top, libelle + (' (ce reçu)' if code == abonnement.periodicite else ''))
+                c.setFont('Helvetica-Bold' if code in couvertes else 'Helvetica', 8)
+                c.drawString(left, top, libelle + (' (ce reçu)' if code in couvertes else ''))
                 c.drawRightString(350, top, f"{int(montant_du):,}".replace(',', ' '))
                 c.drawRightString(455, top, f"{int(montant_paye):,}".replace(',', ' '))
                 c.drawRightString(555, top, 'Soldée' if not reste else f"{int(reste):,}".replace(',', ' '))
