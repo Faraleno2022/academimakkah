@@ -79,7 +79,7 @@ def _pret(config):
 def _cycle(base_dir):
     """Un aller-retour push + pull. Retourne (config, nb_pousses, nb_recus)."""
     from eleves.models import Ecole
-    from .client import pull_changes, push_pending
+    from .client import pull_changes, push_pending, rattraper_modeles_ajoutes
 
     config = charger_config(base_dir)
     if not _pret(config):
@@ -107,9 +107,28 @@ def _cycle(base_dir):
         nb_recus = pull_changes(config['server_url'], config['device_id'], config['token'], ecole)
         return config, 0, nb_recus
 
+    _emettre_modeles_ajoutes()
     nb_pousses = push_pending(config['server_url'], config['device_id'], config['token'], ecole)
     nb_recus = pull_changes(config['server_url'], config['device_id'], config['token'], ecole)
+    nb_recus += rattraper_modeles_ajoutes(config['server_url'], config['device_id'], config['token'], ecole)
     return config, nb_pousses, nb_recus
+
+
+_modeles_ajoutes_emis = False
+
+
+def _emettre_modeles_ajoutes():
+    """Une fois par lancement : met en file les lignes saisies sur ce poste
+    dans des modèles ajoutés au registre après coup (jamais envoyées)."""
+    global _modeles_ajoutes_emis
+    if _modeles_ajoutes_emis:
+        return
+    from .engine import emettre_existants
+    from .registry import MODELES_PAR_VERSION
+    nb = emettre_existants([label for labels in MODELES_PAR_VERSION.values() for label in labels])
+    if nb:
+        print(f"[Sync] {nb} ligne(s) existante(s) mise(s) en file pour envoi.")
+    _modeles_ajoutes_emis = True
 
 
 def _boucle(base_dir, delai_demarrage):

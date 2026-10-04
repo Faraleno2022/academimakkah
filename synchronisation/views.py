@@ -1,5 +1,6 @@
 import gzip
 import json
+import logging
 import secrets
 from uuid import UUID
 
@@ -19,15 +20,43 @@ from django.views.decorators.http import require_GET, require_POST, require_http
 from eleves.models import Ecole
 from utilisateurs.utils import user_is_admin, user_school
 
+import threading
+
 from .engine import (
-    apply_sync_change, dependances_pour_poste, snapshot_changes_for_ecole, snapshot_page_for_ecole,
-    get_model, model_label_for, queryset_for_ecole, serialize_instance,
+    apply_sync_change, dependances_pour_poste, emettre_existants, snapshot_changes_for_ecole,
+    snapshot_page_for_ecole, get_model, model_label_for, queryset_for_ecole, serialize_instance,
 )
 from .models import SyncChange, SyncDevice
+from .registry import (
+    MODELES_PAR_VERSION, SYNC_MODEL_LABELS, SYNC_MODEL_SET, modeles_inconnus, version_registre,
+)
 from .sequence import attribuer_sequences
 
 
 PULL_PAGE_SIZE = 500
+
+logger = logging.getLogger(__name__)
+
+_rattrapage_verrou = threading.Lock()
+_rattrapage_fait = False
+
+
+def _rattraper_modeles_ajoutes():
+    """Une fois par processus : diffuse les lignes des modèles ajoutés au
+    registre après leur création (saisies sur le site avant la mise à jour)."""
+    global _rattrapage_fait
+    if _rattrapage_fait:
+        return
+    with _rattrapage_verrou:
+        if _rattrapage_fait:
+            return
+        try:
+            emettre_existants([label for labels in MODELES_PAR_VERSION.values() for label in labels])
+        except Exception:
+            # Ne bloque jamais la réception : nouvel essai à la prochaine requête.
+            logger.exception('[Sync] Rattrapage des modèles ajoutés impossible.')
+            return
+        _rattrapage_fait = True
 
 
 def _json_body(request):
@@ -300,6 +329,8 @@ def pull(request):
     since = request.GET.get('since')
     since_id = request.GET.get('since_id')
     initial = request.GET.get('initial') in {'1', 'true', 'yes'}
+    registre = request.GET.get('registre')
+    modeles = request.GET.get('modeles')
     if request.method == 'POST':
         data = _json_body(request)
         if data is None:
@@ -309,18 +340,32 @@ def pull(request):
         since = data.get('since') or since
         since_id = data.get('since_id') or since_id
         initial = str(data.get('initial', '')).lower() in {'1', 'true', 'yes'}
+        registre = data.get('registre') or registre
+        modeles = data.get('modeles') or modeles
+
+    _rattraper_modeles_ajoutes()
+    # Un poste d'une version antérieure ne sait pas appliquer les modèles
+    # ajoutés depuis : les lui envoyer les mettrait en échec à chaque cycle.
+    exclus = set(modeles_inconnus(version_registre(registre)))
+    autorises = [label for label in SYNC_MODEL_LABELS if label not in exclus]
+    if modeles:
+        # Rattrapage d'un poste mis à jour : seulement les modèles demandés.
+        demandes = {label.strip() for label in str(modeles).split(',')} & SYNC_MODEL_SET
+        autorises = [label for label in autorises if label in demandes]
 
     if initial:
         next_cursor = None
         watermark = since_id
         if paginated:
             try:
-                serialized_changes, next_cursor, watermark = snapshot_page_for_ecole(device.ecole, cursor)
+                serialized_changes, next_cursor, watermark = snapshot_page_for_ecole(
+                    device.ecole, cursor, labels=set(autorises),
+                )
             except (ValueError, TypeError) as exc:
                 return JsonResponse({'ok': False, 'error': str(exc)}, status=400)
         else:
             # Compatibility with existing PCs: a complete snapshot without the former 5,000 cap.
-            serialized_changes = snapshot_changes_for_ecole(device.ecole)
+            serialized_changes = snapshot_changes_for_ecole(device.ecole, labels=set(autorises))
         return JsonResponse({
             'ok': True,
             'device_id': str(device.device_id),
@@ -345,6 +390,8 @@ def pull(request):
         .exclude(device=device)
         .select_related('device')
     )
+    if exclus or modeles:
+        changes = changes.filter(model_label__in=autorises)
     if since_id:
         try:
             changes = changes.filter(sequence__gt=int(since_id))
@@ -375,7 +422,10 @@ def pull(request):
             # Les parents passent avant : un poste qui les a manqués peut
             # quand même appliquer ce changement au lieu de bloquer dessus.
             deja_vus.add((model_label_for(model), obj.pk))
-            serialized_changes.extend(dependances_pour_poste(obj, device.ecole, deja_vus))
+            serialized_changes.extend(
+                ligne for ligne in dependances_pour_poste(obj, device.ecole, deja_vus)
+                if ligne['model_label'] not in exclus
+            )
         else:
             # A deletion conveys no historical personal data.
             payload = {'sync_uuid': str(change.object_uuid)}

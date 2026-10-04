@@ -14,6 +14,7 @@ import requests
 from requests.adapters import HTTPAdapter
 
 from .models import SyncChange
+from .registry import REGISTRE_VERSION, modeles_inconnus
 
 
 # Lots courts : un lot doit tenir largement dans PUSH_TIMEOUT, sinon le poste
@@ -228,6 +229,81 @@ def reessayer_recus_en_echec(ecole, apply_change=None, limite=REESSAIS_PAR_CYCLE
     return reussis
 
 
+def _appliquer_lot(items, ecole, apply_change):
+    """Applique une page reçue du serveur ; retourne le nombre de changements appliqués."""
+    from django.db import transaction
+    # Un changement serveur deja applique (lot recu deux fois, ou reemis par
+    # `sync_reemettre`) est ignore : une seule requete pour toute la page.
+    ids_serveur = [item.get('id') for item in items if item.get('id')]
+    deja_appliques = set(
+        SyncChange.objects.filter(
+            statut=SyncChange.STATUT_APPLIED,
+            payload__server_change_id__in=ids_serveur,
+        ).values_list('payload__server_change_id', flat=True)
+    ) if ids_serveur else set()
+    applied = 0
+    for item in items:
+        server_change_id = item.get('id')
+        if server_change_id and server_change_id in deja_appliques:
+            continue
+        payload = item.get('payload') or {}
+        if server_change_id:
+            payload = {**payload, 'server_change_id': server_change_id}
+        try:
+            with transaction.atomic():
+                change = SyncChange.objects.create(
+                    ecole=ecole, model_label=item['model_label'],
+                    object_uuid=item.get('object_uuid') or None,
+                    operation=item['operation'], payload=payload,
+                )
+                apply_change(change)
+        except Exception as exc:
+            _garder_pour_nouvel_essai(ecole, item, payload, exc)
+            continue
+        applied += 1
+    return applied
+
+
+def rattraper_modeles_ajoutes(server_url, device_id, token, ecole, apply_change=None):
+    """Poste mis à jour : récupère l'historique des modèles ajoutés au registre.
+
+    Avant la mise à jour, le serveur ne lui envoyait pas ces modèles et son
+    curseur est passé au-delà. Un second curseur (``rattrapage_id``) relit
+    depuis le début les seuls modèles ajoutés, une fois, puis le poste note la
+    version du registre qu'il connaît. Retourne le nombre de changements appliqués.
+    """
+    from django.db import transaction
+    from .models import SyncCheckpoint
+    if apply_change is None:
+        from .engine import apply_sync_change
+        apply_change = apply_sync_change
+    checkpoint = SyncCheckpoint.objects.filter(device_id=device_id).first()
+    if checkpoint is None or not checkpoint.initial_complete or checkpoint.registre >= REGISTRE_VERSION:
+        return 0
+    modeles = modeles_inconnus(checkpoint.registre)
+    total = 0
+    for _ in range(MAX_CYCLES_PAR_APPEL):
+        response = _get_json(f'{server_url}/api/v1/sync/pull/', device_id, token, params={
+            'since_id': checkpoint.rattrapage_id, 'registre': REGISTRE_VERSION,
+            'modeles': ','.join(modeles),
+        })
+        if not response.get('ok'):
+            raise SyncTransportError(response.get('error') or 'Pull refusé.')
+        items = response.get('changes', [])
+        if not isinstance(items, list):
+            raise SyncTransportError('Lot de synchronisation invalide.')
+        with transaction.atomic():
+            total += _appliquer_lot(items, ecole, apply_change)
+            checkpoint.rattrapage_id = int(response.get('latest_change_id') or checkpoint.rattrapage_id)
+            fini = not response.get('has_more', len(items) >= PULL_PAGE_SIZE)
+            if fini:
+                checkpoint.registre = REGISTRE_VERSION
+            checkpoint.save(update_fields=['rattrapage_id', 'registre'])
+        if fini:
+            break
+    return total
+
+
 def pull_changes(server_url, device_id, token, ecole, since_id=None, initial=False, apply_change=None):
     """Import paginé et reprenable.
 
@@ -252,7 +328,7 @@ def pull_changes(server_url, device_id, token, ecole, since_id=None, initial=Fal
     total = 0
     for _ in range(MAX_CYCLES_PAR_APPEL):
         bootstrapping = not checkpoint.initial_complete
-        params = {'since_id': checkpoint.last_change_id}
+        params = {'since_id': checkpoint.last_change_id, 'registre': REGISTRE_VERSION}
         if bootstrapping:
             params.update(initial='1', snapshot_version='2')
             if checkpoint.snapshot_cursor:
@@ -264,15 +340,6 @@ def pull_changes(server_url, device_id, token, ecole, since_id=None, initial=Fal
         if not isinstance(items, list):
             raise SyncTransportError('Lot de synchronisation invalide.')
         applied = 0
-        # Un changement serveur deja applique (lot recu deux fois, ou reemis par
-        # `sync_reemettre`) est ignore : une seule requete pour toute la page.
-        ids_serveur = [item.get('id') for item in items if item.get('id')]
-        deja_appliques = set(
-            SyncChange.objects.filter(
-                statut=SyncChange.STATUT_APPLIED,
-                payload__server_change_id__in=ids_serveur,
-            ).values_list('payload__server_change_id', flat=True)
-        ) if ids_serveur else set()
         try:
             with transaction.atomic():
                 if ecole is None:
@@ -283,25 +350,7 @@ def pull_changes(server_url, device_id, token, ecole, since_id=None, initial=Fal
                         'eleves.Ecole', premier.get('object_uuid'), premier.get('payload') or {},
                         trusted=True,
                     )
-                for item in items:
-                    server_change_id = item.get('id')
-                    if server_change_id and server_change_id in deja_appliques:
-                        continue
-                    payload = item.get('payload') or {}
-                    if server_change_id:
-                        payload = {**payload, 'server_change_id': server_change_id}
-                    try:
-                        with transaction.atomic():
-                            change = SyncChange.objects.create(
-                                ecole=ecole, model_label=item['model_label'],
-                                object_uuid=item.get('object_uuid') or None,
-                                operation=item['operation'], payload=payload,
-                            )
-                            apply_change(change)
-                    except Exception as exc:
-                        _garder_pour_nouvel_essai(ecole, item, payload, exc)
-                        continue
-                    applied += 1
+                applied = _appliquer_lot(items, ecole, apply_change)
                 if bootstrapping:
                     next_cursor = response.get('next_snapshot_cursor') or ''
                     if next_cursor and next_cursor == checkpoint.snapshot_cursor:
@@ -310,6 +359,8 @@ def pull_changes(server_url, device_id, token, ecole, since_id=None, initial=Fal
                     checkpoint.initial_complete = not bool(next_cursor)
                     if checkpoint.initial_complete:
                         checkpoint.last_change_id = int(response.get('latest_change_id') or 0)
+                        # L'instantané couvrait tous les modèles connus : rien à rattraper.
+                        checkpoint.registre = REGISTRE_VERSION
                 else:
                     checkpoint.last_change_id = int(response.get('latest_change_id') or checkpoint.last_change_id)
                 checkpoint.save()

@@ -8,7 +8,7 @@ from django.utils import timezone
 
 from eleves.models import Ecole
 from .context import mute_sync
-from .registry import SYNC_MODEL_LABELS, SYNC_MODEL_SET
+from .registry import CLES_NATURELLES, SYNC_MODEL_LABELS, SYNC_MODEL_SET
 from .scope import scoped_queryset, school_for_instance, validate_scope, remember_school
 
 
@@ -105,6 +105,29 @@ def ecole_for_instance(instance):
     return school_for_instance(instance)
 
 
+def objet_par_cle_naturelle(model, model_label, payload):
+    """Ligne existante portant la même clé naturelle sous un autre sync_uuid.
+
+    Deux postes hors ligne peuvent pointer le même élève le même jour : la
+    contrainte d'unicité refuserait le second. On le fusionne dans la ligne
+    existante (le dernier synchronisé l'emporte) pour que tous convergent.
+    """
+    champs = CLES_NATURELLES.get(model_label)
+    if not champs:
+        return None
+    filtres = {}
+    for nom in champs:
+        field = model._meta.get_field(nom)
+        raw_value = payload.get(nom)
+        if raw_value in (None, ''):
+            return None
+        value = deserialize_field(field, raw_value)
+        if value is None:
+            return None
+        filtres[nom] = value if isinstance(field, models.ForeignKey) else field.to_python(value)
+    return model.objects.select_for_update().filter(**filtres).first()
+
+
 def _financial_keys(obj):
     if obj is None:
         return set()
@@ -155,6 +178,10 @@ def build_change_instance(model_label, object_uuid, payload, *, operation='UPDAT
 
     with mute_sync():
         obj = model.objects.select_for_update().filter(sync_uuid=object_uuid).first()
+        if obj is None and operation != 'DELETE':
+            obj = objet_par_cle_naturelle(model, model_label, payload)
+            if obj is not None:
+                obj.sync_uuid = object_uuid
         if obj is not None and ecole is not None:
             validate_scope(obj, ecole, existing=True, trusted=trusted)
         keys = _financial_keys(obj)
@@ -263,9 +290,11 @@ def dependances_pour_poste(obj, ecole, deja_vus):
     return lignes
 
 
-def snapshot_changes_for_ecole(ecole):
+def snapshot_changes_for_ecole(ecole, labels=None):
     snapshot = []
     for label in SYNC_MODEL_LABELS:
+        if labels is not None and label not in labels:
+            continue
         model = get_model(label)
         if not model:
             continue
@@ -274,8 +303,11 @@ def snapshot_changes_for_ecole(ecole):
     return snapshot
 
 
-def snapshot_page_for_ecole(ecole, cursor=None, page_size=500):
-    """Pages ordonnées par modèle puis PK ; le curseur conserve le point de reprise."""
+def snapshot_page_for_ecole(ecole, cursor=None, page_size=500, labels=None):
+    """Pages ordonnées par modèle puis PK ; le curseur conserve le point de reprise.
+
+    ``labels`` limite l'instantané aux modèles qu'un poste sait appliquer.
+    """
     from django.core import signing
     from django.db.models import Max, Q
     from .models import SyncChange
@@ -298,6 +330,10 @@ def snapshot_page_for_ecole(ecole, cursor=None, page_size=500):
     rows = []
     while index < len(SYNC_MODEL_LABELS):
         label = SYNC_MODEL_LABELS[index]
+        if labels is not None and label not in labels:
+            index += 1
+            last_pk = 0
+            continue
         model = get_model(label)
         objects = list(queryset_for_ecole(model, ecole).filter(pk__gt=last_pk).order_by('pk')[:page_size-len(rows)]) if model else []
         for obj in objects:
@@ -312,3 +348,35 @@ def snapshot_page_for_ecole(ecole, cursor=None, page_size=500):
         index += 1
         last_pk = 0
     return rows, None, watermark
+
+
+def emettre_existants(labels):
+    """Diffuse les objets jamais synchronisés des modèles ``labels``.
+
+    Un modèle ajouté au registre après coup a déjà des lignes, créées sans
+    changement de synchronisation : sans ce rattrapage, elles resteraient sur
+    la machine où elles ont été saisies. Une ligne déjà diffusée ou reçue a une
+    école propriétaire (SyncOwnership) : l'appel est donc sans effet la
+    seconde fois. Retourne le nombre de changements émis.
+    """
+    from .models import SyncChange, SyncOwnership
+    total = 0
+    for label in labels:
+        model = get_model(label)
+        if model is None or label not in SYNC_MODEL_SET:
+            continue
+        deja_diffuses = SyncOwnership.objects.filter(model_label=label).values('object_uuid')
+        for obj in model.objects.exclude(sync_uuid__in=deja_diffuses).order_by('pk').iterator():
+            ecole = ecole_for_instance(obj)
+            if ecole is None:
+                continue
+            with transaction.atomic():
+                SyncOwnership.objects.get_or_create(
+                    model_label=label, object_uuid=obj.sync_uuid, defaults={'ecole': ecole},
+                )
+                SyncChange.objects.create(
+                    ecole=ecole, model_label=label, object_uuid=obj.sync_uuid,
+                    operation=SyncChange.OPERATION_UPDATE, payload=serialize_instance(obj),
+                )
+            total += 1
+    return total
