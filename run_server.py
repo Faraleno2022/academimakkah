@@ -797,6 +797,13 @@ def main():
 
     # Trouver un port libre
     port = find_free_port()
+    # Port en cours, lu par le fichier Connecter_MySchoolGN.cmd (liaison à
+    # distance) pour ouvrir la bonne adresse quel que soit le port choisi.
+    try:
+        with open(os.path.join(BASE_DIR, '.port'), 'w', encoding='ascii') as _f_port:
+            _f_port.write(str(port))
+    except OSError:
+        pass
 
     # Initialiser la base de données
     try:

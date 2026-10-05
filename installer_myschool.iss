@@ -162,6 +162,7 @@ Type: filesandordirs; Name: "{app}\logs"
 Type: filesandordirs; Name: "{app}\staticfiles"
 Type: filesandordirs; Name: "{app}\__pycache__"
 Type: files;          Name: "{app}\.secret_key"
+Type: files;          Name: "{app}\.port"
 Type: files;          Name: "{app}\install_path.txt"
 
 [Messages]

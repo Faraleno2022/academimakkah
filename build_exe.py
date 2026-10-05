@@ -130,7 +130,7 @@ def copy_extra_files():
         'db.sqlite3', 'db.sqlite3-wal', 'db.sqlite3-shm', 'db.sqlite3-journal',
         'license.dat', 'licence.json', '.trial_start', '.secret_key', '.env',
         '.integrity.dat', 'sync_config.json', 'backup_config.json',
-        '.restauration_en_attente.json',
+        '.restauration_en_attente.json', '.port',
     }
     for dirpath, _dirnames, filenames in os.walk(OUTPUT_DIR):
         for filename in filenames:

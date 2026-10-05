@@ -39,16 +39,52 @@
     </div>
 
     <div class="col-lg-7">
+        {% if generated %}
+        <div class="card shadow-sm border-success mb-4">
+            <div class="card-header bg-success text-white">
+                <i class="fas fa-paper-plane me-2"></i>Poste éloigné : liaison automatique (recommandé)
+            </div>
+            <div class="card-body">
+                <p class="mb-2">Envoyez à l'utilisateur du poste le fichier ci-dessous (WhatsApp, e-mail, clé USB).
+                    Un double-clic ouvre MySchoolGN sur la bonne page : il n'a plus qu'à cliquer sur
+                    « Connecter ce poste ».</p>
+                <div class="text-center my-3">
+                    <div class="small text-muted">Code de liaison</div>
+                    <div class="display-6 font-monospace fw-bold" id="codeLiaison">{{ generated.code_liaison }}</div>
+                    <div class="small text-muted">Usage unique — valable jusqu'au {{ generated.code_expire|date:"d/m/Y à H:i" }}</div>
+                </div>
+                <div class="d-flex flex-wrap gap-2">
+                    {% if generated.script_cmd %}
+                    <button type="button" class="btn btn-success" onclick="telechargerScriptConnexion()">
+                        <i class="fas fa-download me-2"></i>Télécharger {{ generated.nom_script }}
+                    </button>
+                    {% endif %}
+                    <button type="button" class="btn btn-outline-success" onclick="copierSyncConfig('messagePoste')">
+                        <i class="fas fa-copy me-2"></i>Copier le message à envoyer
+                    </button>
+                </div>
+                <textarea id="messagePoste" class="form-control small mt-3" rows="6" readonly>{{ generated.message_poste }}</textarea>
+                <textarea id="scriptConnexion" class="d-none" readonly>{{ generated.script_cmd }}</textarea>
+                <p class="small text-muted mt-2 mb-0">
+                    <i class="fas fa-info-circle me-1"></i>Le fichier ne contient pas le mot de passe du poste,
+                    seulement ce code. Si Windows affiche un avertissement, choisissez « Exécuter quand même ».
+                    Sans le fichier, l'utilisateur peut saisir le code dans MySchoolGN : menu Administration ›
+                    Connexion au serveur.
+                </p>
+            </div>
+        </div>
+        {% endif %}
         <div class="card shadow-sm">
             <div class="card-header bg-light">
-                <i class="fas fa-file-code me-2"></i>Fichier sync_config.json du poste
+                <i class="fas fa-file-code me-2"></i>Méthode manuelle : fichier sync_config.json du poste
             </div>
             <div class="card-body">
                 {% if generated %}
                 <div class="alert alert-warning">
                     <i class="fas fa-exclamation-triangle me-1"></i>
-                    Le jeton n'est affiché <strong>qu'une seule fois</strong> : téléchargez le fichier maintenant.
-                    Un fichier par poste — ne copiez pas le même sur deux PC.
+                    Le jeton n'est affiché <strong>qu'une seule fois</strong>. Un fichier par poste — ne copiez pas
+                    le même sur deux PC. <strong>N'utilisez qu'une méthode</strong> : la liaison par code remplace
+                    ce fichier.
                 </div>
                 <textarea id="syncConfigJson" class="form-control font-monospace" rows="9" readonly>{{ generated.config_json }}</textarea>
                 <div class="d-flex flex-wrap gap-2 mt-3">
@@ -97,6 +133,31 @@ function copierSyncConfig(id) {
         navigator.clipboard.writeText(champ.value).catch(function () { document.execCommand('copy'); });
     } else {
         document.execCommand('copy');
+    }
+}
+
+function telechargerTexte(texte, nom, type) {
+    var lien = document.createElement('a');
+    if (!window.Blob || !window.URL || typeof lien.download === 'undefined') {
+        return false;
+    }
+    var url = URL.createObjectURL(new Blob([texte], {type: type}));
+    lien.href = url;
+    lien.download = nom;
+    document.body.appendChild(lien);
+    lien.click();
+    document.body.removeChild(lien);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    return true;
+}
+
+function telechargerScriptConnexion() {
+    var champ = document.getElementById('scriptConnexion');
+    if (!champ) return;
+    // Fins de ligne Windows : le navigateur peut les normaliser dans un textarea.
+    var texte = champ.value.replace(/\r?\n/g, '\r\n');
+    if (!telechargerTexte(texte, '{{ generated.nom_script|default:"Connecter_MySchoolGN.cmd" }}', 'application/octet-stream')) {
+        alert("Navigateur trop ancien pour télécharger : envoyez plutôt le code et le message.");
     }
 }
 
