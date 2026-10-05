@@ -7,10 +7,11 @@ from uuid import uuid4
 
 from django.apps import apps
 from django.contrib.auth.hashers import check_password
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from eleves.models import Classe, Ecole, Eleve
+from paiements.tests.support import MIDDLEWARE_SANS_LICENCE
 from presence.models import PresenceJournaliere
 
 from .context import mute_sync
@@ -170,3 +171,58 @@ class JetonPosteTests(TestCase):
         poste.save()
         self.assertFalse(poste.verifier_token('bon-jeton'))
         self.assertTrue(poste.verifier_token('nouveau-jeton'))
+
+
+@override_settings(MIDDLEWARE=MIDDLEWARE_SANS_LICENCE)
+class FichierConfigPosteTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from utilisateurs.models import Profil
+
+        self.ecole = Ecole.objects.create(
+            nom='Ecole Config', adresse='Conakry', telephone='+224600000012', directeur='Direction',
+        )
+        self.autre = Ecole.objects.create(
+            nom='Ecole Voisine', adresse='Conakry', telephone='+224600000013', directeur='Direction',
+        )
+        self.admin = User.objects.create_user(username='admin_config', password='secret123')
+        Profil.objects.update_or_create(user=self.admin, defaults={
+            'role': 'ADMIN', 'ecole': self.ecole, 'is_validated': True, 'telephone': '+224600000014',
+        })
+        self.admin = User.objects.get(pk=self.admin.pk)
+        self.client.force_login(self.admin)
+
+    def test_fichier_genere_est_lu_par_le_poste(self):
+        import tempfile
+        from pathlib import Path
+        from .autosync import _pret, charger_config
+
+        response = self.client.post(reverse('synchronisation:device_setup'), {
+            'ecole_id': self.ecole.pk, 'nom': 'Poste Secretariat',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Télécharger sync_config.json')
+        contenu = response.context['generated']['config_json']
+        config = json.loads(contenu)
+        poste = SyncDevice.objects.get(device_id=config['MYSCHOOL_SYNC_DEVICE_ID'])
+        self.assertEqual((poste.ecole, poste.nom), (self.ecole, 'Poste Secretariat'))
+        self.assertTrue(poste.verifier_token(config['MYSCHOOL_SYNC_TOKEN']))
+        self.assertEqual(config['MYSCHOOL_SYNC_ECOLE_ID'], str(self.ecole.pk))
+
+        with tempfile.TemporaryDirectory() as dossier:
+            Path(dossier, 'sync_config.json').write_text(contenu, encoding='utf-8')
+            lu = charger_config(dossier)
+        self.assertTrue(_pret(lu))
+        self.assertEqual(lu['token'], config['MYSCHOOL_SYNC_TOKEN'])
+        self.assertEqual(lu['interval'], 4)
+
+    def test_admin_ecole_ne_genere_pas_pour_une_autre_ecole(self):
+        response = self.client.post(reverse('synchronisation:device_setup'), {
+            'ecole_id': self.autre.pk, 'nom': 'Intrus',
+        })
+        self.assertIsNone(response.context['generated'])
+        self.assertFalse(SyncDevice.objects.filter(ecole=self.autre).exists())
+
+    def test_lien_dans_le_menu_de_l_admin_d_ecole(self):
+        response = self.client.get(reverse('synchronisation:device_setup'))
+        self.assertContains(response, 'Connexion offline (postes)')

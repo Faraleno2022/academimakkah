@@ -26,6 +26,7 @@ from .engine import (
     apply_sync_change, dependances_pour_poste, emettre_existants, snapshot_changes_for_ecole,
     snapshot_page_for_ecole, get_model, model_label_for, queryset_for_ecole, serialize_instance,
 )
+from .autosync import INTERVALLE_DEFAUT
 from .models import SyncChange, SyncDevice
 from .registry import (
     MODELES_PAR_VERSION, SYNC_MODEL_LABELS, SYNC_MODEL_SET, modeles_inconnus, version_registre,
@@ -160,6 +161,16 @@ def device_setup(request):
                 'device': device,
                 'token': token,
                 'server_url': server_url,
+                # Contenu de sync_config.json, à poser à côté de MySchoolGN.exe.
+                # Le jeton n'est conservé que haché : ce fichier ne peut être
+                # produit qu'ici, et il est téléchargé depuis le navigateur.
+                'config_json': json.dumps({
+                    'MYSCHOOL_SYNC_SERVER_URL': server_url,
+                    'MYSCHOOL_SYNC_ECOLE_ID': str(ecole.id),
+                    'MYSCHOOL_SYNC_DEVICE_ID': str(device.device_id),
+                    'MYSCHOOL_SYNC_TOKEN': token,
+                    'MYSCHOOL_SYNC_INTERVAL': str(INTERVALLE_DEFAUT),
+                }, indent=2),
                 'env_block': "\n".join([
                     f"MYSCHOOL_SYNC_SERVER_URL={server_url}",
                     f"MYSCHOOL_SYNC_DEVICE_ID={device.device_id}",
@@ -167,7 +178,7 @@ def device_setup(request):
                     f"MYSCHOOL_SYNC_ECOLE_ID={ecole.id}",
                 ]),
             }
-            messages.success(request, "Identifiants de synchronisation generes. Copiez-les maintenant.")
+            messages.success(request, "Identifiants de synchronisation générés : téléchargez le fichier sync_config.json maintenant.")
 
     return render(request, 'synchronisation/device_setup.html', {
         'titre_page': 'Connexion offline',

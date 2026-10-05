@@ -41,28 +41,43 @@
     <div class="col-lg-7">
         <div class="card shadow-sm">
             <div class="card-header bg-light">
-                <i class="fas fa-copy me-2"></i>Bloc à copier dans le .env offline
+                <i class="fas fa-file-code me-2"></i>Fichier sync_config.json du poste
             </div>
             <div class="card-body">
                 {% if generated %}
                 <div class="alert alert-warning">
-                    Le token est affiché une seule fois. Copiez ce bloc maintenant dans le fichier <strong>.env</strong> du poste offline.
+                    <i class="fas fa-exclamation-triangle me-1"></i>
+                    Le jeton n'est affiché <strong>qu'une seule fois</strong> : téléchargez le fichier maintenant.
+                    Un fichier par poste — ne copiez pas le même sur deux PC.
                 </div>
-                <textarea id="syncEnvBlock" class="form-control font-monospace" rows="7" readonly>{{ generated.env_block }}</textarea>
-                <div class="d-flex gap-2 mt-3">
-                    <button type="button" class="btn btn-success" onclick="copySyncEnvBlock()">
+                <textarea id="syncConfigJson" class="form-control font-monospace" rows="9" readonly>{{ generated.config_json }}</textarea>
+                <div class="d-flex flex-wrap gap-2 mt-3">
+                    <button type="button" class="btn btn-primary" onclick="telechargerSyncConfig()">
+                        <i class="fas fa-download me-2"></i>Télécharger sync_config.json
+                    </button>
+                    <button type="button" class="btn btn-success" onclick="copierSyncConfig('syncConfigJson')">
                         <i class="fas fa-copy me-2"></i>Copier
                     </button>
+                    {% if user.is_superuser %}
                     <a href="{% url 'admin:synchronisation_syncdevice_changelist' %}" class="btn btn-outline-secondary">
                         <i class="fas fa-list me-2"></i>Voir les postes
                     </a>
+                    {% endif %}
                 </div>
+                <ol class="small text-muted mt-3 mb-0">
+                    <li>Placez <strong>sync_config.json</strong> à côté de <strong>MySchoolGN.exe</strong>
+                        (en général <code>C:\Users\&lt;utilisateur&gt;\AppData\Local\Programs\MySchoolGN\</code>).</li>
+                    <li>Relancez MySchoolGN : le journal <code>myschool.log</code> affiche « [Sync] Active ».</li>
+                </ol>
+                <details class="mt-3">
+                    <summary class="small">Format .env (ancienne méthode)</summary>
+                    <textarea id="syncEnvBlock" class="form-control font-monospace mt-2" rows="5" readonly>{{ generated.env_block }}</textarea>
+                </details>
                 {% else %}
                 <p class="text-muted mb-0">
-                    Remplissez le formulaire puis cliquez sur générer. Les valeurs
-                    <strong>MYSCHOOL_SYNC_DEVICE_ID</strong>,
-                    <strong>MYSCHOOL_SYNC_TOKEN</strong> et
-                    <strong>MYSCHOOL_SYNC_ECOLE_ID</strong> apparaîtront ici.
+                    Remplissez le formulaire puis cliquez sur « Générer les identifiants ».
+                    Le fichier <strong>sync_config.json</strong> du poste apparaîtra ici, prêt à télécharger
+                    et à placer à côté de <strong>MySchoolGN.exe</strong>.
                 </p>
                 {% endif %}
             </div>
@@ -73,14 +88,35 @@
 
 {% block extra_js %}
 <script>
-function copySyncEnvBlock() {
-    const field = document.getElementById('syncEnvBlock');
-    if (!field) return;
-    field.select();
-    field.setSelectionRange(0, 99999);
-    navigator.clipboard.writeText(field.value).catch(function() {
+function copierSyncConfig(id) {
+    var champ = document.getElementById(id);
+    if (!champ) return;
+    champ.select();
+    champ.setSelectionRange(0, 99999);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(champ.value).catch(function () { document.execCommand('copy'); });
+    } else {
         document.execCommand('copy');
-    });
+    }
+}
+
+function telechargerSyncConfig() {
+    var champ = document.getElementById('syncConfigJson');
+    if (!champ) return;
+    var lien = document.createElement('a');
+    if (!window.Blob || !window.URL || typeof lien.download === 'undefined') {
+        // Navigateur trop ancien pour télécharger : copier le contenu à la place.
+        copierSyncConfig('syncConfigJson');
+        alert("Contenu copié : collez-le dans un fichier nommé sync_config.json.");
+        return;
+    }
+    var url = URL.createObjectURL(new Blob([champ.value + '\n'], {type: 'application/json'}));
+    lien.href = url;
+    lien.download = 'sync_config.json';
+    document.body.appendChild(lien);
+    lien.click();
+    document.body.removeChild(lien);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
 }
 </script>
 {% endblock %}
