@@ -1,5 +1,7 @@
 import hashlib
+import secrets
 import uuid
+from datetime import timedelta
 
 from django.contrib.auth.hashers import check_password, make_password
 from django.db import models
@@ -18,6 +20,20 @@ from .mixins import SyncTrackedModel
 # change la clé : l'ancien n'est plus reconnu.
 _JETONS_VERIFIES = {}
 
+# Code de liaison d'un poste à distance : court (dicté au téléphone ou envoyé
+# par WhatsApp), sans caractères ambigus (0/O, 1/I/L), à usage unique.
+ALPHABET_CODE_LIAISON = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
+LONGUEUR_CODE_LIAISON = 8
+DUREE_CODE_LIAISON = timedelta(days=3)
+
+
+def normaliser_code_liaison(code):
+    return ''.join(c for c in str(code or '').upper() if c in ALPHABET_CODE_LIAISON)
+
+
+def empreinte_code_liaison(code):
+    return hashlib.sha256(normaliser_code_liaison(code).encode('utf-8')).hexdigest()
+
 
 class SyncDevice(models.Model):
     ecole = models.ForeignKey(Ecole, on_delete=models.CASCADE, related_name='sync_devices')
@@ -26,6 +42,10 @@ class SyncDevice(models.Model):
     token_hash = models.CharField(max_length=255)
     actif = models.BooleanField(default=True, db_index=True)
     derniere_connexion = models.DateTimeField(null=True, blank=True)
+    # Liaison à distance : seule l'empreinte du code est conservée.
+    code_liaison_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    code_liaison_expire = models.DateTimeField(null=True, blank=True)
+    lie_le = models.DateTimeField(null=True, blank=True)
     date_creation = models.DateTimeField(auto_now_add=True)
     date_modification = models.DateTimeField(auto_now=True)
 
@@ -52,6 +72,24 @@ class SyncDevice(models.Model):
             return False
         _JETONS_VERIFIES[cle] = empreinte
         return True
+
+    def nouveau_code_liaison(self):
+        """Prépare un code de liaison (affiché une fois) ; à enregistrer par l'appelant."""
+        code = ''.join(secrets.choice(ALPHABET_CODE_LIAISON) for _ in range(LONGUEUR_CODE_LIAISON))
+        self.code_liaison_hash = empreinte_code_liaison(code)
+        self.code_liaison_expire = timezone.now() + DUREE_CODE_LIAISON
+        return f'{code[:4]}-{code[4:]}'
+
+    @classmethod
+    def par_code_liaison(cls, code):
+        """Poste actif dont le code est valide (non utilisé, non expiré), sinon None."""
+        if len(normaliser_code_liaison(code)) != LONGUEUR_CODE_LIAISON:
+            return None
+        return cls.objects.select_related('ecole').filter(
+            code_liaison_hash=empreinte_code_liaison(code),
+            code_liaison_expire__gt=timezone.now(),
+            actif=True,
+        ).first()
 
     def marquer_connexion(self):
         self.derniere_connexion = timezone.now()

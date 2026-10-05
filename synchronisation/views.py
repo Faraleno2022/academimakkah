@@ -27,6 +27,7 @@ from .engine import (
     snapshot_page_for_ecole, get_model, model_label_for, queryset_for_ecole, serialize_instance,
 )
 from .autosync import INTERVALLE_DEFAUT
+from .liaison import NOM_FICHIER_SCRIPT, message_poste, script_connexion_poste, utiliser_code
 from .models import SyncChange, SyncDevice
 from .registry import (
     MODELES_PAR_VERSION, SYNC_MODEL_LABELS, SYNC_MODEL_SET, modeles_inconnus, version_registre,
@@ -135,6 +136,15 @@ def health(request):
     })
 
 
+def _script_ou_rien(server_url, code):
+    """Fichier de connexion ; aucun si l'adresse du site ne s'y prête pas (http hors local)."""
+    from .liaison import LiaisonImpossible
+    try:
+        return script_connexion_poste(server_url, code)
+    except LiaisonImpossible:
+        return ''
+
+
 @login_required
 def device_setup(request):
     if not user_is_admin(request.user):
@@ -154,6 +164,7 @@ def device_setup(request):
             token = secrets.token_urlsafe(32)
             device = SyncDevice(ecole=ecole, nom=nom or 'Poste local')
             device.definir_token(token)
+            code_liaison = device.nouveau_code_liaison()
             device.save()
 
             server_url = request.build_absolute_uri('/').rstrip('/')
@@ -161,6 +172,13 @@ def device_setup(request):
                 'device': device,
                 'token': token,
                 'server_url': server_url,
+                # Liaison à distance : le fichier .cmd ne contient que le code
+                # (usage unique, expirant), jamais le jeton.
+                'code_liaison': code_liaison,
+                'code_expire': device.code_liaison_expire,
+                'script_cmd': _script_ou_rien(server_url, code_liaison),
+                'nom_script': NOM_FICHIER_SCRIPT,
+                'message_poste': message_poste(server_url, code_liaison, device.code_liaison_expire, ecole.nom),
                 # Contenu de sync_config.json, à poser à côté de MySchoolGN.exe.
                 # Le jeton n'est conservé que haché : ce fichier ne peut être
                 # produit qu'ici, et il est téléchargé depuis le navigateur.
@@ -178,13 +196,68 @@ def device_setup(request):
                     f"MYSCHOOL_SYNC_ECOLE_ID={ecole.id}",
                 ]),
             }
-            messages.success(request, "Identifiants de synchronisation générés : téléchargez le fichier sync_config.json maintenant.")
+            messages.success(request, "Poste créé : envoyez le fichier de connexion (ou le code) à l'utilisateur du poste.")
 
     return render(request, 'synchronisation/device_setup.html', {
         'titre_page': 'Connexion offline',
         'ecoles': ecoles,
         'generated': generated,
     })
+
+
+ESSAIS_LIAISON_MAX = 10
+FENETRE_ESSAIS_LIAISON = 15 * 60
+
+
+def _cle_essais_liaison(request):
+    adresse = (request.META.get('HTTP_X_FORWARDED_FOR') or request.META.get('REMOTE_ADDR') or '').split(',')[0].strip()
+    return f'sync-liaison-echecs:{adresse}'
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'POST'])
+def liaison(request):
+    """Liaison d'un poste éloigné par code à usage unique.
+
+    GET ?code= : aperçu (école, poste) sans consommer le code.
+    POST {"code"} : consomme le code et renvoie la configuration du poste.
+    Les échecs répétés depuis une même adresse sont bloqués un moment.
+    """
+    from django.core.cache import cache
+    from .models import SyncDevice
+
+    cle = _cle_essais_liaison(request)
+    if (cache.get(cle) or 0) >= ESSAIS_LIAISON_MAX:
+        return JsonResponse({'ok': False, 'error': "Trop d'essais. Réessayez dans quelques minutes."}, status=429)
+
+    if request.method == 'POST':
+        data = _json_body(request) or {}
+        code = data.get('code')
+    else:
+        code = request.GET.get('code')
+
+    def echec():
+        cache.set(cle, (cache.get(cle) or 0) + 1, FENETRE_ESSAIS_LIAISON)
+        return JsonResponse(
+            {'ok': False, 'error': 'Code de liaison invalide, expiré ou déjà utilisé.'}, status=404,
+        )
+
+    if request.method == 'GET':
+        poste = SyncDevice.par_code_liaison(code)
+        if poste is None:
+            return echec()
+        return JsonResponse({
+            'ok': True,
+            'ecole_nom': poste.ecole.nom,
+            'ecole_sync_uuid': str(poste.ecole.sync_uuid),
+            'poste_nom': poste.nom,
+            'expire_le': poste.code_liaison_expire.isoformat(),
+        })
+
+    resultat = utiliser_code(code, request.build_absolute_uri('/').rstrip('/'))
+    if resultat is None:
+        return echec()
+    return JsonResponse({'ok': True, **resultat})
 
 
 @csrf_exempt

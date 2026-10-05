@@ -24,6 +24,7 @@ from .static_views import serve_static_no_cache
 from .activation_views import activer_licence
 from .desktop_views import arreter_application
 from . import sauvegarde_views
+from synchronisation import views_poste as sync_poste_views
 from utilisateurs.license_api import activate_license, verify_license
 from eleves.views_collecte import collecte_publique
 from notes.rapport_scolaire import (
@@ -89,6 +90,8 @@ urlpatterns = [
     path('desktop/arreter/', arreter_application, name='arreter_application'),
     # Sauvegarde des données (règle 3-2-1) — application desktop
     path('sauvegarde/', sauvegarde_views.tableau_sauvegarde, name='sauvegarde_tableau'),
+    # Connexion d'un poste au serveur en ligne par code de liaison — application desktop
+    path('synchronisation/connecter/', sync_poste_views.connexion_serveur, name='synchronisation_connexion_serveur'),
     path('sauvegarde/reglages/', sauvegarde_views.enregistrer_reglages, name='sauvegarde_reglages'),
     path('sauvegarde/destination/ajouter/', sauvegarde_views.ajouter_destination, name='sauvegarde_destination_ajouter'),
     path('sauvegarde/destination/retirer/', sauvegarde_views.retirer_destination, name='sauvegarde_destination_retirer'),
