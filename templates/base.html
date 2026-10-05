@@ -683,6 +683,11 @@
                                 <li><a class="dropdown-item" href="{% url 'administration:journal_modifications' %}">
                                     <i class="fas fa-history me-1"></i>Corbeille mémoire (modifications)
                                 </a></li>
+                                {% if not user.is_superuser and user.profil.role == 'ADMIN' and not is_offline %}
+                                <li><a class="dropdown-item" href="{% url 'synchronisation:device_setup' %}">
+                                    <i class="fas fa-link me-1"></i>Connexion offline (postes)
+                                </a></li>
+                                {% endif %}
                                 {% endif %}
 
                                 {% if user.is_superuser %}
