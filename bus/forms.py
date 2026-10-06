@@ -2,6 +2,7 @@ from django import forms
 
 from eleves.models import Classe, Eleve
 from paiements.models import ModePaiement
+from paiements.referentiels import mode_paiement_par_defaut
 
 from .models import PERIODICITES_GRILLE, AbonnementBus, AbonnementCantine, GrilleTarifaireBus
 
@@ -157,6 +158,8 @@ class AbonnementBusForm(forms.ModelForm):
         self.fields['grille'].queryset = grilles.order_by('-annee_scolaire', 'zone')
         self.fields['grille'].empty_label = "Sélectionner la zone et l'année"
         self.fields['mode_paiement'].queryset = ModePaiement.objects.filter(actif=True).order_by('nom')
+        if not self.instance.pk and not self.initial.get('mode_paiement'):
+            self.fields['mode_paiement'].initial = mode_paiement_par_defaut()
         self.fields['date_debut'].label = "Date du paiement"
         self.fields['periodicite'].label = "Type de paiement / tranche"
         P = AbonnementBus.Periodicite
@@ -169,6 +172,7 @@ class AbonnementBusForm(forms.ModelForm):
             ("Plusieurs tranches", [
                 (P.T1_DEMI_T2, "Tranche 1 + ½ Tranche 2"),
                 (P.T1_T2, "Tranche 1 + Tranche 2"),
+                (P.T2_T3, "Tranche 2 + Tranche 3"),
                 (P.T1_T2_DEMI_T3, "Tranche 1 + Tranche 2 + ½ Tranche 3"),
                 (P.ANNUEL, "Tranche 1 + Tranche 2 + Tranche 3 (annuel)"),
             ]),

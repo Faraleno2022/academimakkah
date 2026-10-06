@@ -94,6 +94,71 @@ class PaiementsCombinesEtControleChauffeurTests(TestCase):
         situation = self.grille.situation_paiements(self.eleve)
         self.assertEqual(situation['T1_T2_T3M']['reste'], Decimal('187500'))
 
+    def test_tranche_2_plus_tranche_3_ne_couvre_pas_la_tranche_1(self):
+        self.assertEqual(self.grille.montant_pour('T2_T3'), Decimal('250000'))
+        self.assertEqual(self.grille.echeance_pour('T2_T3'), date(2027, 4, 15))
+        self.payer(self.eleve, 'T2_T3', 250000)
+        situation = self.grille.situation_paiements(self.eleve)
+        self.assertEqual(situation['T1']['reste'], Decimal('150000'))
+        self.assertEqual(situation['T2']['reste'], 0)
+        self.assertEqual(situation['T3']['reste'], 0)
+        self.assertEqual(situation['T2_T3']['reste'], 0)
+        self.assertEqual(situation['T1_T2']['reste'], Decimal('150000'))
+        self.assertEqual(situation['ANNUEL']['reste'], Decimal('150000'))
+
+    def test_paiement_partiel_t2_t3_remplit_t2_puis_t3(self):
+        self.payer(self.eleve, 'T2_T3', 160000)
+        situation = self.grille.situation_paiements(self.eleve)
+        self.assertEqual(situation['T1']['paye'], 0)
+        self.assertEqual(situation['T2']['reste'], 0)
+        self.assertEqual(situation['T3']['paye'], Decimal('35000'))
+        self.assertEqual(situation['T2_T3']['reste'], Decimal('90000'))
+
+    def test_t1_t2_puis_t2_t3_solde_l_annee(self):
+        self.payer(self.eleve, 'T1_T2', 275000)
+        situation = self.grille.situation_paiements(self.eleve)
+        self.assertEqual(situation['T2_T3']['reste'], Decimal('125000'))
+        self.payer(self.eleve, 'T2_T3', 125000)
+        situation = self.grille.situation_paiements(self.eleve)
+        for code in ('T1', 'T2', 'T3', 'ANNUEL', 'T1_T2', 'T2_T3'):
+            self.assertEqual(situation[code]['reste'], 0, code)
+
+    def test_t2_t3_puis_t1_t2_ne_reporte_rien_sur_t3(self):
+        self.payer(self.eleve, 'T1', 50000)
+        self.payer(self.eleve, 'T2_T3', 250000)
+        situation = self.grille.situation_paiements(self.eleve)
+        self.assertEqual(situation['T1_T2']['reste'], Decimal('100000'))
+        self.payer(self.eleve, 'T1_T2', 100000)
+        situation = self.grille.situation_paiements(self.eleve)
+        self.assertEqual(situation['ANNUEL'], {
+            'du': Decimal('400000'), 'paye': Decimal('400000'), 'reste': Decimal('0'),
+        })
+        self.assertEqual(situation['T1']['reste'], 0)
+
+    def test_formulaire_paiement_partiel_t2_t3_et_depassement(self):
+        donnees = {
+            'eleve': self.eleve.pk, 'grille': self.grille.pk, 'periodicite': 'T2_T3',
+            'montant': 250001, 'date_debut': '2026-10-02', 'mode_paiement': self.mode.pk,
+        }
+        response = self.client.post(reverse('bus:nouveau'), donnees)
+        self.assertContains(response, 'Le montant dépasse le reste à payer')
+        donnees['montant'] = 100000
+        response = self.client.post(reverse('bus:nouveau'), donnees)
+        self.assertRedirects(response, reverse('bus:liste'))
+        paiement = AbonnementBus.objects.get(eleve=self.eleve)
+        self.assertEqual(paiement.get_periodicite_display(), 'Tranche 2 + Tranche 3')
+
+    def test_api_tarif_t2_t3_detail_par_tranche(self):
+        self.payer(self.eleve, 'T2', 25000)
+        data = self.client.get(reverse('bus:tarif_bus_json'), {
+            'eleve_id': self.eleve.pk, 'grille_id': self.grille.pk, 'periodicite': 'T2_T3',
+        }).json()
+        self.assertEqual((data['du'], data['paye'], data['reste']), (250000, 25000, 225000))
+        self.assertEqual(data['detail'], [
+            {'tranche': 'T2', 'du': 125000, 'reste': 100000},
+            {'tranche': 'T3', 'du': 125000, 'reste': 125000},
+        ])
+
     def test_formulaire_accepte_un_paiement_combine_et_refuse_le_depassement(self):
         donnees = {
             'eleve': self.eleve.pk, 'grille': self.grille.pk, 'periodicite': 'T1_T2M',

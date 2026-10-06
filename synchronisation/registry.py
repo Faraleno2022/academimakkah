@@ -120,4 +120,7 @@ def version_registre(valeur):
 CLES_NATURELLES = {
     'presence.PresenceJournaliere': ('eleve', 'date'),
     'notes.RemiseDevoir': ('devoir', 'eleve'),
+    # Modes et types créés par défaut sur un poste avant sa liaison au serveur.
+    'paiements.ModePaiement': ('nom',),
+    'paiements.TypePaiement': ('nom',),
 }

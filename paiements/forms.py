@@ -143,6 +143,9 @@ class PaiementForm(forms.ModelForm):
         # Filtrer les types et modes actifs
         self.fields['type_paiement'].queryset = TypePaiement.objects.filter(actif=True)
         self.fields['mode_paiement'].queryset = ModePaiement.objects.filter(actif=True)
+        if not self.instance.pk and 'mode_paiement' not in self.initial:
+            from .referentiels import mode_paiement_par_defaut
+            self.fields['mode_paiement'].initial = mode_paiement_par_defaut()
         
         # Définir la date du jour par défaut si pas de valeur initiale
         if not self.instance.pk and 'date_paiement' not in self.initial:

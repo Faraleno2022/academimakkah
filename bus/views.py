@@ -337,16 +337,27 @@ def tarif_bus_json(request):
 
     modifier_id = request.GET.get('exclure')
     exclude_pk = int(modifier_id) if modifier_id and modifier_id.isdigit() else None
-    situation = grille.situation_paiements(eleve, exclude_pk=exclude_pk)[periodicite]
+    situation_complete = grille.situation_paiements(eleve, exclude_pk=exclude_pk)
+    situation = situation_complete[periodicite]
     du = situation['du']
     paye = situation['paye']
     reste = situation['reste']
     echeance = grille.echeance_pour(periodicite)
+    # Reste de chaque tranche concernée (part due limitée à la moitié pour « ½ tranche »).
+    detail = [
+        {
+            'tranche': code,
+            'du': int(part),
+            'reste': int(max(part - min(situation_complete[code]['paye'], part), 0)),
+        }
+        for code, part in grille.parts_dues(periodicite).items()
+    ]
     return JsonResponse({
         'success': True,
         'du': int(du),
         'paye': int(paye),
         'reste': int(reste),
+        'detail': detail,
         'echeance': echeance.isoformat() if echeance else '',
         'zone': grille.zone,
         'annee_scolaire': grille.annee_scolaire,
