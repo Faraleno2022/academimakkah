@@ -95,6 +95,10 @@ def _cycle(base_dir):
         # premier lot recu du serveur avant de traiter le reste. Sans ce
         # cas particulier, le worker ne ferait jamais rien pour un poste
         # neuf (ecole introuvable en boucle, silencieusement).
+        # Les modes/types créés par défaut à l'installation cèdent la place
+        # à ceux de l'école, reçus du serveur.
+        from paiements.referentiels import retirer_referentiels_inutilises
+        retirer_referentiels_inutilises()
         nb_recus = pull_changes(
             config['server_url'], config['device_id'], config['token'],
             ecole=None, initial=True,

@@ -549,6 +549,15 @@ def setup_database():
     print("[MySchoolGN] Migration de la base de données...")
     call_command('migrate', '--run-syncdb', verbosity=0)
 
+    # Modes et types de paiement prêts à l'emploi : l'utilisateur n'a pas à les saisir.
+    try:
+        from paiements.referentiels import assurer_referentiels_paiement
+        modes, types = assurer_referentiels_paiement()
+        if modes or types:
+            print(f"[MySchoolGN] Référentiels de paiement ajoutés : {', '.join(modes + types)}")
+    except Exception as e:
+        print(f"[MySchoolGN] Avertissement référentiels de paiement : {e}")
+
     if is_new_db:
         print("[MySchoolGN] Nouvelle installation détectée.")
         try:

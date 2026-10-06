@@ -127,6 +127,8 @@
               <span class="input-group-text">GNF</span>
             </div>
             <div id="montantDisplay" class="montant-display mt-1" style="display:none;"></div>
+            <div class="form-text">Rempli avec le reste de la tranche choisie ; saisissez un montant inférieur pour un paiement partiel.</div>
+            <div id="montantPartiel" class="small fw-semibold mt-1" style="display:none;"></div>
             {% if form.montant.errors %}<div class="text-danger small">{{ form.montant.errors.0 }}</div>{% endif %}
           </div>
           <div class="col-md-4 mb-3">
@@ -158,6 +160,7 @@
             <div class="col-md-4"><small>Déjà payé</small><div class="fw-bold" id="tarifPaye">0 GNF</div></div>
             <div class="col-md-4"><small>Reste avant ce reçu</small><div class="fw-bold text-danger" id="tarifReste">0 GNF</div></div>
           </div>
+          <div id="tarifDetail" class="small text-center mt-2" style="display:none;"></div>
         </div>
       </div>
 
@@ -228,6 +231,10 @@ document.addEventListener('DOMContentLoaded', function() {
   const tarifDu = document.getElementById('tarifDu');
   const tarifPaye = document.getElementById('tarifPaye');
   const tarifReste = document.getElementById('tarifReste');
+  const tarifDetail = document.getElementById('tarifDetail');
+  const montantPartiel = document.getElementById('montantPartiel');
+  const libellesTranches = {T1: 'Tranche 1', T2: 'Tranche 2', T3: 'Tranche 3'};
+  let resteAvantRecu = null;
   const tarifBusUrl = '{% url "bus:tarif_bus_json" %}';
   const eleveInfoUrlTemplate = '{% url "bus:get_eleve_info_json" 0 %}';
   const paiementEnModification = '{{ form.instance.pk|default:"" }}';
@@ -317,9 +324,28 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
-  async function chargerTarif() {
+  function afficherPaiementPartiel() {
+    if (!montantPartiel) return;
+    const v = parseFloat(montantInput && montantInput.value);
+    if (resteAvantRecu === null || isNaN(v) || v <= 0 || v === resteAvantRecu) {
+      montantPartiel.style.display = 'none';
+      return;
+    }
+    if (v > resteAvantRecu) {
+      montantPartiel.style.color = '#dc3545';
+      montantPartiel.textContent = 'Montant supérieur au reste à payer (' + formatGNF(resteAvantRecu) + ').';
+    } else {
+      montantPartiel.style.color = '#b35c00';
+      montantPartiel.textContent = 'Paiement partiel : il restera ' + formatGNF(resteAvantRecu - v) + ' après ce reçu.';
+    }
+    montantPartiel.style.display = 'block';
+  }
+
+  async function chargerTarif(conserverMontant) {
     if (!eleveSelect || !eleveSelect.value || !grilleSelect || !grilleSelect.value || !periodiciteSelect || !periodiciteSelect.value) {
       if (tarifInfo) tarifInfo.style.display = 'none';
+      resteAvantRecu = null;
+      afficherPaiementPartiel();
       return;
     }
     try {
@@ -334,13 +360,28 @@ document.addEventListener('DOMContentLoaded', function() {
       tarifDu.textContent = formatGNF(data.du);
       tarifPaye.textContent = formatGNF(data.paye);
       tarifReste.textContent = formatGNF(data.reste);
+      const detail = data.detail || [];
+      if (tarifDetail && detail.length > 1) {
+        tarifDetail.textContent = detail.map(function(d) {
+          return (libellesTranches[d.tranche] || d.tranche) + ' : ' + formatGNF(d.du) + ' (reste ' + formatGNF(d.reste) + ')';
+        }).join(' · ');
+        tarifDetail.style.display = 'block';
+      } else if (tarifDetail) {
+        tarifDetail.style.display = 'none';
+      }
       tarifInfo.style.display = 'block';
-      if (!paiementEnModification && montantInput) {
+      resteAvantRecu = Number(data.reste);
+      // Au rechargement après une erreur, le montant saisi (paiement partiel) est conservé.
+      const garderSaisie = conserverMontant === true && montantInput && montantInput.value;
+      if (!paiementEnModification && montantInput && !garderSaisie) {
         montantInput.value = data.reste;
         montantInput.dispatchEvent(new Event('input'));
       }
+      afficherPaiementPartiel();
     } catch (error) {
       if (tarifInfo) tarifInfo.style.display = 'none';
+      resteAvantRecu = null;
+      afficherPaiementPartiel();
     }
   }
 
@@ -415,8 +456,8 @@ document.addEventListener('DOMContentLoaded', function() {
     if (eleveInfoSection) eleveInfoSection.style.display = 'none';
     chargerTarif();
   });
-  if (periodiciteSelect) periodiciteSelect.addEventListener('change', chargerTarif);
-  if (grilleSelect) grilleSelect.addEventListener('change', chargerTarif);
+  if (periodiciteSelect) periodiciteSelect.addEventListener('change', function() { chargerTarif(); });
+  if (grilleSelect) grilleSelect.addEventListener('change', function() { chargerTarif(); });
   if (eleveSelect) eleveSelect.addEventListener('change', async function() {
     await chargerEleveSelectionne(true);
     chargerTarif();
@@ -434,10 +475,11 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     };
     montantInput.addEventListener('input', updateMontant);
+    montantInput.addEventListener('input', afficherPaiementPartiel);
     updateMontant();
   }
   chargerEleveSelectionne(false);
-  chargerTarif();
+  chargerTarif(true);
 
   // Validation élève à la soumission
   form && form.addEventListener('submit', function(e) {
