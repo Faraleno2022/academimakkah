@@ -122,6 +122,23 @@ class RecettesAbonnementsTests(TestCase):
         export = self.client.get(reverse('bus:export_cantine_excel'), {'periode': 'annee'})
         self.assertTrue(export.content.startswith(b'PK'))
 
+    def test_details_cantine_reste_dans_la_cantine(self):
+        today = timezone.localdate()
+        self._bus(self.eleve, today, 100000)
+        self._cantine(self.eleve, today, 300000)
+        liste = self.client.get(reverse('bus:liste_abonnements_cantine'))
+        details = f"{reverse('bus:historique_abonnements')}?eleve={self.eleve.pk}&type=cantine"
+        self.assertContains(liste, details)
+        page = self.client.get(details)
+        self.assertContains(page, "Abonnements cantine d&#x27;un élève")
+        self.assertContains(page, reverse('bus:liste_abonnements_cantine'))
+        self.assertNotContains(page, 'Bus scolaire</a>')
+        self.assertNotContains(page, 'Nouveau paiement bus')
+        self.assertEqual([ligne['service'] for ligne in page.context['lignes']], ['Cantine'])
+        bus = self.client.get(f"{reverse('bus:historique_abonnements')}?eleve={self.eleve.pk}&type=bus")
+        self.assertContains(bus, "Abonnements bus d&#x27;un élève")
+        self.assertNotContains(bus, 'Nouvel abonnement cantine')
+
     def test_tableaux_de_bord_affichent_les_recettes(self):
         today = timezone.localdate()
         self._bus(self.eleve, today, 125000)

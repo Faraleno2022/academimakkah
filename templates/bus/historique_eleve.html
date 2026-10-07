@@ -2,16 +2,27 @@
 {% load humanize %}
 {% block title %}{{ titre_page }}{% endblock %}
 {% block breadcrumb_items %}
+{% if type_abonnement == 'cantine' %}
+<li class="breadcrumb-item"><a href="{% url 'bus:tableau_bord_cantine' %}">Cantine scolaire</a></li>
+<li class="breadcrumb-item"><a href="{% url 'bus:liste_abonnements_cantine' %}">Abonnements cantine</a></li>
+{% else %}
 <li class="breadcrumb-item"><a href="{% url 'bus:index' %}">Bus scolaire</a></li>
-<li class="breadcrumb-item active" aria-current="page">Abonnements d'un élève</li>
+{% endif %}
+<li class="breadcrumb-item active" aria-current="page">{{ titre_page }}</li>
 {% endblock %}
 {% block page_actions %}
+{% if type_abonnement == 'cantine' %}
+<a class="btn btn-outline-success" href="{% url 'bus:liste_abonnements_cantine' %}"><i class="fas fa-arrow-left me-1"></i>Liste des abonnements cantine</a>
+{% elif type_abonnement == 'bus' %}
+<a class="btn btn-outline-primary" href="{% url 'bus:liste' %}"><i class="fas fa-arrow-left me-1"></i>Liste des paiements bus</a>
+{% else %}
 <a class="btn btn-outline-secondary" href="{% url 'bus:liste' %}"><i class="fas fa-bus me-1"></i>Abonnements bus</a>
 <a class="btn btn-outline-success" href="{% url 'bus:liste_abonnements_cantine' %}"><i class="fas fa-utensils me-1"></i>Abonnements cantine</a>
+{% endif %}
 {% endblock %}
 
 {% block content %}
-<h2 class="h4 mb-3"><i class="fas fa-id-card me-2 text-primary"></i>{{ titre_page }}</h2>
+<h2 class="h4 mb-3"><i class="fas {% if type_abonnement == 'cantine' %}fa-utensils text-success{% elif type_abonnement == 'bus' %}fa-bus text-primary{% else %}fa-id-card text-primary{% endif %} me-2"></i>{{ titre_page }}</h2>
 
 <form method="get" class="card mb-3" id="historiqueForm">
   <div class="card-body row g-2 align-items-end">
@@ -69,8 +80,8 @@
       <a class="btn btn-outline-success" href="{% url 'bus:historique_abonnements_export' 'excel' %}?eleve={{ eleve.pk }}&type={{ type_abonnement }}"><i class="fas fa-file-excel me-1"></i>Excel</a>
     </div>
     <div class="btn-group flex-wrap">
-      <a class="btn btn-primary" href="{% url 'bus:nouveau' %}?eleve={{ eleve.pk }}"><i class="fas fa-bus me-1"></i>Nouveau paiement bus</a>
-      <a class="btn btn-success" href="{% url 'bus:creer_abonnement_cantine' %}?eleve={{ eleve.pk }}"><i class="fas fa-utensils me-1"></i>Nouvel abonnement cantine</a>
+      {% if type_abonnement != 'cantine' %}<a class="btn btn-primary" href="{% url 'bus:nouveau' %}?eleve={{ eleve.pk }}"><i class="fas fa-bus me-1"></i>Nouveau paiement bus</a>{% endif %}
+      {% if type_abonnement != 'bus' %}<a class="btn btn-success" href="{% url 'bus:creer_abonnement_cantine' %}?eleve={{ eleve.pk }}"><i class="fas fa-utensils me-1"></i>Nouvel abonnement cantine</a>{% endif %}
     </div>
   </div>
 </div>

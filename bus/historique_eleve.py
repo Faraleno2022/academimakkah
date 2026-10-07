@@ -539,7 +539,7 @@ def pdf_liste(blocs, ecole, titre="LISTE DES ABONNEMENTS"):
     return buffer.getvalue()
 
 
-def pdf_carnet(blocs, ecole):
+def pdf_carnet(blocs, ecole, avec_remises_bus=True):
     """Carnet d'abonnement (portrait) : une page par élève, avec colonne de visa."""
     buffer = BytesIO()
     doc, page = _document(buffer, A4, "Carnet d'abonnement", ecole)
@@ -557,7 +557,7 @@ def pdf_carnet(blocs, ecole):
             _entete(ecole, "CARNET<br/>D'ABONNEMENT", largeur, styles), Spacer(1, 0.3 * cm),
             _bloc_eleve(eleve, resume, largeur, styles), Spacer(1, 0.35 * cm),
         ]
-        for item in remises_bus_eleve(eleve):
+        for item in (remises_bus_eleve(eleve) if avec_remises_bus else []):
             elements += [
                 Paragraph(f"<b>Remise bus :</b> {escape(texte_remise_bus(item))}", styles['AboInfo']),
                 Spacer(1, 0.15 * cm),
