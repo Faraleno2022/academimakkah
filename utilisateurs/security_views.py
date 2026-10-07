@@ -16,6 +16,8 @@ from django.utils.decorators import method_decorator
 from django.views.generic import View
 from django.db import OperationalError, transaction, connection
 import logging
+import os
+import re
 import time
 from datetime import datetime, timedelta
 from django.urls import reverse
@@ -622,14 +624,98 @@ def check_session_security(request):
     return None  # Session valide
 
 
+# ====== Réinitialisation du mot de passe (application desktop uniquement) ======
+DESKTOP_RESET_SESSION_KEY = 'desktop_pwd_reset'
+DESKTOP_RESET_VALIDITE_SECONDS = 600
+DESKTOP_RESET_MAX_ECHECS = 5
+DESKTOP_RESET_BLOCAGE_SECONDS = 900
+
+
+def _is_desktop():
+    """Vrai uniquement quand l'app est lancée depuis l'exe desktop."""
+    return os.environ.get('OFFLINE_MODE', '0') == '1'
+
+
+def _normaliser_numero(numero):
+    """Réduit un numéro guinéen à ses 9 chiffres locaux (+224 / 00224 retirés)."""
+    chiffres = re.sub(r'\D', '', numero or '')
+    for prefixe in ('00224', '224'):
+        if chiffres.startswith(prefixe) and len(chiffres) > 9:
+            chiffres = chiffres[len(prefixe):]
+            break
+    return chiffres
+
+
+def _utilisateur_reset_desktop(request):
+    """Utilisateur dont le téléphone a été vérifié récemment, sinon None."""
+    data = request.session.get(DESKTOP_RESET_SESSION_KEY) or {}
+    if not data.get('user_id') or time.time() - data.get('at', 0) > DESKTOP_RESET_VALIDITE_SECONDS:
+        request.session.pop(DESKTOP_RESET_SESSION_KEY, None)
+        return None
+    return get_user_model().objects.filter(pk=data['user_id'], is_active=True).first()
+
+
+@csrf_protect
+@never_cache
 def password_reset_info(request):
     """
-    Page d'information pour la réinitialisation du mot de passe.
-    Ne propose pas de formulaire, indique seulement de contacter l'administrateur.
+    Réinitialisation du mot de passe.
+
+    - Serveur web : page d'information, contacter l'administrateur.
+    - Application desktop : l'utilisateur confirme son nom d'utilisateur et le
+      téléphone enregistré sur son profil, puis choisit un
+      nouveau mot de passe.
     """
-    return render(request, 'utilisateurs/password_reset_info.html', {
-        'message': "Contactez l'administrateur FARA LENO AU +224622613559 pour réinitialiser votre mot de passe.",
-    })
+    if not _is_desktop():
+        return render(request, 'utilisateurs/password_reset_info.html', {
+            'message': "Contactez l'administrateur FARA LENO AU +224622613559 pour réinitialiser votre mot de passe.",
+        })
+
+    from django.contrib.auth.forms import SetPasswordForm
+
+    ip = get_client_ip(request)
+    cle_echecs = f'desktop_pwd_reset_fail_{ip}'
+    context = {'desktop_reset': True}
+
+    if request.method == 'POST' and request.POST.get('etape') == 'verifier':
+        request.session.pop(DESKTOP_RESET_SESSION_KEY, None)
+        username = (request.POST.get('username') or '').strip()
+        context['prefill_username'] = username
+        if cache.get(cle_echecs, 0) >= DESKTOP_RESET_MAX_ECHECS:
+            messages.error(request, _("Trop de tentatives. Réessayez dans 15 minutes."))
+            return render(request, 'utilisateurs/password_reset_info.html', context)
+
+        user = get_user_model().objects.filter(username__iexact=username, is_active=True).first() if username else None
+        numero = _normaliser_numero(request.POST.get('telephone'))
+        numero_profil = _normaliser_numero(getattr(getattr(user, 'profil', None), 'telephone', '')) if user else ''
+        if user and numero and numero == numero_profil:
+            cache.delete(cle_echecs)
+            request.session[DESKTOP_RESET_SESSION_KEY] = {'user_id': user.pk, 'at': time.time()}
+            logger.info("Reinitialisation desktop du mot de passe : telephone verifie pour %s", user.username)
+            return redirect('utilisateurs:password_reset_info')
+
+        cache.set(cle_echecs, cache.get(cle_echecs, 0) + 1, DESKTOP_RESET_BLOCAGE_SECONDS)
+        messages.error(request, _("Nom d'utilisateur ou numéro de téléphone incorrect."))
+        return render(request, 'utilisateurs/password_reset_info.html', context)
+
+    user = _utilisateur_reset_desktop(request)
+    if user is None:
+        return render(request, 'utilisateurs/password_reset_info.html', context)
+
+    form = SetPasswordForm(user, request.POST if request.method == 'POST' else None)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        request.session.pop(DESKTOP_RESET_SESSION_KEY, None)
+        reset_failed_attempts(ip, user.username)
+        cache.delete(f'blocked_login_{ip}')
+        cache.delete(f'blocked_login_{ip}_{user.username.lower()}')
+        reset_axes_lockout(ip, user.username)
+        logger.info("Reinitialisation desktop du mot de passe effectuee pour %s", user.username)
+        messages.success(request, _("Mot de passe modifié. Connectez-vous avec le nouveau mot de passe."))
+        return redirect('utilisateurs:login')
+
+    context.update({'form': form, 'reset_user': user})
+    return render(request, 'utilisateurs/password_reset_info.html', context)
 
 
 @login_required
