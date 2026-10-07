@@ -1,0 +1,65 @@
+{% extends 'base.html' %}
+
+{% block title %}Bus scolaire - {{ titre_page }}{% endblock %}
+
+{% block breadcrumb_items %}
+<li class="breadcrumb-item"><a href="{% url 'bus:index' %}">Bus scolaire</a></li>
+<li class="breadcrumb-item"><a href="{% url 'bus:remises' %}">Élèves avec remise</a></li>
+<li class="breadcrumb-item active" aria-current="page">{{ titre_page }}</li>
+{% endblock %}
+
+{% block content %}
+<div class="card shadow-sm border-0" style="max-width: 760px;">
+  <div class="card-header bg-white py-3">
+    <h5 class="mb-1"><i class="fas fa-percent text-primary me-2"></i>{{ titre_page }}</h5>
+    <p class="text-muted mb-0">Pourcentage : appliqué à chaque tranche cochée. Montant fixe : réparti au prorata des tranches cochées.</p>
+  </div>
+  <div class="card-body">
+    <form method="post" novalidate>
+      {% csrf_token %}
+      {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors.0 }}</div>{% endif %}
+      <div class="row">
+        <div class="col-md-6 mb-3">
+          <label class="form-label" for="{{ form.eleve.id_for_label }}">Élève</label>
+          {{ form.eleve }}
+          {% if form.eleve.errors %}<div class="text-danger small">{{ form.eleve.errors.0 }}</div>{% endif %}
+        </div>
+        <div class="col-md-6 mb-3">
+          <label class="form-label" for="{{ form.grille.id_for_label }}">Grille (zone et année)</label>
+          {{ form.grille }}
+          {% if form.grille.errors %}<div class="text-danger small">{{ form.grille.errors.0 }}</div>{% endif %}
+        </div>
+        <div class="col-md-4 mb-3">
+          <label class="form-label" for="{{ form.type_remise.id_for_label }}">Type de remise</label>
+          {{ form.type_remise }}
+        </div>
+        <div class="col-md-4 mb-3">
+          <label class="form-label" for="{{ form.valeur.id_for_label }}">Valeur</label>
+          {{ form.valeur }}
+          {% if form.valeur.errors %}<div class="text-danger small">{{ form.valeur.errors.0 }}</div>{% endif %}
+        </div>
+        <div class="col-md-4 mb-3">
+          <label class="form-label" for="{{ form.motif.id_for_label }}">Motif</label>
+          {{ form.motif }}
+          {% if form.motif.errors %}<div class="text-danger small">{{ form.motif.errors.0 }}</div>{% endif %}
+        </div>
+        <div class="col-12 mb-3">
+          <span class="me-2">Tranches concernées :</span>
+          <div class="form-check form-check-inline">{{ form.sur_tranche_1 }}<label class="form-check-label" for="{{ form.sur_tranche_1.id_for_label }}">Tranche 1</label></div>
+          <div class="form-check form-check-inline">{{ form.sur_tranche_2 }}<label class="form-check-label" for="{{ form.sur_tranche_2.id_for_label }}">Tranche 2</label></div>
+          <div class="form-check form-check-inline">{{ form.sur_tranche_3 }}<label class="form-check-label" for="{{ form.sur_tranche_3.id_for_label }}">Tranche 3</label></div>
+          {% if form.sur_tranche_1.errors %}<div class="text-danger small">{{ form.sur_tranche_1.errors.0 }}</div>{% endif %}
+        </div>
+        <div class="col-12 mb-3">
+          <label class="form-label" for="{{ form.observations.id_for_label }}">Observations <span class="text-muted">(facultatif)</span></label>
+          {{ form.observations }}
+        </div>
+      </div>
+      <div class="d-flex justify-content-between">
+        <a class="btn btn-outline-secondary" href="{% url 'bus:remises' %}">Annuler</a>
+        <button class="btn btn-primary" type="submit"><i class="fas fa-save me-1"></i>Enregistrer</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

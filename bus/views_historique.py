@@ -57,6 +57,7 @@ def historique_abonnements(request):
         'types': historique.TYPES_HISTORIQUE,
         'lignes': lignes,
         'resume': historique.resume_abonnements(lignes),
+        'remises_bus': historique.remises_bus_eleve(eleve) if eleve else [],
     })
 
 

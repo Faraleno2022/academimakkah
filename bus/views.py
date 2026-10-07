@@ -16,7 +16,11 @@ import io
 import csv
 
 from eleves.models import Eleve
-from .models import PERIODICITES_GRILLE, AbonnementBus, GrilleTarifaireBus, tranches_couvertes
+from .models import (
+    LIBELLES_TRANCHES, ORDRE_TRANCHES, PERIODICITES_GRILLE, TRANCHE_DE_DEPART,
+    AbonnementBus, GrilleTarifaireBus, tranches_couvertes,
+)
+from .remises import construire_remise, remise_json
 from .forms import AbonnementBusForm, GrilleTarifaireBusForm
 from .suivi_classes import contexte_suivi_classe
 from .historique_eleve import infos_logistiques_bus, reprise_bus
@@ -337,26 +341,49 @@ def tarif_bus_json(request):
 
     modifier_id = request.GET.get('exclure')
     exclude_pk = int(modifier_id) if modifier_id and modifier_id.isdigit() else None
-    situation_complete = grille.situation_paiements(eleve, exclude_pk=exclude_pk)
+    # Aperçu d'une remise en cours de saisie (pas encore enregistrée).
+    if request.GET.get('remise_modifiee') == '1':
+        remise = construire_remise(
+            eleve, grille, request.GET.get('remise_type', ''), request.GET.get('remise_valeur'),
+            request.GET.get('remise_motif', ''),
+            [code for n, code in enumerate(ORDRE_TRANCHES, 1) if request.GET.get(f'remise_sur_tranche_{n}') == '1'],
+        )
+    else:
+        remise = grille.remise_pour(eleve)
+    situation_complete = grille.situation_paiements(eleve, exclude_pk=exclude_pk, remise=remise)
     situation = situation_complete[periodicite]
     du = situation['du']
     paye = situation['paye']
     reste = situation['reste']
     echeance = grille.echeance_pour(periodicite)
+    parts_brutes = grille.parts_dues(periodicite)
     # Reste de chaque tranche concernée (part due limitée à la moitié pour « ½ tranche »).
     detail = [
         {
             'tranche': code,
+            'libelle': LIBELLES_TRANCHES[code],
+            'brut': int(parts_brutes[code]),
             'du': int(part),
             'reste': int(max(part - min(situation_complete[code]['paye'], part), 0)),
         }
-        for code, part in grille.parts_dues(periodicite).items()
+        for code, part in grille.parts_dues(periodicite, remise).items()
     ]
+    depart = TRANCHE_DE_DEPART[periodicite]
+    suivantes = ORDRE_TRANCHES[ORDRE_TRANCHES.index(depart):]
     return JsonResponse({
         'success': True,
+        'brut': int(sum(parts_brutes.values())),
+        'remise': int(sum(parts_brutes.values()) - du),
         'du': int(du),
         'paye': int(paye),
         'reste': int(reste),
+        'plafond': int(situation['plafond']),
+        # Ordre de report de l'excédent : reste de chaque tranche à partir de la première couverte.
+        'report': [
+            {'tranche': code, 'libelle': LIBELLES_TRANCHES[code], 'reste': int(situation_complete[code]['reste'])}
+            for code in suivantes
+        ],
+        'remise_eleve': remise_json(remise, grille),
         'detail': detail,
         'echeance': echeance.isoformat() if echeance else '',
         'zone': grille.zone,
@@ -397,6 +424,7 @@ def abonnement_create(request):
                 if not getattr(abo, champ):
                     setattr(abo, champ, valeur)
             abo.save()
+            form.enregistrer_remise(request.user)
             messages.success(
                 request,
                 f"Paiement bus enregistré. Reçu {abo.numero_recu}.",
@@ -427,6 +455,7 @@ def abonnement_edit(request, abo_id):
                 abo.annee_scolaire = abo.grille.annee_scolaire
                 abo.date_expiration = _date_fin_grille(abo.grille, abo.date_debut)
             abo.save()
+            form.enregistrer_remise(request.user)
             messages.success(request, "Abonnement mis à jour.")
             return redirect('bus:liste')
     else:
@@ -653,8 +682,11 @@ def generer_recu_abonnement_pdf(request, abo_id):
     line('Montant', f"{int(abo.montant):,}".replace(',', ' ') + ' GNF')
     line('Date de paiement', abo.date_debut.strftime('%d/%m/%Y') if abo.date_debut else '')
     line('Mode de paiement', getattr(abo.mode_paiement, 'nom', '') or 'Non renseigné')
+    remise = abo.grille.remise_pour(abo.eleve) if abo.grille_id else None
     if abo.grille_id:
         line('Grille appliquée', f"{abo.grille.zone} - {abo.grille.annee_scolaire}")
+        if remise:
+            line('Remise accordée', remise.libelle)
     else:
         line('Expiration', abo.date_expiration.strftime('%d/%m/%Y') if abo.date_expiration else '')
     
@@ -674,7 +706,16 @@ def generer_recu_abonnement_pdf(request, abo_id):
         c.drawString(40, y, "GRILLE DE L'ANNÉE ET SITUATION DES TRANCHES")
         y -= 22
 
-        headers = [('TRANCHE', 40), ('ÉCHÉANCE', 150), ('DÛ', 260), ('PAYÉ', 365), ('RESTE', 465)]
+        situation_grille = abo.grille.situation_paiements(abo.eleve, remise=remise)
+        avec_remise = situation_grille['ANNUEL']['remise'] > 0
+        # Avec une remise : tarif de la grille, remise, puis montant dû (net).
+        if avec_remise:
+            headers = [('TRANCHE', 40), ('ÉCHÉANCE', 140), ('TARIF', 250), ('REMISE', 305),
+                       ('DÛ', 375), ('PAYÉ', 440), ('RESTE', 510)]
+            colonnes = {'brut': 285, 'remise': 345, 'du': 410, 'paye': 480, 'reste': 555}
+        else:
+            headers = [('TRANCHE', 40), ('ÉCHÉANCE', 150), ('DÛ', 260), ('PAYÉ', 365), ('RESTE', 465)]
+            colonnes = {'du': 340, 'paye': 445, 'reste': 555}
         c.setFillColor(colors.HexColor('#1f4e78'))
         c.rect(38, y - 5, 520, 22, fill=1, stroke=0)
         c.setFillColor(colors.white)
@@ -683,45 +724,43 @@ def generer_recu_abonnement_pdf(request, abo_id):
             c.drawString(x_value, y + 2, label)
         y -= 23
 
-        total_du = 0
-        total_paye = 0
-        situation_grille = abo.grille.situation_paiements(abo.eleve)
+        def montants(ligne, gras):
+            gnf = lambda v: f"{int(v):,}".replace(',', ' ')
+            c.setFillColor(colors.black)
+            if avec_remise:
+                c.drawRightString(colonnes['brut'], y, gnf(ligne['brut']))
+                c.setFillColor(colors.HexColor('#0d6efd'))
+                c.drawRightString(colonnes['remise'], y, f"- {gnf(ligne['remise'])}" if ligne['remise'] else '—')
+                c.setFillColor(colors.black)
+            c.drawRightString(colonnes['du'], y, gnf(ligne['du']))
+            c.setFillColor(colors.HexColor('#198754'))
+            c.drawRightString(colonnes['paye'], y, gnf(ligne['paye']))
+            c.setFillColor(colors.HexColor('#dc3545') if ligne['reste'] else colors.HexColor('#198754'))
+            c.drawRightString(colonnes['reste'], y, gnf(ligne['reste']) if ligne['reste'] or gras else 'Soldée')
+
         couvertes = tranches_couvertes(abo.periodicite)
         tranche_defs = [
-            ('T1', 'Tranche 1', abo.grille.tranche_1, abo.grille.date_echeance_tranche_1),
-            ('T2', 'Tranche 2', abo.grille.tranche_2, abo.grille.date_echeance_tranche_2),
-            ('T3', 'Tranche 3', abo.grille.tranche_3, abo.grille.date_echeance_tranche_3),
+            ('T1', 'Tranche 1', abo.grille.date_echeance_tranche_1),
+            ('T2', 'Tranche 2', abo.grille.date_echeance_tranche_2),
+            ('T3', 'Tranche 3', abo.grille.date_echeance_tranche_3),
         ]
-        for code, label, montant_du, echeance in tranche_defs:
-            montant_paye = situation_grille[code]['paye']
-            reste = situation_grille[code]['reste']
-            total_du += montant_du
-            total_paye += montant_paye
+        for code, label, echeance in tranche_defs:
             if code in couvertes:
                 c.setFillColor(colors.HexColor('#e8f4fd'))
                 c.rect(38, y - 5, 520, 20, fill=1, stroke=0)
             c.setFillColor(colors.black)
             c.setFont('Helvetica-Bold' if code in couvertes else 'Helvetica', 8)
             c.drawString(40, y, label + (' (ce reçu)' if code in couvertes else ''))
-            c.drawString(150, y, echeance.strftime('%d/%m/%Y') if echeance else '—')
-            c.drawRightString(340, y, f"{int(montant_du):,}".replace(',', ' '))
-            c.setFillColor(colors.HexColor('#198754'))
-            c.drawRightString(445, y, f"{int(montant_paye):,}".replace(',', ' '))
-            c.setFillColor(colors.HexColor('#dc3545') if reste else colors.HexColor('#198754'))
-            c.drawRightString(555, y, 'Soldée' if not reste else f"{int(reste):,}".replace(',', ' '))
+            c.drawString(140 if avec_remise else 150, y, echeance.strftime('%d/%m/%Y') if echeance else '—')
+            montants(situation_grille[code], False)
             y -= 20
 
-        total_reste = max(total_du - total_paye, 0)
         c.setFillColor(colors.HexColor('#f1f3f5'))
         c.rect(38, y - 5, 520, 21, fill=1, stroke=0)
         c.setFillColor(colors.black)
         c.setFont('Helvetica-Bold', 8)
         c.drawString(40, y, 'TOTAL ANNÉE')
-        c.drawRightString(340, y, f"{int(total_du):,}".replace(',', ' '))
-        c.setFillColor(colors.HexColor('#198754'))
-        c.drawRightString(445, y, f"{int(total_paye):,}".replace(',', ' '))
-        c.setFillColor(colors.HexColor('#dc3545') if total_reste else colors.HexColor('#198754'))
-        c.drawRightString(555, y, f"{int(total_reste):,}".replace(',', ' '))
+        montants(situation_grille['ANNUEL'], True)
 
     c.showPage(); c.save(); pdf = buffer.getvalue(); buffer.close()
     resp = HttpResponse(content_type='application/pdf')

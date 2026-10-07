@@ -81,6 +81,13 @@
   <div class="col-6 col-md-3"><div class="card text-center h-100"><div class="card-body"><div class="text-muted small">Total payé</div><div class="fs-5 fw-bold">{{ resume.total|intcomma }} GNF</div></div></div></div>
   <div class="col-6 col-md-3"><div class="card text-center h-100"><div class="card-body"><div class="text-muted small">Dernière expiration</div><div class="fs-5 fw-bold">{{ resume.derniere_expiration|date:'d/m/Y'|default:"—" }}</div></div></div></div>
 </div>
+{% for item in remises_bus %}
+<div class="alert alert-info py-2 small">
+  <i class="fas fa-percent me-1"></i><strong>Remise bus — {{ item.grille.zone }} {{ item.grille.annee_scolaire }} :</strong>
+  {{ item.objet.libelle }} · tarif {{ item.brut|floatformat:0|intcomma }} GNF, remise {{ item.remise|floatformat:0|intcomma }} GNF,
+  net dû <strong>{{ item.du|floatformat:0|intcomma }} GNF</strong>, reste {{ item.reste|floatformat:0|intcomma }} GNF.
+</div>
+{% endfor %}
 
 <div class="table-responsive">
 <table class="table table-sm table-striped table-hover align-middle">

@@ -45,9 +45,10 @@
             {% if ligne.reste is not None %}<strong class="text-nowrap">{{ ligne.reste|intcomma }} GNF</strong>
             {% elif ligne.paiements %}<span class="text-muted">Indéterminé : versement sans grille</span>
             {% else %}<span class="text-muted">— Aucun abonnement</span>{% endif %}
+            {% if ligne.situations|length == 1 and ligne.situations.0.remise_bus %}<div><span class="badge bg-info text-dark">Remise {{ ligne.situations.0.remise_bus.libelle_valeur }}</span></div>{% endif %}
             {% if ligne.situations|length > 1 %}
             <details><summary class="small">Détail par grille</summary>
-              {% for situation in ligne.situations %}<div class="small">{{ situation.grille.zone }} : {{ situation.reste|intcomma }} GNF restants</div>{% endfor %}
+              {% for situation in ligne.situations %}<div class="small">{{ situation.grille.zone }} : {{ situation.reste|intcomma }} GNF restants{% if situation.remise_bus %} <span class="badge bg-info text-dark">Remise {{ situation.remise_bus.libelle_valeur }}</span>{% endif %}</div>{% endfor %}
             </details>
             {% endif %}
           </td>

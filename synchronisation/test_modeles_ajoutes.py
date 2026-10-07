@@ -18,7 +18,9 @@ from .context import mute_sync
 from .engine import emettre_existants
 from .mixins import SyncTrackedModel
 from .models import SyncChange, SyncCheckpoint, SyncDevice
-from .registry import MODELES_REGISTRE_2, REGISTRE_VERSION, SYNC_MODEL_LABELS, SYNC_MODEL_SET
+from .registry import (
+    MODELES_REGISTRE_2, MODELES_REGISTRE_3, REGISTRE_VERSION, SYNC_MODEL_LABELS, SYNC_MODEL_SET,
+)
 
 PRESENCE = 'presence.PresenceJournaliere'
 
@@ -35,7 +37,8 @@ class RegistreCompletTests(TestCase):
 
     def test_nouveaux_modeles_en_fin_de_registre(self):
         # Le curseur d'instantané désigne un modèle par sa position.
-        self.assertEqual(SYNC_MODEL_LABELS[-len(MODELES_REGISTRE_2):], MODELES_REGISTRE_2)
+        ajoutes = MODELES_REGISTRE_2 + MODELES_REGISTRE_3
+        self.assertEqual(SYNC_MODEL_LABELS[-len(ajoutes):], ajoutes)
         self.assertLess(MODELES_REGISTRE_2.index('notes.Devoir'), MODELES_REGISTRE_2.index('notes.RemiseDevoir'))
 
 
@@ -145,7 +148,7 @@ class ModelesAjoutesTests(TestCase):
 
         self.assertEqual(len(appels), 1)
         self.assertEqual(appels[0]['since_id'], 0)
-        self.assertEqual(appels[0]['modeles'].split(','), MODELES_REGISTRE_2)
+        self.assertEqual(appels[0]['modeles'].split(','), MODELES_REGISTRE_2 + MODELES_REGISTRE_3)
         self.assertEqual(appliques, [PRESENCE])
         checkpoint = SyncCheckpoint.objects.get(device_id=device_id)
         self.assertEqual((checkpoint.registre, checkpoint.rattrapage_id, checkpoint.last_change_id),

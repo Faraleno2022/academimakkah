@@ -89,10 +89,16 @@ MODELES_REGISTRE_2 = [
 ]
 SYNC_MODEL_LABELS += MODELES_REGISTRE_2
 
+# Version 3 : remises accordées sur l'abonnement bus (après bus.GrilleTarifaireBus).
+MODELES_REGISTRE_3 = [
+    'bus.RemiseBus',
+]
+SYNC_MODEL_LABELS += MODELES_REGISTRE_3
+
 # Version du registre connue de ce code. Un poste l'annonce au serveur, qui ne
 # lui envoie pas les modèles qu'il ne sait pas appliquer.
-REGISTRE_VERSION = 2
-MODELES_PAR_VERSION = {2: MODELES_REGISTRE_2}
+REGISTRE_VERSION = 3
+MODELES_PAR_VERSION = {2: MODELES_REGISTRE_2, 3: MODELES_REGISTRE_3}
 
 SYNC_MODEL_SET = set(SYNC_MODEL_LABELS)
 

@@ -10,6 +10,7 @@
 <a class="btn btn-outline-primary" href="{% url 'administration:grilles_bus' %}"><i class="fas fa-table me-1"></i>Grilles tarifaires</a>
 {% endif %}
 <a class="btn btn-outline-dark" href="{% url 'bus:historique_abonnements' %}"><i class="fas fa-id-card me-1"></i>Abonnements par élève</a>
+<a class="btn btn-outline-info" href="{% url 'bus:remises' %}"><i class="fas fa-percent me-1"></i>Élèves avec remise</a>
 <a class="btn btn-success" href="{% url 'bus:nouveau' %}"><i class="fas fa-plus me-1"></i>Nouveau paiement bus</a>
 {% endblock %}
 {% block content %}

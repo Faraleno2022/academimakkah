@@ -130,9 +130,10 @@ class PaiementsCombinesEtControleChauffeurTests(TestCase):
         self.assertEqual(situation['T1_T2']['reste'], Decimal('100000'))
         self.payer(self.eleve, 'T1_T2', 100000)
         situation = self.grille.situation_paiements(self.eleve)
-        self.assertEqual(situation['ANNUEL'], {
-            'du': Decimal('400000'), 'paye': Decimal('400000'), 'reste': Decimal('0'),
-        })
+        self.assertEqual(
+            {cle: situation['ANNUEL'][cle] for cle in ('du', 'paye', 'reste')},
+            {'du': Decimal('400000'), 'paye': Decimal('400000'), 'reste': Decimal('0')},
+        )
         self.assertEqual(situation['T1']['reste'], 0)
 
     def test_formulaire_paiement_partiel_t2_t3_et_depassement(self):
@@ -154,7 +155,7 @@ class PaiementsCombinesEtControleChauffeurTests(TestCase):
             'eleve_id': self.eleve.pk, 'grille_id': self.grille.pk, 'periodicite': 'T2_T3',
         }).json()
         self.assertEqual((data['du'], data['paye'], data['reste']), (250000, 25000, 225000))
-        self.assertEqual(data['detail'], [
+        self.assertEqual([{cle: d[cle] for cle in ('tranche', 'du', 'reste')} for d in data['detail']], [
             {'tranche': 'T2', 'du': 125000, 'reste': 100000},
             {'tranche': 'T3', 'du': 125000, 'reste': 125000},
         ])
@@ -162,7 +163,7 @@ class PaiementsCombinesEtControleChauffeurTests(TestCase):
     def test_formulaire_accepte_un_paiement_combine_et_refuse_le_depassement(self):
         donnees = {
             'eleve': self.eleve.pk, 'grille': self.grille.pk, 'periodicite': 'T1_T2M',
-            'montant': 212501, 'date_debut': '2026-10-02', 'mode_paiement': self.mode.pk,
+            'montant': 400001, 'date_debut': '2026-10-02', 'mode_paiement': self.mode.pk,
         }
         response = self.client.post(reverse('bus:nouveau'), donnees)
         self.assertEqual(response.status_code, 200)

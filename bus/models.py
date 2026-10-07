@@ -1,4 +1,4 @@
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 
 from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator, RegexValidator
@@ -27,14 +27,19 @@ PORTEES_PAIEMENT_BUS = {
     'T1_T2_T3M': {'T1': 1, 'T2': 1, 'T3': DEMI},
 }
 PERIODICITES_GRILLE = frozenset(PORTEES_PAIEMENT_BUS)
-# Paiements répartis sur T1, puis T2, puis T3 (comme l'annuel).
-PERIODICITES_CUMULEES = frozenset({'ANNUEL', 'T1_T2M', 'T1_T2', 'T1_T2_T3M'})
-# Paiements qui ne couvrent pas la 1ère tranche : répartis sur T2, puis T3.
-PERIODICITES_SANS_T1 = frozenset({'T2_T3'})
 # Paiements portant sur plusieurs tranches, hors annuel (situation propre à chacun).
 PERIODICITES_COMBINEES = frozenset(
     code for code, portee in PORTEES_PAIEMENT_BUS.items() if len(portee) > 1
 ) - {'ANNUEL'}
+ORDRE_TRANCHES = ('T1', 'T2', 'T3')
+LIBELLES_TRANCHES = {'T1': '1ère tranche', 'T2': '2ème tranche', 'T3': '3ème tranche'}
+# Première tranche remplie par un paiement : l'excédent passe aux suivantes.
+TRANCHE_DE_DEPART = {
+    code: next(tranche for tranche in ORDRE_TRANCHES if tranche in portee)
+    for code, portee in PORTEES_PAIEMENT_BUS.items()
+}
+# Valeur par défaut de situation_paiements : la remise enregistrée de l'élève.
+REMISE_ENREGISTREE = object()
 
 
 def tranches_couvertes(periodicite):
@@ -120,23 +125,34 @@ class GrilleTarifaireBus(SyncTrackedModel):
     def montant_annuel(self):
         return (self.tranche_1 or 0) + (self.tranche_2 or 0) + (self.tranche_3 or 0)
 
-    def _tranches(self):
+    def tranches_brutes(self):
+        """Montants de la grille, avant remise."""
         return {
             'T1': Decimal(self.tranche_1 or 0),
             'T2': Decimal(self.tranche_2 or 0),
             'T3': Decimal(self.tranche_3 or 0),
         }
 
-    def parts_dues(self, periodicite):
+    def _tranches(self, remise=None):
+        """Montant dû de chaque tranche, remise de l'élève déduite."""
+        bruts = self.tranches_brutes()
+        remises = remise.remises_par_tranche(bruts) if remise else {}
+        return {code: brut - remises.get(code, Decimal('0')) for code, brut in bruts.items()}
+
+    def remise_pour(self, eleve):
+        eleve_id = getattr(eleve, 'pk', eleve)
+        return RemiseBus.objects.filter(eleve_id=eleve_id, grille=self).first()
+
+    def parts_dues(self, periodicite, remise=None):
         """Montant dû de chaque tranche pour ce type de paiement (moitié arrondie au franc)."""
-        tranches = self._tranches()
+        tranches = self._tranches(remise)
         return {
             code: (tranches[code] * Decimal(fraction)).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
             for code, fraction in PORTEES_PAIEMENT_BUS.get(periodicite, {}).items()
         }
 
-    def montant_pour(self, periodicite):
-        return sum(self.parts_dues(periodicite).values(), Decimal('0'))
+    def montant_pour(self, periodicite, remise=None):
+        return sum(self.parts_dues(periodicite, remise).values(), Decimal('0'))
 
     def echeance_pour(self, periodicite):
         echeances = {
@@ -147,8 +163,8 @@ class GrilleTarifaireBus(SyncTrackedModel):
         dates = [echeances[code] for code in PORTEES_PAIEMENT_BUS.get(periodicite, {}) if echeances[code]]
         return max(dates) if dates else None
 
-    def situation_paiements(self, eleve, exclude_pk=None):
-        """Répartit un paiement annuel sur T1, T2 puis T3 sans double compte."""
+    def situation_paiements(self, eleve, exclude_pk=None, remise=REMISE_ENREGISTREE):
+        """Situation des tranches de l'élève ; ``remise`` permet un aperçu avant enregistrement."""
         versements = AbonnementBus.objects.filter(eleve=eleve, grille=self)
         if exclude_pk:
             versements = versements.exclude(pk=exclude_pk)
@@ -156,52 +172,67 @@ class GrilleTarifaireBus(SyncTrackedModel):
             row['periodicite']: Decimal(row['total'] or 0)
             for row in versements.values('periodicite').annotate(total=models.Sum('montant'))
         }
-        return self.situation_depuis_totaux(directs)
+        if remise is REMISE_ENREGISTREE:
+            remise = self.remise_pour(eleve)
+        return self.situation_depuis_totaux(directs, remise)
 
-    def situation_depuis_totaux(self, directs):
+    def situation_depuis_totaux(self, directs, remise=None):
         """Même calcul pour les reçus et les versements préchargés du tableau de bord.
 
-        Les paiements annuels et combinés (T1 + ½ T2, T1 + T2...) remplissent
-        T1, puis T2, puis T3, sans double compte avec les paiements directs.
-        Un paiement T2 + T3 ne remplit que T2 puis T3 : il est réparti avant
-        les cumulés, qui comblent ensuite les manques restants.
+        Chaque paiement remplit d'abord la première tranche qu'il couvre, puis
+        l'excédent passe à la tranche suivante, et ainsi de suite. Les paiements
+        qui commencent le plus tard (T3, puis T2 / T2 + T3) sont répartis en
+        premier : ceux qui commencent en T1 comblent ensuite tout manque, sans
+        double compte. Les montants dus tiennent compte de la remise.
         """
-        tranches = self._tranches()
-        payes = {code: Decimal(directs.get(code) or 0) for code in tranches}
-        repartitions = (
-            (('T2', 'T3'), PERIODICITES_SANS_T1),
-            (tuple(tranches), PERIODICITES_CUMULEES),
-        )
-        for cibles, codes_paiement in repartitions:
-            restant = sum((Decimal(directs.get(code) or 0) for code in codes_paiement), Decimal('0'))
-            for code in cibles:
+        bruts = self.tranches_brutes()
+        tranches = self._tranches(remise)
+        payes = {code: Decimal('0') for code in ORDRE_TRANCHES}
+        for depart in reversed(ORDRE_TRANCHES):
+            restant = sum(
+                (Decimal(directs.get(code) or 0) for code, debut in TRANCHE_DE_DEPART.items() if debut == depart),
+                Decimal('0'),
+            )
+            for code in ORDRE_TRANCHES[ORDRE_TRANCHES.index(depart):]:
                 part = min(max(tranches[code] - payes[code], Decimal('0')), restant)
                 payes[code] += part
                 restant -= part
         situation = {
             code: {
-                'du': montant_du,
+                'brut': bruts[code],
+                'remise': bruts[code] - tranches[code],
+                'du': tranches[code],
                 'paye': payes[code],
-                'reste': max(montant_du - payes[code], Decimal('0')),
+                'reste': max(tranches[code] - payes[code], Decimal('0')),
             }
-            for code, montant_du in tranches.items()
+            for code in ORDRE_TRANCHES
         }
         total_paye = sum(
             (Decimal(directs.get(code) or 0) for code in PERIODICITES_GRILLE), Decimal('0')
         )
+        du_annuel = sum(tranches.values(), Decimal('0'))
+        brut_annuel = sum(bruts.values(), Decimal('0'))
         situation['ANNUEL'] = {
-            'du': Decimal(self.montant_annuel or 0),
+            'brut': brut_annuel,
+            'remise': brut_annuel - du_annuel,
+            'du': du_annuel,
             'paye': total_paye,
-            'reste': max(Decimal(self.montant_annuel or 0) - total_paye, Decimal('0')),
+            'reste': max(du_annuel - total_paye, Decimal('0')),
         }
         for code in PERIODICITES_COMBINEES:
-            parts = self.parts_dues(code)
+            parts = self.parts_dues(code, remise)
             du = sum(parts.values(), Decimal('0'))
             paye = sum(
                 (min(situation[tranche]['paye'], part) for tranche, part in parts.items()),
                 Decimal('0'),
             )
             situation[code] = {'du': du, 'paye': paye, 'reste': max(du - paye, Decimal('0'))}
+        # Plafond d'un reçu : reste de ses tranches et des suivantes (report de l'excédent).
+        for code, depart in TRANCHE_DE_DEPART.items():
+            situation[code]['plafond'] = sum(
+                (situation[tranche]['reste'] for tranche in ORDRE_TRANCHES[ORDRE_TRANCHES.index(depart):]),
+                Decimal('0'),
+            )
         return situation
 
 
@@ -364,6 +395,131 @@ class AbonnementBus(SyncTrackedModel):
         if not self.date_expiration:
             return False
         return timezone.localdate() > self.date_expiration
+
+
+class RemiseBus(SyncTrackedModel):
+    """Remise accordée à un élève sur une grille bus (zone et année).
+
+    Elle est déduite des tranches concernées : tous les montants dus (formulaire,
+    reçus, carnet, liste du chauffeur) sont ceux de la grille, remise déduite.
+    """
+
+    class TypeRemise(models.TextChoices):
+        POURCENTAGE = 'POURCENTAGE', 'Pourcentage (%)'
+        MONTANT_FIXE = 'MONTANT_FIXE', 'Montant fixe (GNF)'
+
+    class MotifRemise(models.TextChoices):
+        FRATRIE = 'FRATRIE', 'Réduction fratrie'
+        EMPLOYE = 'EMPLOYE', "Enfant d'employé"
+        SOCIALE = 'SOCIALE', 'Réduction sociale'
+        MERITE = 'MERITE', 'Réduction mérite'
+        PARTENAIRE = 'PARTENAIRE', 'Partenaire'
+        GESTE_COMMERCIAL = 'GESTE_COMMERCIAL', 'Geste commercial'
+        NE_PAIE_RIEN = 'NE_PAIE_RIEN', 'Ne paie rien'
+        AUTRE = 'AUTRE', 'Autre'
+
+    eleve = models.ForeignKey(Eleve, on_delete=models.CASCADE, related_name='remises_bus')
+    grille = models.ForeignKey(
+        GrilleTarifaireBus, on_delete=models.CASCADE, related_name='remises',
+        verbose_name="Grille tarifaire",
+    )
+    type_remise = models.CharField(
+        max_length=15, choices=TypeRemise.choices, default=TypeRemise.POURCENTAGE,
+        verbose_name="Type de remise",
+    )
+    valeur = models.DecimalField(
+        max_digits=10, decimal_places=2, validators=[MinValueValidator(Decimal('0'))],
+        verbose_name="Valeur", help_text="Pourcentage (ex : 25) ou montant en GNF.",
+    )
+    motif = models.CharField(max_length=20, choices=MotifRemise.choices, verbose_name="Motif")
+    sur_tranche_1 = models.BooleanField(default=True, verbose_name="Sur la 1ère tranche")
+    sur_tranche_2 = models.BooleanField(default=True, verbose_name="Sur la 2ème tranche")
+    sur_tranche_3 = models.BooleanField(default=True, verbose_name="Sur la 3ème tranche")
+    observations = models.CharField(max_length=255, blank=True, verbose_name="Observations")
+    cree_par = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='remises_bus_creees',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+        verbose_name = "Remise bus"
+        verbose_name_plural = "Remises bus"
+        constraints = [
+            models.UniqueConstraint(fields=['eleve', 'grille'], name='bus_remise_unique_eleve_grille'),
+        ]
+
+    def __str__(self):
+        return f"Remise bus {self.eleve} ({self.libelle_valeur})"
+
+    @property
+    def tranches(self):
+        coches = (self.sur_tranche_1, self.sur_tranche_2, self.sur_tranche_3)
+        return [code for code, coche in zip(ORDRE_TRANCHES, coches) if coche]
+
+    def remises_par_tranche(self, bruts):
+        """Remise de chaque tranche pour les montants bruts de la grille.
+
+        Pourcentage : appliqué à chaque tranche concernée, arrondi au franc.
+        Montant fixe : réparti au prorata des tranches concernées (méthode des
+        plus forts restes), sans jamais dépasser leur montant.
+        """
+        zero = Decimal('0')
+        remises = {code: zero for code in ORDRE_TRANCHES}
+        portee = [code for code in self.tranches if bruts.get(code, zero) > 0]
+        valeur = Decimal(self.valeur or 0)
+        if valeur <= 0 or not portee:
+            return remises
+        if self.type_remise == self.TypeRemise.POURCENTAGE:
+            taux = min(valeur, Decimal('100'))
+            for code in portee:
+                remises[code] = (bruts[code] * taux / Decimal('100')).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+            return remises
+        total = sum((bruts[code] for code in portee), zero)
+        montant = min(valeur.quantize(Decimal('1'), rounding=ROUND_HALF_UP), total)
+        exacts = {code: montant * bruts[code] / total for code in portee}
+        for code in portee:
+            remises[code] = exacts[code].to_integral_value(rounding=ROUND_FLOOR)
+        manque = int(montant - sum(remises.values(), zero))
+        for code in sorted(portee, key=lambda c: exacts[c] - remises[c], reverse=True)[:manque]:
+            remises[code] += 1
+        return remises
+
+    def montant_total(self, grille=None):
+        grille = grille or self.grille
+        return sum(self.remises_par_tranche(grille.tranches_brutes()).values(), Decimal('0'))
+
+    @property
+    def libelle_valeur(self):
+        if self.type_remise == self.TypeRemise.POURCENTAGE:
+            return f"{Decimal(self.valeur or 0).normalize():f} %".replace('.', ',')
+        return f"{Decimal(self.valeur or 0):,.0f} GNF".replace(',', ' ')
+
+    @property
+    def libelle_tranches(self):
+        if len(self.tranches) == 3:
+            return "toutes les tranches"
+        return ", ".join(LIBELLES_TRANCHES[code] for code in self.tranches)
+
+    @property
+    def libelle(self):
+        """« 10 % — Réduction fratrie », suivi des tranches si elles ne sont pas toutes concernées."""
+        libelle = f"{self.libelle_valeur} — {self.get_motif_display()}"
+        if len(self.tranches) < 3:
+            libelle += f" ({self.libelle_tranches})"
+        return libelle
+
+
+def remises_par_eleve_grille(paires):
+    """Remises des couples (élève, grille), en une requête : {(eleve_id, grille_id): remise}."""
+    paires = {(eleve_id, grille_id) for eleve_id, grille_id in paires if eleve_id and grille_id}
+    if not paires:
+        return {}
+    remises = RemiseBus.objects.filter(
+        eleve_id__in={e for e, _g in paires}, grille_id__in={g for _e, g in paires},
+    )
+    return {(r.eleve_id, r.grille_id): r for r in remises if (r.eleve_id, r.grille_id) in paires}
 
 
 class AbonnementCantine(SyncTrackedModel):

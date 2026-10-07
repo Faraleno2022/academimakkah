@@ -184,6 +184,11 @@ def abonnement_public_pdf(request, abonnement_id):
             c.drawString(left, top, f"Point d'arrêt: {abonnement.point_arret}")
             top -= line_h
 
+        remise = abonnement.grille.remise_pour(abonnement.eleve) if abonnement.grille_id else None
+        if remise:
+            c.setFont('Helvetica', 11)
+            c.drawString(left, top, f"Remise accordée: {remise.libelle}")
+            top -= line_h
         if abonnement.grille_id:
             top -= 10
             c.setFont('Helvetica-Bold', 11)
@@ -193,34 +198,37 @@ def abonnement_public_pdf(request, abonnement_id):
             c.rect(left - 2, top - 4, 515, 20, fill=1, stroke=0)
             c.setFillColor(colors.white)
             c.setFont('Helvetica-Bold', 8)
-            for titre, x_value in [('TRANCHE', left), ('DÛ', 280), ('PAYÉ', 385), ('RESTE', 490)]:
+            situation_grille = abonnement.grille.situation_paiements(abonnement.eleve, remise=remise)
+            avec_remise = situation_grille['ANNUEL']['remise'] > 0
+            if avec_remise:
+                entetes = [('TRANCHE', left), ('TARIF', 230), ('REMISE', 300), ('DÛ', 375), ('PAYÉ', 445), ('RESTE', 510)]
+                colonnes = {'brut': 270, 'remise': 345, 'du': 410, 'paye': 480, 'reste': 555}
+            else:
+                entetes = [('TRANCHE', left), ('DÛ', 280), ('PAYÉ', 385), ('RESTE', 490)]
+                colonnes = {'du': 350, 'paye': 455, 'reste': 555}
+            for titre, x_value in entetes:
                 c.drawString(x_value, top + 2, titre)
             top -= 22
-            total_du = 0
-            total_paye = 0
-            situation_grille = abonnement.grille.situation_paiements(abonnement.eleve)
+
+            def montants(ligne, total):
+                gnf = lambda v: f"{int(v):,}".replace(',', ' ')
+                if avec_remise:
+                    c.drawRightString(colonnes['brut'], top, gnf(ligne['brut']))
+                    c.drawRightString(colonnes['remise'], top, f"- {gnf(ligne['remise'])}" if ligne['remise'] else '—')
+                c.drawRightString(colonnes['du'], top, gnf(ligne['du']))
+                c.drawRightString(colonnes['paye'], top, gnf(ligne['paye']))
+                c.drawRightString(colonnes['reste'], top, gnf(ligne['reste']) if ligne['reste'] or total else 'Soldée')
+
             couvertes = tranches_couvertes(abonnement.periodicite)
-            for code, libelle, montant_du in (
-                ('T1', 'Tranche 1', abonnement.grille.tranche_1),
-                ('T2', 'Tranche 2', abonnement.grille.tranche_2),
-                ('T3', 'Tranche 3', abonnement.grille.tranche_3),
-            ):
-                montant_paye = situation_grille[code]['paye']
-                reste = situation_grille[code]['reste']
-                total_du += montant_du
-                total_paye += montant_paye
+            for code, libelle in (('T1', 'Tranche 1'), ('T2', 'Tranche 2'), ('T3', 'Tranche 3')):
                 c.setFillColor(colors.black)
                 c.setFont('Helvetica-Bold' if code in couvertes else 'Helvetica', 8)
                 c.drawString(left, top, libelle + (' (ce reçu)' if code in couvertes else ''))
-                c.drawRightString(350, top, f"{int(montant_du):,}".replace(',', ' '))
-                c.drawRightString(455, top, f"{int(montant_paye):,}".replace(',', ' '))
-                c.drawRightString(555, top, 'Soldée' if not reste else f"{int(reste):,}".replace(',', ' '))
+                montants(situation_grille[code], False)
                 top -= 18
             c.setFont('Helvetica-Bold', 8)
             c.drawString(left, top, 'TOTAL ANNÉE')
-            c.drawRightString(350, top, f"{int(total_du):,}".replace(',', ' '))
-            c.drawRightString(455, top, f"{int(total_paye):,}".replace(',', ' '))
-            c.drawRightString(555, top, f"{int(max(total_du - total_paye, 0)):,}".replace(',', ' '))
+            montants(situation_grille['ANNUEL'], True)
         
         # Finaliser
         c.showPage()
