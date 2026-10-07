@@ -3,7 +3,7 @@ from django.contrib import admin
 from administration.corbeille_admin import CorbeilleAdminMixin
 from utilisateurs.utils import user_is_superadmin, user_school
 
-from .models import AbonnementBus, AbonnementCantine, GrilleTarifaireBus
+from .models import AbonnementBus, AbonnementCantine, GrilleTarifaireBus, RemiseBus
 
 
 @admin.register(GrilleTarifaireBus)
@@ -136,3 +136,11 @@ class AbonnementCantineAdmin(CorbeilleAdminMixin, admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+
+
+@admin.register(RemiseBus)
+class RemiseBusAdmin(admin.ModelAdmin):
+    list_display = ('eleve', 'grille', 'type_remise', 'valeur', 'motif', 'updated_at')
+    list_filter = ('type_remise', 'motif', 'grille__annee_scolaire')
+    search_fields = ('eleve__nom', 'eleve__prenom', 'eleve__matricule', 'grille__zone')
+    raw_id_fields = ('eleve', 'grille', 'cree_par')

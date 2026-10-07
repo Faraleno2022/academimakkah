@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from eleves.models import Eleve
 from eleves.suivi_listes import classes_visibles
-from .models import PERIODICITES_GRILLE, AbonnementBus, GrilleTarifaireBus
+from .models import PERIODICITES_GRILLE, AbonnementBus, GrilleTarifaireBus, remises_par_eleve_grille
 
 
 def contexte_suivi_classe(request):
@@ -48,6 +48,9 @@ def contexte_suivi_classe(request):
         )
         page = Paginator(selection, 25).get_page(request.GET.get('page_bus'))
         today = timezone.localdate()
+        remises = remises_par_eleve_grille(
+            (inscrit.pk, paiement.grille_id) for inscrit in page for paiement in inscrit.versements_suivi
+        )
         for inscrit in page:
             paiements = inscrit.versements_suivi
             dernier = paiements[0] if paiements else None
@@ -58,7 +61,11 @@ def contexte_suivi_classe(request):
                     grilles[paiement.grille_id] = paiement.grille
                     totaux[paiement.grille_id][paiement.periodicite] += paiement.montant
             situations = [
-                {'grille': grille, **grille.situation_depuis_totaux(totaux[pk])['ANNUEL']}
+                {
+                    'grille': grille,
+                    'remise_bus': remises.get((inscrit.pk, pk)),
+                    **grille.situation_depuis_totaux(totaux[pk], remises.get((inscrit.pk, pk)))['ANNUEL'],
+                }
                 for pk, grille in grilles.items()
             ]
             # Les anciens versements sans grille n'indiquent pas le tarif dû.
@@ -117,8 +124,10 @@ def resume_transport_par_classe(versements):
             continue
         key = (classe_id, groupe['eleve_id'], grille.pk)
         grilles_eleves.setdefault(key, {})[groupe['periodicite']] = groupe['montant']
-    for (classe_id, _eleve_id, grille_id), montants in grilles_eleves.items():
-        situation = grilles[grille_id].situation_depuis_totaux(montants)['ANNUEL']
+    remises = remises_par_eleve_grille((eleve_id, grille_id) for _c, eleve_id, grille_id in grilles_eleves)
+    for (classe_id, eleve_id, grille_id), montants in grilles_eleves.items():
+        remise = remises.get((eleve_id, grille_id))
+        situation = grilles[grille_id].situation_depuis_totaux(montants, remise)['ANNUEL']
         row = classes[classe_id]
         if row['total_du'] is not None:
             row['total_du'] += situation['du']

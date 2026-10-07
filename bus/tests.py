@@ -151,7 +151,7 @@ class GrilleEtPaiementBusTests(TestCase):
         self.assertEqual(suggestion.json()['paye'], 80000)
         self.assertEqual(suggestion.json()['reste'], 45000)
 
-    def test_formulaire_refuse_le_depassement_de_la_tranche(self):
+    def test_formulaire_reporte_l_excedent_et_refuse_le_depassement_de_l_annee(self):
         AbonnementBus.objects.create(
             eleve=self.eleve,
             grille=self.grille,
@@ -161,12 +161,19 @@ class GrilleEtPaiementBusTests(TestCase):
             date_expiration=date(2027, 4, 15),
             mode_paiement=self.mode,
         )
+        # 10 000 soldent la 1ère tranche, les 10 000 suivants passent à la 2ème.
         form = AbonnementBusForm(
             data=self.donnees_paiement(periodicite='T1', montant=20000),
             ecole=self.ecole,
         )
+        self.assertTrue(form.is_valid(), form.errors)
+        # Au-delà du reste de l'année (260 000), le paiement est refusé.
+        form = AbonnementBusForm(
+            data=self.donnees_paiement(periodicite='T1', montant=260001),
+            ecole=self.ecole,
+        )
         self.assertFalse(form.is_valid())
-        self.assertIn('montant', form.errors)
+        self.assertIn("reste à payer de l'année", form.errors['montant'][0])
 
     def test_formulaire_refuse_eleve_et_grille_de_deux_ecoles(self):
         form = AbonnementBusForm(

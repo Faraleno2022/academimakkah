@@ -1,10 +1,16 @@
+from decimal import Decimal
+
 from django import forms
 
 from eleves.models import Classe, Eleve
 from paiements.models import ModePaiement
 from paiements.referentiels import mode_paiement_par_defaut
 
-from .models import PERIODICITES_GRILLE, AbonnementBus, AbonnementCantine, GrilleTarifaireBus
+from .models import (
+    PERIODICITES_GRILLE, REMISE_ENREGISTREE, TRANCHE_DE_DEPART, AbonnementBus, AbonnementCantine,
+    GrilleTarifaireBus, RemiseBus,
+)
+from .remises import PORTEE_PLAFOND, construire_remise, enregistrer_remise
 
 
 class EleveAbonnementChoiceField(forms.ModelChoiceField):
@@ -100,7 +106,29 @@ class GrilleTarifaireBusForm(forms.ModelForm):
         return cleaned
 
 
+CASE_TRANCHE = forms.CheckboxInput(attrs={'class': 'form-check-input remise-champ'})
+
+
 class AbonnementBusForm(forms.ModelForm):
+    # Remise de l'élève sur la grille choisie : appliquée seulement si la caisse
+    # la modifie (remise_modifiee=1) ; sinon la remise enregistrée est conservée.
+    remise_type = forms.ChoiceField(
+        choices=[('', 'Aucune remise')] + list(RemiseBus.TypeRemise.choices), required=False,
+        widget=forms.Select(attrs={'class': 'form-select remise-champ'}), label="Remise",
+    )
+    remise_valeur = forms.DecimalField(
+        required=False, min_value=Decimal('0'), max_digits=10, decimal_places=2, label="Valeur",
+        widget=forms.NumberInput(attrs={'class': 'form-control remise-champ', 'step': 'any', 'min': 0}),
+    )
+    remise_motif = forms.ChoiceField(
+        choices=[('', 'Choisir le motif')] + list(RemiseBus.MotifRemise.choices), required=False,
+        widget=forms.Select(attrs={'class': 'form-select remise-champ'}), label="Motif",
+    )
+    remise_sur_tranche_1 = forms.BooleanField(required=False, initial=True, widget=CASE_TRANCHE, label="Tranche 1")
+    remise_sur_tranche_2 = forms.BooleanField(required=False, initial=True, widget=CASE_TRANCHE, label="Tranche 2")
+    remise_sur_tranche_3 = forms.BooleanField(required=False, initial=True, widget=CASE_TRANCHE, label="Tranche 3")
+    remise_modifiee = forms.CharField(required=False, widget=forms.HiddenInput())
+
     classe = ClasseAbonnementChoiceField(
         queryset=Classe.objects.none(),
         required=False,
@@ -186,6 +214,40 @@ class AbonnementBusForm(forms.ModelForm):
             self.fields['grille'].required = False
         if self.instance and self.instance.pk and not self.instance.mode_paiement_id:
             self.fields['mode_paiement'].required = False
+        self.remise_cible = REMISE_ENREGISTREE
+        if self.instance and self.instance.pk and self.instance.grille_id:
+            existante = self.instance.grille.remise_pour(self.instance.eleve_id)
+            if existante:
+                self.initial.update({
+                    'remise_type': existante.type_remise,
+                    'remise_valeur': existante.valeur.normalize(),
+                    'remise_motif': existante.motif,
+                    **{f'remise_sur_tranche_{n}': getattr(existante, f'sur_tranche_{n}') for n in (1, 2, 3)},
+                })
+
+    def _remise_saisie(self, cleaned, eleve, grille):
+        """Remise saisie dans le formulaire (non enregistrée), None pour « Aucune remise »."""
+        type_remise = cleaned.get('remise_type')
+        if not type_remise:
+            return None
+        valeur = cleaned.get('remise_valeur')
+        tranches = [code for n, code in enumerate(('T1', 'T2', 'T3'), 1) if cleaned.get(f'remise_sur_tranche_{n}')]
+        if not valeur or valeur <= 0:
+            self.add_error('remise_valeur', "Indiquez la valeur de la remise.")
+        elif type_remise == RemiseBus.TypeRemise.POURCENTAGE and valeur > 100:
+            self.add_error('remise_valeur', "Un pourcentage ne peut pas dépasser 100 %.")
+        if not cleaned.get('remise_motif'):
+            self.add_error('remise_motif', "Indiquez le motif de la remise.")
+        if not tranches:
+            self.add_error('remise_sur_tranche_1', "Cochez au moins une tranche concernée par la remise.")
+        return construire_remise(eleve, grille, type_remise, valeur, cleaned.get('remise_motif'), tranches)
+
+    def enregistrer_remise(self, user):
+        """À appeler après l'enregistrement du reçu : applique la remise modifiée par la caisse."""
+        abo = self.instance
+        if self.remise_cible is REMISE_ENREGISTREE or not abo.grille_id:
+            return
+        enregistrer_remise(abo.eleve, abo.grille, self.remise_cible, user)
 
     def clean(self):
         cleaned = super().clean()
@@ -194,6 +256,8 @@ class AbonnementBusForm(forms.ModelForm):
         grille = cleaned.get('grille')
         periodicite = cleaned.get('periodicite')
         montant = cleaned.get('montant')
+        if cleaned.get('remise_modifiee') == '1' and grille and eleve:
+            self.remise_cible = self._remise_saisie(cleaned, eleve, grille)
 
         if montant is not None and montant <= 0:
             self.add_error('montant', "Le montant du paiement doit être supérieur à zéro.")
@@ -216,12 +280,17 @@ class AbonnementBusForm(forms.ModelForm):
             situation = grille.situation_paiements(
                 eleve,
                 exclude_pk=self.instance.pk if self.instance and self.instance.pk else None,
+                remise=self.remise_cible,
             )
-            reste = situation[periodicite]['reste']
-            if montant > reste:
+            # L'excédent d'une tranche passe à la suivante : seul le reste des
+            # tranches restantes (remise déduite) limite le montant.
+            plafond = situation[periodicite]['plafond']
+            if montant > plafond:
+                portee = PORTEE_PLAFOND[TRANCHE_DE_DEPART[periodicite]]
+                montant_plafond = f"{plafond:,.0f}".replace(',', ' ')
                 self.add_error(
                     'montant',
-                    f"Le montant dépasse le reste à payer ({reste:,.0f} GNF).".replace(',', ' '),
+                    f"Le montant dépasse le reste à payer {portee} ({montant_plafond} GNF, remise déduite).",
                 )
         return cleaned
 
@@ -279,4 +348,63 @@ class AbonnementCantineForm(forms.ModelForm):
             ecole_eleve_id = getattr(getattr(eleve, 'classe', None), 'ecole_id', None)
             if ecole_eleve_id != self.ecole_autorisee.pk:
                 self.add_error('eleve', "Cet élève n'appartient pas à votre école.")
+        return cleaned
+
+
+class RemiseBusForm(forms.ModelForm):
+    """Remise d'un élève sur une grille bus, depuis la liste des remises."""
+
+    eleve = EleveAbonnementChoiceField(
+        queryset=Eleve.objects.none(), widget=forms.Select(attrs={'class': 'form-select'}), label="Élève",
+    )
+
+    class Meta:
+        model = RemiseBus
+        fields = [
+            'eleve', 'grille', 'type_remise', 'valeur', 'motif',
+            'sur_tranche_1', 'sur_tranche_2', 'sur_tranche_3', 'observations',
+        ]
+        widgets = {
+            'grille': forms.Select(attrs={'class': 'form-select'}),
+            'type_remise': forms.Select(attrs={'class': 'form-select'}),
+            'valeur': forms.NumberInput(attrs={'class': 'form-control', 'step': 'any', 'min': 0}),
+            'motif': forms.Select(attrs={'class': 'form-select'}),
+            'sur_tranche_1': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+            'sur_tranche_2': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+            'sur_tranche_3': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+            'observations': forms.TextInput(attrs={'class': 'form-control'}),
+        }
+
+    def __init__(self, *args, ecole=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        eleves = Eleve.objects.select_related('classe', 'classe__ecole')
+        grilles = GrilleTarifaireBus.objects.select_related('ecole')
+        if ecole:
+            eleves = eleves.filter(classe__ecole=ecole)
+            grilles = grilles.filter(ecole=ecole)
+        self.fields['eleve'].queryset = eleves.order_by('classe__nom', 'nom', 'prenom', 'matricule')
+        self.fields['eleve'].empty_label = "Sélectionner un élève"
+        self.fields['grille'].queryset = grilles.order_by('-annee_scolaire', 'zone')
+        self.fields['grille'].empty_label = "Sélectionner la zone et l'année"
+        if self.instance.pk:
+            # L'élève et la grille identifient la remise : on ne les change pas ici.
+            self.fields['eleve'].disabled = True
+            self.fields['grille'].disabled = True
+
+    def clean(self):
+        cleaned = super().clean()
+        eleve, grille = cleaned.get('eleve'), cleaned.get('grille')
+        valeur = cleaned.get('valeur')
+        if valeur is not None and valeur <= 0:
+            self.add_error('valeur', "Indiquez la valeur de la remise.")
+        if (cleaned.get('type_remise') == RemiseBus.TypeRemise.POURCENTAGE
+                and valeur is not None and valeur > 100):
+            self.add_error('valeur', "Un pourcentage ne peut pas dépasser 100 %.")
+        if not any(cleaned.get(f'sur_tranche_{n}') for n in (1, 2, 3)):
+            self.add_error('sur_tranche_1', "Cochez au moins une tranche concernée par la remise.")
+        if eleve and grille:
+            if getattr(eleve.classe, 'ecole_id', None) != grille.ecole_id:
+                self.add_error('eleve', "L'élève et la grille doivent appartenir à la même école.")
+            elif not self.instance.pk and RemiseBus.objects.filter(eleve=eleve, grille=grille).exists():
+                self.add_error('eleve', "Cet élève a déjà une remise sur cette grille : modifiez-la depuis la liste.")
         return cleaned

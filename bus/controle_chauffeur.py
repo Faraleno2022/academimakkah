@@ -21,6 +21,7 @@ from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, Spacer, Table
 
 from .historique_eleve import _document, _entete, _gnf, _style_tableau, _styles
+from .models import remises_par_eleve_grille
 
 FORMATS_CONTROLE = ('pdf', 'excel')
 SANS_ITINERAIRE = "Itinéraire non renseigné"
@@ -35,11 +36,11 @@ def _statut(dernier, today):
     return 'Actif'
 
 
-def _situation(grille, totaux, today):
+def _situation(grille, totaux, today, remise=None):
     """(libellé, reste annuel, retard échu) ; le reste est None sans grille."""
     if grille is None:
         return 'Tarif inconnu', None, Decimal('0')
-    situation = grille.situation_depuis_totaux(totaux)
+    situation = grille.situation_depuis_totaux(totaux, remise)
     reste = situation['ANNUEL']['reste']
     echeances = {
         'T1': grille.date_echeance_tranche_1,
@@ -70,6 +71,9 @@ def lignes_controle(visibles, filtres):
     for versement in versements:
         par_eleve[versement.eleve_id].append(versement)
 
+    remises = remises_par_eleve_grille(
+        (paiements[0].eleve_id, paiements[0].grille_id) for paiements in par_eleve.values()
+    )
     lignes = []
     for paiements in par_eleve.values():
         dernier = paiements[0]
@@ -87,7 +91,8 @@ def lignes_controle(visibles, filtres):
             if grille and paiement.grille_id == grille.pk:
                 totaux[paiement.periodicite] += Decimal(paiement.montant or 0)
         statut = _statut(dernier, today)
-        situation, reste, retard = _situation(grille, totaux, today)
+        remise = remises.get((eleve.pk, grille.pk)) if grille else None
+        situation, reste, retard = _situation(grille, totaux, today, remise)
         if statut != 'Actif':
             situation = statut if not reste else f"{statut} — reste {_gnf(reste)}"
         zone = getattr(grille, 'zone', '') or infos['zone']
@@ -102,6 +107,8 @@ def lignes_controle(visibles, filtres):
             'statut': statut,
             'situation': situation,
             'reste': reste,
+            # Remise accordée sur la grille (le reste en tient déjà compte).
+            'remise': f"Remise {remise.libelle_valeur} ({remise.get_motif_display()})" if remise else '',
             'alerte': statut != 'Actif' or bool(retard),
         })
     lignes.sort(key=lambda l: (
@@ -166,8 +173,9 @@ def pdf_controle(lignes, ecole, precisions):
             Paragraph(escape(ligne['classe'] or '—'), cell),
             Paragraph(escape(ligne['point_arret'] or '—'), cell),
             Paragraph(
-                f"<font color='#B42318'><b>{escape(ligne['situation'])}</b></font>"
-                if ligne['alerte'] else escape(ligne['situation']),
+                (f"<font color='#B42318'><b>{escape(ligne['situation'])}</b></font>"
+                 if ligne['alerte'] else escape(ligne['situation']))
+                + (f"<br/><font size=7 color='#1F4E78'>{escape(ligne['remise'])}</font>" if ligne['remise'] else ''),
                 cell,
             ),
             '',
@@ -191,7 +199,7 @@ def pdf_controle(lignes, ecole, precisions):
 
 ENTETES_EXCEL = [
     'N°', 'Itinéraire', 'Élève', 'Matricule', 'Contact parent', 'Classe', "Point d'arrêt",
-    'Zone / circuit', 'Statut', 'Situation', 'Reste annuel (GNF)', 'Contrôle',
+    'Zone / circuit', 'Statut', 'Situation', 'Remise', 'Reste annuel (GNF)', 'Contrôle',
 ]
 
 
@@ -221,19 +229,19 @@ def excel_controle(lignes, ecole, precisions):
         valeurs = [
             numero, ligne['itineraire'], _nom(eleve), eleve.matricule or '', ligne['contact'],
             ligne['classe'], ligne['point_arret'], ligne['zone'], ligne['statut'], ligne['situation'],
-            int(ligne['reste']) if ligne['reste'] is not None else None, '',
+            ligne['remise'], int(ligne['reste']) if ligne['reste'] is not None else None, '',
         ]
         rang = entete_ligne + numero
         for col, valeur in enumerate(valeurs, 1):
             c = ws.cell(row=rang, column=col, value=valeur)
             c.border = bordure
-            c.alignment = Alignment(vertical='center', wrap_text=col in (2, 7, 10))
+            c.alignment = Alignment(vertical='center', wrap_text=col in (2, 7, 10, 11))
         ws.cell(row=rang, column=2).font = Font(bold=True)
-        ws.cell(row=rang, column=11).number_format = '#,##0'
+        ws.cell(row=rang, column=12).number_format = '#,##0'
         if ligne['alerte']:
             ws.cell(row=rang, column=10).font = alerte
 
-    for col, largeur in enumerate([6, 26, 28, 14, 18, 14, 22, 18, 10, 28, 16, 11], 1):
+    for col, largeur in enumerate([6, 26, 28, 14, 18, 14, 22, 18, 10, 28, 22, 16, 11], 1):
         ws.column_dimensions[get_column_letter(col)].width = largeur
     derniere = entete_ligne + max(len(lignes), 1)
     ws.auto_filter.ref = f"A{entete_ligne}:{get_column_letter(len(ENTETES_EXCEL))}{derniere}"

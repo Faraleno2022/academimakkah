@@ -2,6 +2,7 @@ from django.urls import path
 from . import views
 from . import views_cantine
 from . import views_historique
+from . import views_remises
 from .whatsapp_bus import apercu_message_whatsapp_abonnement, apercu_message_whatsapp_expiration
 from .abonnement_public import abonnement_public_pdf
 
@@ -25,6 +26,12 @@ urlpatterns = [
     path('relances/envoyer/', views.envoyer_relances_bus, name='envoyer_relances_bus'),
     path('relances/export/excel/', views.export_relances_excel, name='export_relances_excel'),
     path('<int:abo_id>/recu/pdf/', views.generer_recu_abonnement_pdf, name='recu_pdf'),
+
+    # Remises accordées sur l'abonnement bus
+    path('remises/', views_remises.liste_remises, name='remises'),
+    path('remises/nouvelle/', views_remises.remise_form, name='remise_nouvelle'),
+    path('remises/<int:remise_id>/modifier/', views_remises.remise_form, name='remise_modifier'),
+    path('remises/<int:remise_id>/supprimer/', views_remises.supprimer_remise, name='remise_supprimer'),
     
     # Historique des abonnements d'un élève (bus + cantine)
     path('eleves/abonnements/', views_historique.historique_abonnements, name='historique_abonnements'),

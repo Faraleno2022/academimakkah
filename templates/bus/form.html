@@ -127,7 +127,7 @@
               <span class="input-group-text">GNF</span>
             </div>
             <div id="montantDisplay" class="montant-display mt-1" style="display:none;"></div>
-            <div class="form-text">Rempli avec le reste de la tranche choisie ; saisissez un montant inférieur pour un paiement partiel.</div>
+            <div class="form-text" id="montantAide">Rempli avec le reste de la tranche choisie ; saisissez un montant inférieur pour un paiement partiel.</div>
             <div id="montantPartiel" class="small fw-semibold mt-1" style="display:none;"></div>
             {% if form.montant.errors %}<div class="text-danger small">{{ form.montant.errors.0 }}</div>{% endif %}
           </div>
@@ -161,7 +161,41 @@
             <div class="col-md-4"><small>Reste avant ce reçu</small><div class="fw-bold text-danger" id="tarifReste">0 GNF</div></div>
           </div>
           <div id="tarifDetail" class="small text-center mt-2" style="display:none;"></div>
+          <div id="tarifRemise" class="small text-center mt-1 fw-semibold" style="display:none;"></div>
         </div>
+      </div>
+
+      <!-- Remise de l'élève sur la grille : déduite des tranches concernées -->
+      <div class="form-section">
+        <h5 class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+          <span><i class="fas fa-percent me-2"></i>Remise sur l'abonnement</span>
+          <a class="btn btn-sm btn-outline-secondary" href="{% url 'bus:remises' %}" target="_blank"><i class="fas fa-list me-1"></i>Élèves avec remise</a>
+        </h5>
+        {{ form.remise_modifiee }}
+        <div class="row">
+          <div class="col-md-4 mb-3">
+            <label class="form-label small-label" for="{{ form.remise_type.id_for_label }}">Type de remise</label>
+            {{ form.remise_type }}
+          </div>
+          <div class="col-md-4 mb-3 remise-detail">
+            <label class="form-label small-label" for="{{ form.remise_valeur.id_for_label }}">Valeur <span class="required-field">*</span></label>
+            <div class="input-group">{{ form.remise_valeur }}<span class="input-group-text" id="remiseUnite">%</span></div>
+            {% if form.remise_valeur.errors %}<div class="text-danger small">{{ form.remise_valeur.errors.0 }}</div>{% endif %}
+          </div>
+          <div class="col-md-4 mb-3 remise-detail">
+            <label class="form-label small-label" for="{{ form.remise_motif.id_for_label }}">Motif <span class="required-field">*</span></label>
+            {{ form.remise_motif }}
+            {% if form.remise_motif.errors %}<div class="text-danger small">{{ form.remise_motif.errors.0 }}</div>{% endif %}
+          </div>
+          <div class="col-12 mb-2 remise-detail">
+            <span class="small-label me-2">Tranches concernées :</span>
+            <div class="form-check form-check-inline">{{ form.remise_sur_tranche_1 }}<label class="form-check-label" for="{{ form.remise_sur_tranche_1.id_for_label }}">Tranche 1</label></div>
+            <div class="form-check form-check-inline">{{ form.remise_sur_tranche_2 }}<label class="form-check-label" for="{{ form.remise_sur_tranche_2.id_for_label }}">Tranche 2</label></div>
+            <div class="form-check form-check-inline">{{ form.remise_sur_tranche_3 }}<label class="form-check-label" for="{{ form.remise_sur_tranche_3.id_for_label }}">Tranche 3</label></div>
+            {% if form.remise_sur_tranche_1.errors %}<div class="text-danger small">{{ form.remise_sur_tranche_1.errors.0 }}</div>{% endif %}
+          </div>
+        </div>
+        <div class="form-text">La remise vaut pour l'élève sur toute la grille (zone et année) : elle est reprise automatiquement aux paiements suivants, sur les reçus, le carnet et la liste du chauffeur.</div>
       </div>
 
       <!-- Transport : repris sur la liste de contrôle du chauffeur -->
@@ -234,7 +268,18 @@ document.addEventListener('DOMContentLoaded', function() {
   const tarifDetail = document.getElementById('tarifDetail');
   const montantPartiel = document.getElementById('montantPartiel');
   const libellesTranches = {T1: 'Tranche 1', T2: 'Tranche 2', T3: 'Tranche 3'};
+  const tarifRemise = document.getElementById('tarifRemise');
+  const montantAide = document.getElementById('montantAide');
+  const remiseType = document.getElementById('id_remise_type');
+  const remiseValeur = document.getElementById('id_remise_valeur');
+  const remiseMotif = document.getElementById('id_remise_motif');
+  const remiseTranches = [1, 2, 3].map(function(n) { return document.getElementById('id_remise_sur_tranche_' + n); });
+  const remiseModifiee = document.getElementById('id_remise_modifiee');
+  const remiseUnite = document.getElementById('remiseUnite');
+  const aideMontantDefaut = montantAide ? montantAide.textContent : '';
   let resteAvantRecu = null;
+  let plafondRecu = null;
+  let ordreReport = [];
   const tarifBusUrl = '{% url "bus:tarif_bus_json" %}';
   const eleveInfoUrlTemplate = '{% url "bus:get_eleve_info_json" 0 %}';
   const paiementEnModification = '{{ form.instance.pk|default:"" }}';
@@ -324,6 +369,40 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
+  function afficherRemiseDetail() {
+    if (!remiseType) return;
+    const active = !!remiseType.value;
+    document.querySelectorAll('.remise-detail').forEach(function(el) { el.style.display = active ? '' : 'none'; });
+    if (remiseUnite) remiseUnite.textContent = remiseType.value === 'MONTANT_FIXE' ? 'GNF' : '%';
+  }
+
+  // Remise enregistrée de l'élève : recopiée dans le formulaire tant que la caisse ne la modifie pas.
+  function appliquerRemiseEleve(remise) {
+    if (!remiseType || (remiseModifiee && remiseModifiee.value === '1')) return;
+    remiseType.value = remise ? remise.type : '';
+    if (remiseValeur) remiseValeur.value = remise ? remise.valeur : '';
+    if (remiseMotif) remiseMotif.value = remise ? remise.motif : '';
+    remiseTranches.forEach(function(caseTranche, i) {
+      if (caseTranche) caseTranche.checked = remise ? remise.tranches.indexOf('T' + (i + 1)) !== -1 : true;
+    });
+    afficherRemiseDetail();
+  }
+
+  // Excédent : la suite de la tranche choisie, puis les suivantes (comme au serveur).
+  function texteReport(excedent) {
+    const parts = [];
+    let restant = excedent;
+    ordreReport.forEach(function(t, i) {
+      const disponible = i === 0 ? 0 : t.reste;
+      if (restant > 0 && disponible > 0) {
+        const part = Math.min(restant, disponible);
+        parts.push(formatGNF(part) + ' sur la ' + t.libelle);
+        restant -= part;
+      }
+    });
+    return parts.join(', ');
+  }
+
   function afficherPaiementPartiel() {
     if (!montantPartiel) return;
     const v = parseFloat(montantInput && montantInput.value);
@@ -331,9 +410,13 @@ document.addEventListener('DOMContentLoaded', function() {
       montantPartiel.style.display = 'none';
       return;
     }
-    if (v > resteAvantRecu) {
+    if (plafondRecu !== null && v > plafondRecu) {
       montantPartiel.style.color = '#dc3545';
-      montantPartiel.textContent = 'Montant supérieur au reste à payer (' + formatGNF(resteAvantRecu) + ').';
+      montantPartiel.textContent = 'Montant supérieur au reste à payer (' + formatGNF(plafondRecu) + ', remise déduite).';
+    } else if (v > resteAvantRecu) {
+      montantPartiel.style.color = '#0d6efd';
+      const report = texteReport(v - resteAvantRecu);
+      montantPartiel.textContent = 'Tranche choisie soldée ; excédent reporté : ' + (report || formatGNF(v - resteAvantRecu)) + '.';
     } else {
       montantPartiel.style.color = '#b35c00';
       montantPartiel.textContent = 'Paiement partiel : il restera ' + formatGNF(resteAvantRecu - v) + ' après ce reçu.';
@@ -354,6 +437,15 @@ document.addEventListener('DOMContentLoaded', function() {
       url.searchParams.set('grille_id', grilleSelect.value);
       url.searchParams.set('periodicite', periodiciteSelect.value);
       if (paiementEnModification) url.searchParams.set('exclure', paiementEnModification);
+      if (remiseModifiee && remiseModifiee.value === '1') {
+        url.searchParams.set('remise_modifiee', '1');
+        url.searchParams.set('remise_type', remiseType.value);
+        url.searchParams.set('remise_valeur', remiseValeur.value || '');
+        url.searchParams.set('remise_motif', remiseMotif.value || '');
+        remiseTranches.forEach(function(caseTranche, i) {
+          url.searchParams.set('remise_sur_tranche_' + (i + 1), caseTranche && caseTranche.checked ? '1' : '0');
+        });
+      }
       const response = await fetch(url.toString(), {headers: {'X-Requested-With': 'XMLHttpRequest'}});
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.message || 'Tarif indisponible');
@@ -369,8 +461,26 @@ document.addEventListener('DOMContentLoaded', function() {
       } else if (tarifDetail) {
         tarifDetail.style.display = 'none';
       }
+      appliquerRemiseEleve(data.remise_eleve);
+      if (tarifRemise) {
+        if (data.remise > 0) {
+          tarifRemise.textContent = 'Tarif de la grille : ' + formatGNF(data.brut) + ' — remise : ' + formatGNF(data.remise)
+            + (data.remise_eleve ? ' (' + data.remise_eleve.libelle + ')' : '') + ' — montant dû : ' + formatGNF(data.du);
+          tarifRemise.style.display = 'block';
+        } else {
+          tarifRemise.style.display = 'none';
+        }
+      }
+      if (montantAide) {
+        const libelle = periodiciteSelect.options[periodiciteSelect.selectedIndex].text;
+        montantAide.textContent = data.remise > 0
+          ? libelle + ' : ' + formatGNF(data.du) + " d'après la grille, remise déduite. Saisissez un montant inférieur pour un paiement partiel ; un montant supérieur solde la tranche et passe à la suivante."
+          : aideMontantDefaut;
+      }
       tarifInfo.style.display = 'block';
       resteAvantRecu = Number(data.reste);
+      plafondRecu = Number(data.plafond);
+      ordreReport = data.report || [];
       // Au rechargement après une erreur, le montant saisi (paiement partiel) est conservé.
       const garderSaisie = conserverMontant === true && montantInput && montantInput.value;
       if (!paiementEnModification && montantInput && !garderSaisie) {
@@ -381,8 +491,20 @@ document.addEventListener('DOMContentLoaded', function() {
     } catch (error) {
       if (tarifInfo) tarifInfo.style.display = 'none';
       resteAvantRecu = null;
+      plafondRecu = null;
       afficherPaiementPartiel();
     }
+  }
+
+  if (remiseType) {
+    document.querySelectorAll('.remise-champ').forEach(function(champ) {
+      champ.addEventListener('change', function() {
+        if (remiseModifiee) remiseModifiee.value = '1';
+        afficherRemiseDetail();
+        chargerTarif();
+      });
+    });
+    afficherRemiseDetail();
   }
 
   function showEleveInfo(data) {
@@ -457,8 +579,11 @@ document.addEventListener('DOMContentLoaded', function() {
     chargerTarif();
   });
   if (periodiciteSelect) periodiciteSelect.addEventListener('change', function() { chargerTarif(); });
-  if (grilleSelect) grilleSelect.addEventListener('change', function() { chargerTarif(); });
+  // Autre élève ou autre grille : on repart de la remise enregistrée pour ce couple.
+  function oublierRemiseSaisie() { if (remiseModifiee) remiseModifiee.value = ''; }
+  if (grilleSelect) grilleSelect.addEventListener('change', function() { oublierRemiseSaisie(); chargerTarif(); });
   if (eleveSelect) eleveSelect.addEventListener('change', async function() {
+    oublierRemiseSaisie();
     await chargerEleveSelectionne(true);
     chargerTarif();
   });

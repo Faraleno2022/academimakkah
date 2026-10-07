@@ -43,12 +43,21 @@ def _selection(request):
     return eleves, classes, eleve, classe, type_abonnement
 
 
+# Le bouton « Détails » de la cantine ouvre cette page en mode cantine : elle
+# ne doit pas se présenter comme la page du bus.
+TITRES_HISTORIQUE = {
+    'tous': "Abonnements d'un élève",
+    'bus': "Abonnements bus d'un élève",
+    'cantine': "Abonnements cantine d'un élève",
+}
+
+
 @login_required
 def historique_abonnements(request):
     eleves, classes, eleve, classe, type_abonnement = _selection(request)
     lignes = historique.lignes_abonnements(eleve, type_abonnement) if eleve else []
     return render(request, 'bus/historique_eleve.html', {
-        'titre_page': "Abonnements d'un élève",
+        'titre_page': TITRES_HISTORIQUE[type_abonnement],
         'classes': classes.order_by('ecole__nom', 'nom'),
         'eleves': eleves.order_by('classe__nom', 'nom', 'prenom'),
         'eleve': eleve,
@@ -57,6 +66,7 @@ def historique_abonnements(request):
         'types': historique.TYPES_HISTORIQUE,
         'lignes': lignes,
         'resume': historique.resume_abonnements(lignes),
+        'remises_bus': historique.remises_bus_eleve(eleve) if eleve and type_abonnement != 'cantine' else [],
     })
 
 
@@ -105,7 +115,7 @@ def export_historique_abonnements(request, fmt):
         return response
 
     if fmt == 'carnet':
-        contenu = historique.pdf_carnet(blocs, ecole)
+        contenu = historique.pdf_carnet(blocs, ecole, avec_remises_bus=type_abonnement != 'cantine')
         nom = f"carnet_abonnement_{suffixe}_{horodatage}.pdf"
     else:
         contenu = historique.pdf_liste(blocs, ecole)

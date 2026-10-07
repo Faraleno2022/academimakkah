@@ -1,0 +1,97 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block title %}Bus scolaire - Élèves avec remise{% endblock %}
+
+{% block breadcrumb_items %}
+<li class="breadcrumb-item"><a href="{% url 'bus:index' %}">Bus scolaire</a></li>
+<li class="breadcrumb-item active" aria-current="page">Élèves avec remise</li>
+{% endblock %}
+
+{% block page_actions %}
+<a class="btn btn-outline-secondary" href="{% url 'bus:liste' %}"><i class="fas fa-arrow-left me-1"></i>Paiements bus</a>
+<a class="btn btn-outline-success" href="?{{ filtres_url }}{% if filtres_url %}&amp;{% endif %}export=excel"><i class="fas fa-file-excel me-1"></i>Excel</a>
+<a class="btn btn-success" href="{% url 'bus:remise_nouvelle' %}"><i class="fas fa-plus me-1"></i>Nouvelle remise</a>
+{% endblock %}
+
+{% block content %}
+<div class="card shadow-sm border-0">
+  <div class="card-header bg-white py-3">
+    <h5 class="mb-1"><i class="fas fa-percent text-primary me-2"></i>Élèves bénéficiant d'une remise sur le bus</h5>
+    <p class="text-muted mb-0">La remise est déduite des tranches concernées : le montant dû, les reçus, le carnet et la liste du chauffeur en tiennent compte.</p>
+  </div>
+  <div class="card-body border-bottom">
+    <form method="get" class="row g-2">
+      <div class="col-md-5">
+        <input type="text" name="q" class="form-control" placeholder="Rechercher (élève, matricule, classe)" value="{{ q }}">
+      </div>
+      <div class="col-md-4">
+        <select name="grille" class="form-select">
+          <option value="">Toutes les grilles</option>
+          {% for g in grilles %}<option value="{{ g.pk }}" {% if grille_id == g.pk|stringformat:"s" %}selected{% endif %}>{{ g.zone }} — {{ g.annee_scolaire }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <button class="btn btn-primary w-100" type="submit"><i class="fas fa-search me-1"></i>Filtrer</button>
+      </div>
+    </form>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Élève</th><th>Classe</th><th>Grille</th><th>Remise</th><th>Tranches</th>
+          <th class="text-end">Tarif</th><th class="text-end">Remise</th><th class="text-end">Net dû</th>
+          <th class="text-end">Payé</th><th class="text-end">Reste</th><th class="text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ligne in lignes %}
+        <tr>
+          <td><strong>{{ ligne.eleve.prenom }} {{ ligne.eleve.nom }}</strong><div class="small text-muted">{{ ligne.eleve.matricule }}</div></td>
+          <td>{{ ligne.classe }}</td>
+          <td>{{ ligne.grille.zone }}<div class="small text-muted">{{ ligne.grille.annee_scolaire }}</div></td>
+          <td><span class="badge bg-info text-dark">{{ ligne.remise.libelle_valeur }}</span><div class="small text-muted">{{ ligne.remise.get_motif_display }}</div></td>
+          <td class="small">{{ ligne.remise.libelle_tranches }}</td>
+          <td class="text-end text-nowrap">{{ ligne.tarif|floatformat:0|intcomma }}</td>
+          <td class="text-end text-nowrap text-success">− {{ ligne.montant_remise|floatformat:0|intcomma }}</td>
+          <td class="text-end text-nowrap fw-bold">{{ ligne.net|floatformat:0|intcomma }}</td>
+          <td class="text-end text-nowrap">{{ ligne.paye|floatformat:0|intcomma }}</td>
+          <td class="text-end text-nowrap {% if ligne.reste %}text-danger{% else %}text-success{% endif %}">{% if ligne.reste %}{{ ligne.reste|floatformat:0|intcomma }}{% else %}Soldé{% endif %}</td>
+          <td class="text-end text-nowrap">
+            <a class="btn btn-sm btn-outline-success" href="{% url 'bus:nouveau' %}?eleve={{ ligne.eleve.pk }}" title="Encaisser un paiement"><i class="fas fa-cash-register"></i></a>
+            <a class="btn btn-sm btn-outline-primary" href="{% url 'bus:remise_modifier' ligne.remise.pk %}" title="Modifier la remise"><i class="fas fa-edit"></i></a>
+            <form method="post" action="{% url 'bus:remise_supprimer' ligne.remise.pk %}" class="d-inline js-confirmer-retrait">
+              {% csrf_token %}
+              <button class="btn btn-sm btn-outline-danger" type="submit" title="Retirer la remise"><i class="fas fa-trash"></i></button>
+            </form>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="11" class="text-center text-muted py-4">Aucun élève ne bénéficie d'une remise bus{% if q or grille_id %} pour ces critères{% endif %}.</td></tr>
+        {% endfor %}
+      </tbody>
+      {% if lignes %}
+      <tfoot class="table-light fw-bold">
+        <tr>
+          <td colspan="5">Total — {{ lignes|length }} élève(s)</td>
+          <td class="text-end text-nowrap">{{ totaux.tarif|floatformat:0|intcomma }}</td>
+          <td class="text-end text-nowrap text-success">− {{ totaux.montant_remise|floatformat:0|intcomma }}</td>
+          <td class="text-end text-nowrap">{{ totaux.net|floatformat:0|intcomma }}</td>
+          <td class="text-end text-nowrap">{{ totaux.paye|floatformat:0|intcomma }}</td>
+          <td class="text-end text-nowrap">{{ totaux.reste|floatformat:0|intcomma }}</td>
+          <td></td>
+        </tr>
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
+</div>
+<script>
+document.querySelectorAll('.js-confirmer-retrait').forEach(function(form) {
+  form.addEventListener('submit', function(e) {
+    if (!confirm("Retirer la remise de cet élève ? Le tarif de la grille s'appliquera de nouveau.")) e.preventDefault();
+  });
+});
+</script>
+{% endblock %}

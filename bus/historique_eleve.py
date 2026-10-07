@@ -34,7 +34,7 @@ from reportlab.platypus import (
 
 from ecole_moderne.pdf_utils import draw_logo_watermark
 
-from .models import AbonnementBus, AbonnementCantine, GrilleTarifaireBus
+from .models import AbonnementBus, AbonnementCantine, GrilleTarifaireBus, RemiseBus
 
 
 MOIS_FR = (
@@ -115,6 +115,23 @@ def dernier_abonnement_bus(eleve):
         .select_related('grille', 'mode_paiement')
         .order_by('-date_debut', '-created_at', '-pk')
         .first()
+    )
+
+
+def remises_bus_eleve(eleve):
+    """Remises bus de l'élève, avec le tarif, la remise et le net dû de l'année."""
+    resultat = []
+    for remise in RemiseBus.objects.filter(eleve=eleve).select_related('grille').order_by('-grille__annee_scolaire'):
+        annuel = remise.grille.situation_paiements(eleve, remise=remise)['ANNUEL']
+        resultat.append({'objet': remise, 'grille': remise.grille, **annuel})
+    return resultat
+
+
+def texte_remise_bus(item):
+    """« Ratoma 2026-2027 : 10 % — Réduction fratrie, 40 000 GNF déduits (net dû 360 000 GNF) »."""
+    return (
+        f"{item['grille'].zone} {item['grille'].annee_scolaire} : {item['objet'].libelle}, "
+        f"{_gnf(item['remise'])} déduits (net dû {_gnf(item['du'])})"
     )
 
 
@@ -522,7 +539,7 @@ def pdf_liste(blocs, ecole, titre="LISTE DES ABONNEMENTS"):
     return buffer.getvalue()
 
 
-def pdf_carnet(blocs, ecole):
+def pdf_carnet(blocs, ecole, avec_remises_bus=True):
     """Carnet d'abonnement (portrait) : une page par élève, avec colonne de visa."""
     buffer = BytesIO()
     doc, page = _document(buffer, A4, "Carnet d'abonnement", ecole)
@@ -540,6 +557,11 @@ def pdf_carnet(blocs, ecole):
             _entete(ecole, "CARNET<br/>D'ABONNEMENT", largeur, styles), Spacer(1, 0.3 * cm),
             _bloc_eleve(eleve, resume, largeur, styles), Spacer(1, 0.35 * cm),
         ]
+        for item in (remises_bus_eleve(eleve) if avec_remises_bus else []):
+            elements += [
+                Paragraph(f"<b>Remise bus :</b> {escape(texte_remise_bus(item))}", styles['AboInfo']),
+                Spacer(1, 0.15 * cm),
+            ]
         data = [[Paragraph(f"<b>{entete}</b>", cell) for entete in entetes]]
         for numero, ligne in enumerate(lignes, 1):
             rangee = [Paragraph(escape(str(valeur)), cell) for valeur in (
