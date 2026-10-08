@@ -95,10 +95,12 @@ class EnseignantForm(forms.ModelForm):
                 'step': '0.25',
                 'min': '0'
             }),
+            # Un champ « date » n'affiche que le format ISO : sans lui, la
+            # fiche modifiée s'ouvrait avec une date d'embauche vide.
             'date_embauche': forms.DateInput(attrs={
                 'class': 'form-control',
                 'type': 'date'
-            }),
+            }, format='%Y-%m-%d'),
         }
         labels = {
             'nom': 'Nom de famille *',
@@ -250,7 +252,7 @@ class AffectationClasseForm(forms.ModelForm):
     class Meta:
         model = AffectationClasse
         fields = [
-            'classe', 'heures_par_semaine', 'matiere',
+            'classe', 'heures_par_semaine', 'taux_horaire', 'matiere',
             'date_debut', 'date_fin', 'actif'
         ]
         widgets = {
@@ -258,14 +260,18 @@ class AffectationClasseForm(forms.ModelForm):
             'heures_par_semaine': forms.NumberInput(attrs={
                 'class': 'form-control', 'step': '0.25', 'min': '0'
             }),
+            'taux_horaire': forms.NumberInput(attrs={
+                'class': 'form-control', 'step': '1', 'min': '0'
+            }),
             'matiere': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Ex: Mathématiques'}),
-            'date_debut': forms.DateInput(attrs={'class': 'form-control', 'type': 'date'}),
-            'date_fin': forms.DateInput(attrs={'class': 'form-control', 'type': 'date'}),
+            'date_debut': forms.DateInput(attrs={'class': 'form-control', 'type': 'date'}, format='%Y-%m-%d'),
+            'date_fin': forms.DateInput(attrs={'class': 'form-control', 'type': 'date'}, format='%Y-%m-%d'),
             'actif': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
         }
         labels = {
             'classe': 'Classe *',
             'heures_par_semaine': 'Heures par semaine',
+            'taux_horaire': 'Taux horaire (GNF)',
             'matiere': 'Matière',
             'date_debut': 'Date de début *',
             'date_fin': 'Date de fin',
@@ -340,6 +346,19 @@ class AffectationClasseForm(forms.ModelForm):
         if self.enseignant.type_enseignant == TypeEnseignant.SECONDAIRE:
             if not cleaned_data.get('heures_par_semaine'):
                 raise ValidationError({'heures_par_semaine': "Obligatoire pour les enseignants du secondaire."})
+
+        # Cours donnés par un administrateur : payés au taux de chaque classe.
+        if self.enseignant.type_enseignant == TypeEnseignant.ADMINISTRATEUR:
+            erreurs = {}
+            if not cleaned_data.get('heures_par_semaine'):
+                erreurs['heures_par_semaine'] = "Obligatoire pour des cours payés à l'heure."
+            if not cleaned_data.get('taux_horaire'):
+                erreurs['taux_horaire'] = "Obligatoire pour des cours payés à l'heure."
+            if erreurs:
+                raise ValidationError(erreurs)
+        else:
+            # Les autres enseignants sont payés au taux de leur dossier.
+            cleaned_data['taux_horaire'] = None
 
         # Vérifier cohérence des dates
         d_debut = cleaned_data.get('date_debut')
@@ -434,7 +453,7 @@ class PresenceForm(forms.ModelForm):
         ]
         widgets = {
             'enseignant': forms.Select(attrs={'class': 'form-select'}),
-            'date': forms.DateInput(attrs={'class': 'form-control', 'type': 'date'}),
+            'date': forms.DateInput(attrs={'class': 'form-control', 'type': 'date'}, format='%Y-%m-%d'),
             'statut': forms.Select(attrs={'class': 'form-select'}),
             'heure_arrivee': forms.TimeInput(attrs={'class': 'form-control', 'type': 'time'}),
             'heure_depart': forms.TimeInput(attrs={'class': 'form-control', 'type': 'time'}),
@@ -563,6 +582,7 @@ class EtatSalaireAjustementForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.a_des_pointages = False
         self.revision_calculee = False
+        self.montant_cours = Decimal('0')
         # Compatibilité avec les anciens appels qui ne transmettaient que les
         # primes et retenues : le salaire courant reste alors inchangé.
         self.fields['salaire_base'].required = False
@@ -616,15 +636,42 @@ class EtatSalaireAjustementForm(forms.ModelForm):
             self.fields['taux_horaire_applique'].widget = forms.HiddenInput()
             self.fields['total_heures'].widget = forms.HiddenInput()
             self.fields['heures_revision'].widget = forms.HiddenInput()
+            if enseignant.type_enseignant == TypeEnseignant.ADMINISTRATEUR:
+                from .services import (
+                    montant_cours_administrateur,
+                    part_fixe_salaire,
+                )
+
+                # Seule la part fixe se saisit ; les cours s'y ajoutent.
+                self.montant_cours = montant_cours_administrateur(
+                    enseignant, periode
+                )
+                self.initial['salaire_base'] = part_fixe_salaire(self.instance)
+                if self.montant_cours:
+                    montant = f"{self.montant_cours:,.0f}".replace(',', ' ')
+                    self.fields['salaire_base'].help_text = (
+                        f"Cours au secondaire du mois : {montant} GNF, "
+                        "ajoutés automatiquement."
+                    )
 
     def clean(self):
         cleaned_data = super().clean()
         salaire_base = cleaned_data.get('salaire_base')
-        if salaire_base is None:
+        enseignant = getattr(self.instance, 'enseignant', None)
+        if (
+            enseignant is not None
+            and enseignant.type_enseignant == TypeEnseignant.ADMINISTRATEUR
+        ):
+            from .services import part_fixe_salaire
+
+            if salaire_base is None:
+                salaire_base = part_fixe_salaire(self.instance)
+            salaire_base += self.montant_cours
+            cleaned_data['salaire_base'] = salaire_base
+        elif salaire_base is None:
             salaire_base = self.instance.salaire_base or Decimal('0')
             cleaned_data['salaire_base'] = salaire_base
 
-        enseignant = getattr(self.instance, 'enseignant', None)
         if enseignant is not None and enseignant.est_taux_horaire:
             taux_horaire = cleaned_data.get('taux_horaire_applique')
             total_heures = cleaned_data.get('total_heures')

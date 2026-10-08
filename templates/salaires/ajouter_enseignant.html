@@ -437,7 +437,7 @@
                                 </div>
                             {% endif %}
                             <div class="row g-3">
-                                <div class="col-md-6">
+                                <div class="col-md-5">
                                     <label class="form-label classe-label">
                                         Classe
                                     </label>
@@ -446,11 +446,18 @@
                                         <div class="text-danger small">{{ affectation_form.classe.errors }}</div>
                                     {% endif %}
                                 </div>
-                                <div class="col-md-3 secondary-assignment-field">
+                                <div class="col-md-2 secondary-assignment-field">
                                     <label class="form-label">{{ affectation_form.heures_par_semaine.label }}</label>
                                     {{ affectation_form.heures_par_semaine }}
                                     {% if affectation_form.heures_par_semaine.errors %}
                                         <div class="text-danger small">{{ affectation_form.heures_par_semaine.errors }}</div>
+                                    {% endif %}
+                                </div>
+                                <div class="col-md-2 admin-assignment-field">
+                                    <label class="form-label">{{ affectation_form.taux_horaire.label }}</label>
+                                    {{ affectation_form.taux_horaire }}
+                                    {% if affectation_form.taux_horaire.errors %}
+                                        <div class="text-danger small">{{ affectation_form.taux_horaire.errors }}</div>
                                     {% endif %}
                                 </div>
                                 <div class="col-md-3 secondary-assignment-field">
@@ -703,10 +710,12 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function actualiserObligationsAffectation() {
-        const secondaire = typeEnseignantSelect.value === 'SECONDAIRE';
+        const administrateur = typeEnseignantSelect.value === 'ADMINISTRATEUR';
+        const horaire = administrateur || typeEnseignantSelect.value === 'SECONDAIRE';
         assignmentRows.forEach((row) => {
             const classe = row.querySelector('select[name$="-classe"]');
             const heures = row.querySelector('input[name$="-heures_par_semaine"]');
+            const taux = row.querySelector('input[name$="-taux_horaire"]');
             const dateDebut = row.querySelector('input[name$="-date_debut"]');
             const actif = row.querySelector('input[name$="-actif"]');
             const visible = row.style.display !== 'none';
@@ -722,7 +731,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (actif) actif.checked = true;
                 row.dataset.initialized = String(classe.value);
             }
-            if (heures) heures.required = secondaire && visible && classeChoisie;
+            if (heures) heures.required = horaire && visible && classeChoisie;
+            if (taux) taux.required = administrateur && visible && classeChoisie;
             if (dateDebut) dateDebut.required = visible && classeChoisie;
         });
     }
@@ -730,8 +740,9 @@ document.addEventListener('DOMContentLoaded', function() {
     function toggleProfessionalFields() {
         const type = typeEnseignantSelect.value;
         const administrateur = type === 'ADMINISTRATEUR';
-        const affectable = ['MATERNELLE', 'PRIMAIRE', 'SECONDAIRE'].includes(type);
+        const affectable = ['MATERNELLE', 'PRIMAIRE', 'SECONDAIRE', 'ADMINISTRATEUR'].includes(type);
         const classeUnique = ['MATERNELLE', 'PRIMAIRE'].includes(type);
+        const plusieursClasses = ['SECONDAIRE', 'ADMINISTRATEUR'].includes(type);
 
         afficher(fonctionField, administrateur);
         afficher(affectationsField, affectable);
@@ -739,9 +750,14 @@ document.addEventListener('DOMContentLoaded', function() {
         fonctionInput.required = administrateur;
         if (!administrateur) fonctionInput.value = '';
 
-        affectationHelp.textContent = type === 'SECONDAIRE'
-            ? "Ajoutez une ou plusieurs classes, la matière et les heures hebdomadaires de chaque affectation."
-            : "Sélectionnez l'unique classe principale de l'enseignant.";
+        if (administrateur) {
+            affectationHelp.textContent = "Facultatif : classes du secondaire où il donne des cours. "
+                + "Les heures par semaine × le taux horaire de chaque classe s'ajoutent à son salaire fixe.";
+        } else {
+            affectationHelp.textContent = type === 'SECONDAIRE'
+                ? "Ajoutez une ou plusieurs classes, la matière et les heures hebdomadaires de chaque affectation."
+                : "Sélectionnez l'unique classe principale de l'enseignant.";
+        }
 
         assignmentRows.forEach((row, index) => {
             const afficherLigne = affectable && (
@@ -752,10 +768,15 @@ document.addEventListener('DOMContentLoaded', function() {
             const suppression = row.querySelector('input[name$="-DELETE"]');
             row.style.display = afficherLigne ? '' : 'none';
             row.querySelectorAll('.secondary-assignment-field').forEach((field) => {
-                field.style.display = type === 'SECONDAIRE' ? '' : 'none';
+                field.style.display = plusieursClasses ? '' : 'none';
+            });
+            row.querySelectorAll('.admin-assignment-field').forEach((field) => {
+                field.style.display = administrateur ? '' : 'none';
             });
             row.querySelectorAll('.classe-label').forEach((label) => {
-                label.textContent = classeUnique ? 'Classe principale' : 'Classe affectée';
+                label.textContent = classeUnique
+                    ? 'Classe principale'
+                    : (administrateur ? 'Classe (cours au secondaire)' : 'Classe affectée');
             });
 
             if (suppression && !afficherLigne && row.dataset.existing === 'true') {
@@ -770,7 +791,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 delete suppression.dataset.automatic;
             }
         });
-        ajouterAffectationButton.style.display = type === 'SECONDAIRE' ? '' : 'none';
+        ajouterAffectationButton.style.display = plusieursClasses ? '' : 'none';
         ajouterAffectationButton.disabled = !assignmentRows.some(
             (row) => row.dataset.revealed !== 'true'
         );
@@ -780,7 +801,7 @@ document.addEventListener('DOMContentLoaded', function() {
     async function chargerClassesAffectables() {
         const ecole = ecoleSelect.value;
         const type = typeEnseignantSelect.value;
-        if (!ecole || !['MATERNELLE', 'PRIMAIRE', 'SECONDAIRE'].includes(type)) {
+        if (!ecole || !['MATERNELLE', 'PRIMAIRE', 'SECONDAIRE', 'ADMINISTRATEUR'].includes(type)) {
             return;
         }
 

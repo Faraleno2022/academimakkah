@@ -349,7 +349,7 @@
     </div>
 
     <!-- Affectations de Classes -->
-    {% if enseignant.type_enseignant == 'MATERNELLE' or enseignant.type_enseignant == 'PRIMAIRE' or enseignant.type_enseignant == 'SECONDAIRE' %}
+    {% if enseignant.type_enseignant == 'MATERNELLE' or enseignant.type_enseignant == 'PRIMAIRE' or enseignant.type_enseignant == 'SECONDAIRE' or enseignant.type_enseignant == 'ADMINISTRATEUR' %}
     <div class="row">
         <div class="col-12">
             <div class="teacher-info-card">
@@ -357,6 +357,8 @@
                     <i class="fas fa-chalkboard-teacher me-2 text-warning"></i>
                     {% if enseignant.type_enseignant == 'SECONDAIRE' %}
                         Affectations de classes
+                    {% elif enseignant.type_enseignant == 'ADMINISTRATEUR' %}
+                        Cours au secondaire
                     {% else %}
                         Classe principale
                     {% endif %}
@@ -378,6 +380,12 @@
                         <div class="col-md-3">
                             {% if enseignant.type_enseignant == 'SECONDAIRE' %}
                                 <span class="badge bg-info">{{ affectation.heures_par_semaine }}h/semaine</span>
+                                {% if affectation.matiere %}
+                                    <small class="d-block text-muted mt-1">{{ affectation.matiere }}</small>
+                                {% endif %}
+                            {% elif enseignant.type_enseignant == 'ADMINISTRATEUR' %}
+                                <span class="badge bg-info">{{ affectation.heures_par_semaine }}h/semaine</span>
+                                <span class="badge bg-success">{{ affectation.taux_horaire|floatformat:0|intcomma }} GNF/h</span>
                                 {% if affectation.matiere %}
                                     <small class="d-block text-muted mt-1">{{ affectation.matiere }}</small>
                                 {% endif %}
@@ -415,8 +423,12 @@
                     </div>
                 </div>
                 {% empty %}
-                <div class="alert alert-warning mb-0">
+                <div class="alert {% if enseignant.type_enseignant == 'ADMINISTRATEUR' %}alert-light{% else %}alert-warning{% endif %} mb-0">
+                    {% if enseignant.type_enseignant == 'ADMINISTRATEUR' %}
+                    Aucun cours au secondaire. Ajoutez des classes, les heures par semaine et le taux horaire pour les payer avec son salaire.
+                    {% else %}
                     Aucune classe n'est actuellement affectée à cet enseignant.
+                    {% endif %}
                 </div>
                 {% endfor %}
             </div>

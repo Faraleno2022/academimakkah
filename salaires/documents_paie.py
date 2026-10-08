@@ -26,9 +26,9 @@ from reportlab.platypus import (
     Table, TableStyle,
 )
 
-from .models import AvanceSalaire, EtatSalaire, GroupePaie
+from .models import AvanceSalaire, EtatSalaire, GroupePaie, TypeEnseignant
 from .montant_lettres import formater_gnf, montant_en_lettres
-from .services import charge_ou_fonction
+from .services import charge_ou_fonction, part_fixe_salaire
 
 MOIS = [
     '', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet',
@@ -657,6 +657,20 @@ def _elements_bulletin(etat, largeur):
             f"{_m(etat.taux_horaire_applique)} GNF)",
             etat.salaire_base, None, None,
         )
+    elif enseignant.type_enseignant == TypeEnseignant.ADMINISTRATEUR:
+        cours = list(
+            etat.details_heures.select_related('affectation_classe__classe')
+            .order_by('affectation_classe__classe__nom', 'id')
+        )
+        if cours:
+            rubriques[0] = ('Salaire fixe', part_fixe_salaire(etat), None, None)
+            for detail in cours:
+                rubriques.append((
+                    f"Cours {detail.affectation_classe.classe.nom} "
+                    f"({detail.heures_realisees.normalize():f} h × "
+                    f"{_m(detail.taux_horaire_applique)} GNF)",
+                    detail.montant, None, None,
+                ))
     libelles_primes = {
         'prime_fonction': 'Prime de fonction',
         'prime_craie': 'Prime de craie / révision',

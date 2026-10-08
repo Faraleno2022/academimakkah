@@ -101,7 +101,12 @@ class TableauBord(SyncTrackedModel):
     description = models.TextField(blank=True, null=True, verbose_name="Description")
     
     # Propriétaire et partage
-    proprietaire = models.ForeignKey(User, on_delete=models.CASCADE, related_name='tableaux_bord')
+    # Facultatif : la synchronisation ne transmet jamais d'utilisateur (les
+    # identifiants diffèrent d'une machine à l'autre). Un tableau reçu d'un
+    # autre poste arrive donc sans propriétaire au lieu d'être refusé.
+    proprietaire = models.ForeignKey(
+        User, on_delete=models.CASCADE, null=True, blank=True, related_name='tableaux_bord'
+    )
     partage_avec = models.ManyToManyField(User, blank=True, related_name='tableaux_bord_partages')
     public = models.BooleanField(default=False, verbose_name="Public")
     

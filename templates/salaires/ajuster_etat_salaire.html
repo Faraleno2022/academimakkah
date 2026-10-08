@@ -59,7 +59,7 @@
                         {% endif %}
 
                         <div class="mb-3">
-                            <label class="form-label" for="{{ form.salaire_base.id_for_label }}">Salaire de base (GNF)</label>
+                            <label class="form-label" for="{{ form.salaire_base.id_for_label }}">{% if form.montant_cours %}Salaire fixe (GNF){% else %}Salaire de base (GNF){% endif %}</label>
                             {{ form.salaire_base }}
                             {% if form.salaire_base.help_text %}<div class="form-text">{{ form.salaire_base.help_text }}</div>{% endif %}
                             {% for error in form.salaire_base.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}

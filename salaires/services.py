@@ -4,6 +4,8 @@ Les enseignants au forfait sont payés au prorata de leur date d'embauche.
 Les enseignants du secondaire sont payés soit sur les heures réellement
 pointées, soit sur un total mensuel explicitement saisi. Les affectations
 servent à ventiler ces heures par classe.
+Un administrateur qui donne des cours au secondaire reçoit, en plus de son
+salaire fixe, les heures prévues de ses classes au taux de chaque classe.
 """
 
 from calendar import monthrange
@@ -251,9 +253,64 @@ def repartir_heures(total_heures, lignes_prevues):
     return repartition
 
 
+def lignes_cours_administrateur(enseignant, periode):
+    """Cours d'un administrateur : ``[(affectation, heures, taux, montant)]``.
+
+    Les heures sont celles prévues par l'affectation (heures par semaine ×
+    semaines de la période, au prorata des dates) ; le montant est arrondi
+    comme sur la ligne de détail enregistrée.
+    """
+    if enseignant.type_enseignant != TypeEnseignant.ADMINISTRATEUR:
+        return []
+    lignes = []
+    for affectation, heures_prevues in heures_prevues_par_affectation(
+        enseignant, periode
+    ):
+        heures = arrondir_heures(heures_prevues)
+        taux = arrondir_montant(affectation.taux_horaire)
+        lignes.append((affectation, heures, taux, arrondir_montant(heures * taux)))
+    return lignes
+
+
+def montant_cours_administrateur(enseignant, periode):
+    """Total des cours au secondaire à ajouter au salaire d'un administrateur."""
+    return sum(
+        (montant for *_, montant in lignes_cours_administrateur(enseignant, periode)),
+        Decimal('0.00'),
+    )
+
+
+def montant_cours_enregistre(etat):
+    """Part des cours déjà comprise dans le salaire de base d'un état."""
+    if etat.pk is None or etat.enseignant.est_taux_horaire:
+        return Decimal('0.00')
+    total = etat.details_heures.aggregate(total=Sum('montant'))['total']
+    return arrondir_montant(total)
+
+
+def part_fixe_salaire(etat):
+    """Salaire de base d'un état sans les cours au secondaire."""
+    return max(
+        arrondir_montant(etat.salaire_base) - montant_cours_enregistre(etat),
+        Decimal('0.00'),
+    )
+
+
 def actualiser_details_heures(etat):
     """Aligne la ventilation par classe sur le total courant de l'état."""
     etat.details_heures.all().delete()
+    if etat.enseignant.type_enseignant == TypeEnseignant.ADMINISTRATEUR:
+        for affectation, heures, taux, _ in lignes_cours_administrateur(
+            etat.enseignant, etat.periode
+        ):
+            DetailHeuresClasse.objects.create(
+                etat_salaire=etat,
+                affectation_classe=affectation,
+                heures_prevues=heures,
+                heures_realisees=heures,
+                taux_horaire_applique=taux,
+            )
+        return
     if not etat.enseignant.est_taux_horaire:
         return
 
@@ -294,14 +351,20 @@ def effectif_classe_principale(enseignant, periode):
 
 def charge_ou_fonction(enseignant, periode):
     """Libellé de la colonne « Charge ou fonction » des états de paie."""
-    if enseignant.type_enseignant == TypeEnseignant.ADMINISTRATEUR:
-        return enseignant.fonction or enseignant.get_type_enseignant_display()
-    if enseignant.type_enseignant == TypeEnseignant.SECONDAIRE:
-        matieres = []
+    matieres = []
+    if enseignant.type_enseignant in (
+        TypeEnseignant.ADMINISTRATEUR, TypeEnseignant.SECONDAIRE
+    ):
         for affectation in affectations_de_la_periode(enseignant, periode):
             matiere = (affectation.matiere or '').strip()
             if matiere and matiere not in matieres:
                 matieres.append(matiere)
+    if enseignant.type_enseignant == TypeEnseignant.ADMINISTRATEUR:
+        fonction = enseignant.fonction or enseignant.get_type_enseignant_display()
+        if matieres:
+            return f"{fonction} (cours : {'/'.join(matieres)})"
+        return fonction
+    if enseignant.type_enseignant == TypeEnseignant.SECONDAIRE:
         return '/'.join(matieres) or 'Professeur'
     classe = classe_principale(enseignant, periode)
     if classe is not None:
@@ -402,14 +465,21 @@ def calculer_etat_salaire(enseignant, periode, utilisateur):
         etat.save()
         actualiser_details_heures(etat)
     else:
-        etat.details_heures.all().delete()
+        # Un salaire ajusté garde sa part fixe ; les cours d'un administrateur
+        # suivent toujours ses affectations du mois.
+        if etat.ajuste_manuellement:
+            part_fixe = part_fixe_salaire(etat)
+        else:
+            part_fixe = salaire_fixe_proratise(enseignant, periode)
         etat.total_heures = None
         etat.mode_calcul_heures = ''
         etat.taux_horaire_applique = None
-        if not etat.ajuste_manuellement:
-            etat.salaire_base = salaire_fixe_proratise(enseignant, periode)
+        etat.salaire_base = part_fixe + montant_cours_administrateur(
+            enseignant, periode
+        )
         etat.calcule_par = utilisateur
         etat.save()
+        actualiser_details_heures(etat)
 
     return etat, True
 
