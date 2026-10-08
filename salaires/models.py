@@ -76,6 +76,11 @@ NIVEAUX_CLASSE_PAR_TYPE_ENSEIGNANT = {
         'TERMINALE',
     },
 }
+# Un membre de l'administration peut aussi donner des cours au secondaire,
+# payés à l'heure en plus de son salaire fixe.
+NIVEAUX_CLASSE_PAR_TYPE_ENSEIGNANT[TypeEnseignant.ADMINISTRATEUR] = (
+    NIVEAUX_CLASSE_PAR_TYPE_ENSEIGNANT[TypeEnseignant.SECONDAIRE]
+)
 
 
 def niveaux_classes_pour_type_enseignant(type_enseignant):
@@ -406,6 +411,21 @@ class AffectationClasse(SyncTrackedModel):
         ],
     )
     
+    # Administrateur qui donne des cours : chaque classe a son propre taux.
+    # Les enseignants du secondaire restent payés au taux de leur dossier.
+    taux_horaire = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name="Taux horaire (GNF)",
+        help_text=(
+            "Administrateur qui donne des cours : montant d'une heure dans "
+            "cette classe, ajouté à son salaire."
+        ),
+        validators=[MinValueValidator(Decimal('0'))],
+    )
+
     # Matière enseignée (optionnel)
     matiere = models.CharField(
         max_length=100, 
@@ -476,6 +496,19 @@ class AffectationClasse(SyncTrackedModel):
             raise ValidationError({
                 'heures_par_semaine': 'Le nombre d\'heures par semaine est obligatoire pour les enseignants du secondaire.'
             })
+
+        if self.enseignant.type_enseignant == TypeEnseignant.ADMINISTRATEUR:
+            errors = {}
+            if not self.heures_par_semaine:
+                errors['heures_par_semaine'] = (
+                    "Le nombre d'heures de cours par semaine est obligatoire."
+                )
+            if not self.taux_horaire:
+                errors['taux_horaire'] = (
+                    "Le taux horaire des cours est obligatoire."
+                )
+            if errors:
+                raise ValidationError(errors)
         
         if self.date_fin and self.date_fin < self.date_debut:
             raise ValidationError({

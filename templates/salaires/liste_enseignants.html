@@ -361,9 +361,9 @@
                             {% if affectation.actif %}
                             <div class="assignment-item">
                                 <span>{{ affectation.classe.nom }}</span>
-                                {% if enseignant.type_enseignant == 'SECONDAIRE' and affectation.heures_par_semaine %}
+                                {% if enseignant.type_enseignant == 'SECONDAIRE' or enseignant.type_enseignant == 'ADMINISTRATEUR' %}{% if affectation.heures_par_semaine %}
                                 <span class="text-info">{{ affectation.heures_par_semaine }}h/sem</span>
-                                {% endif %}
+                                {% endif %}{% endif %}
                             </div>
                             {% endif %}
                             {% endfor %}
