@@ -149,6 +149,39 @@ class RecettesAbonnementsTests(TestCase):
         self.assertIn('REC-001', texte)
         self.assertNotIn('REC-900', texte)
 
+    def test_bouton_cantine_affiche_seulement_les_abonnements_avec_remise(self):
+        today = timezone.localdate()
+        abonnement = self._cantine(self.eleve, today, 180000)
+        abonnement.montant_tarif = 200000
+        abonnement.type_remise = 'POURCENTAGE'
+        abonnement.valeur_remise = 10
+        abonnement.save(update_fields=['montant_tarif', 'type_remise', 'valeur_remise'])
+        self._cantine(self.eleve2, today, 100000)
+        autre = self._cantine(self.autre_eleve, today, 450000)
+        autre.montant_tarif = 500000
+        autre.type_remise = 'POURCENTAGE'
+        autre.valeur_remise = 10
+        autre.save(update_fields=['montant_tarif', 'type_remise', 'valeur_remise'])
+
+        url = reverse('bus:liste_abonnements_cantine')
+        liste = self.client.get(url)
+        self.assertContains(liste, 'Élèves avec remise')
+        self.assertContains(liste, f'{url}?remise=oui')
+        remises = self.client.get(url, {'remise': 'oui'})
+        self.assertEqual([abo.eleve_id for abo in remises.context['abonnements']], [self.eleve.pk])
+        self.assertEqual(int(remises.context['total_remise']), 20000)
+        self.assertContains(remises, 'name="remise" value="oui"')
+
+        excel = self.client.get(reverse('bus:export_cantine_excel'), {'remise': 'oui'})
+        ws = load_workbook(BytesIO(excel.content), data_only=True).active
+        self.assertEqual(ws.max_row, 5)
+        self.assertEqual(ws.cell(5, 3).value, 'REC-001')
+        pdf = self.client.get(reverse('bus:export_cantine_pdf'), {'remise': 'oui'})
+        texte = ' '.join(page.extract_text() for page in PdfReader(BytesIO(pdf.content)).pages)
+        self.assertIn('REC-001', texte)
+        self.assertNotIn('REC-002', texte)
+        self.assertNotIn('REC-900', texte)
+
     def test_details_cantine_reste_dans_la_cantine(self):
         today = timezone.localdate()
         self._bus(self.eleve, today, 100000)

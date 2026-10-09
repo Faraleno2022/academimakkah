@@ -28,6 +28,16 @@ from ecole_moderne.recherche import filtrer_termes
 from .export_listes import exporter_liste
 
 
+def _abonnements_cantine_tries(qs, avec_remise=False):
+    """Conserve seulement les abonnements bénéficiant d'une remise réelle."""
+    if avec_remise:
+        qs = qs.filter(type_remise__in=('POURCENTAGE', 'MONTANT'), valeur_remise__gt=0)
+    abonnements = list(qs.order_by('-date_expiration', 'eleve__nom'))
+    if avec_remise:
+        abonnements = [abo for abo in abonnements if abo.montant_remise > 0]
+    return abonnements
+
+
 @login_required
 def tableau_bord_cantine(request):
     """Tableau de bord des abonnements cantine avec alertes"""
@@ -153,13 +163,12 @@ def liste_abonnements_cantine(request):
     if classe_id:
         qs = qs.filter(eleve__classe_id=classe_id)
     
-    # Tri
-    qs = qs.order_by('-date_expiration', 'eleve__nom')
-    
-    abonnements = list(qs)
+    avec_remise = request.GET.get('remise') == 'oui'
+    abonnements = _abonnements_cantine_tries(qs, avec_remise)
     context = {
-        'titre_page': 'Liste des Abonnements Cantine',
+        'titre_page': 'Élèves abonnés à la cantine avec remise' if avec_remise else 'Liste des Abonnements Cantine',
         'abonnements': abonnements,
+        'avec_remise': avec_remise,
         'q': q,
         'filtre': filtre,
         'type_repas': type_repas,
@@ -287,7 +296,7 @@ def _export_cantine(request, fmt):
         today = timezone.localdate()
         date_limite = today + timedelta(days=3)
         qs = qs.filter(statut='ACTIF', date_expiration__lte=date_limite, date_expiration__gte=today)
-    abonnements = list(qs.order_by('-date_expiration', 'eleve__nom'))
+    abonnements = _abonnements_cantine_tries(qs, request.GET.get('remise') == 'oui')
     entetes_excel = [
         'École', 'Élève', 'Matricule', 'Classe', 'Type repas', 'Périodicité',
         'Montant abonnement (GNF)', 'Type remise', 'Valeur remise', 'Remise (GNF)',
