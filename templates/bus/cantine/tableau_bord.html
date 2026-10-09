@@ -274,21 +274,39 @@
         {% endfor %}
     </div>
 
-    <!-- Revenus Estimés -->
+    <!-- Situation des abonnements cantine -->
     <div class="row">
-        <div class="col-md-6">
+        <div class="col-md-3">
             <div class="card bg-light">
                 <div class="card-body">
                     <h5 class="card-title">
-                        <i class="fas fa-money-bill-wave text-success"></i> 
-                        Revenus Mensuels Estimés
+                        <i class="fas fa-utensils text-primary"></i>
+                        Montant des abonnements
                     </h5>
-                    <h2 class="text-success">{{ revenus_mensuel|intcomma }} GNF</h2>
-                    <p class="text-muted mb-0">Basé sur les abonnements mensuels actifs</p>
+                    <h2 class="text-primary">{{ montant_abonnements|intcomma }} GNF</h2>
+                    <p class="text-muted mb-0">Dû après remise</p>
                 </div>
             </div>
         </div>
-        <div class="col-md-6">
+        <div class="col-md-3">
+            <div class="card bg-light">
+                <div class="card-body">
+                    <h5 class="card-title"><i class="fas fa-money-bill-wave text-success"></i> Déjà payé</h5>
+                    <h2 class="text-success">{{ deja_paye|intcomma }} GNF</h2>
+                    <p class="text-muted mb-0">Montant effectivement encaissé</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-light">
+                <div class="card-body">
+                    <h5 class="card-title"><i class="fas fa-balance-scale text-warning"></i> Reste à payer</h5>
+                    <h2 class="text-warning">{{ reste_a_payer|intcomma }} GNF</h2>
+                    <p class="text-muted mb-0">Abonnements non soldés</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
             <div class="card bg-light">
                 <div class="card-body">
                     <h5 class="card-title">
@@ -304,6 +322,9 @@
                         </a>
                         <a href="{% url 'bus:export_cantine_excel' %}" class="btn btn-success btn-sm">
                             <i class="fas fa-file-excel"></i> Exporter en Excel
+                        </a>
+                        <a href="{% url 'bus:export_cantine_pdf' %}" class="btn btn-outline-danger btn-sm">
+                            <i class="fas fa-file-pdf"></i> Exporter en PDF
                         </a>
                     </div>
                 </div>

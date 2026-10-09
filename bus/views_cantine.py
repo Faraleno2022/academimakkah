@@ -9,8 +9,6 @@ from django.http import HttpResponse, JsonResponse
 from django.db.models import Q, Sum, Count
 from django.utils import timezone
 from datetime import timedelta
-from openpyxl import Workbook
-from openpyxl.utils import get_column_letter
 import io
 
 from eleves.models import Eleve
@@ -26,6 +24,8 @@ from utilisateurs.utils import (
 )
 from utilisateurs.permissions import can_delete_subscriptions
 from ecole_moderne.security_decorators import require_school_object
+from ecole_moderne.recherche import filtrer_termes
+from .export_listes import exporter_liste
 
 
 @login_required
@@ -78,11 +78,7 @@ def tableau_bord_cantine(request):
         for code, label in AbonnementCantine.TypeRepas.choices
     ]
     
-    # Revenus mensuels estimés
-    revenus_mensuel = qs.filter(
-        statut='ACTIF',
-        periodicite='MENSUEL'
-    ).aggregate(total=Sum('montant'))['total'] or 0
+    montants = list(qs.select_related(None).only('montant', 'montant_tarif', 'type_remise', 'valeur_remise'))
     
     context = {
         'titre_page': 'Gestion Cantine Scolaire',
@@ -98,7 +94,9 @@ def tableau_bord_cantine(request):
         'nb_critiques': len(abonnements_critiques),
         'stats_type_repas': stats_type_repas,
         'stats_type_repas_rows': stats_type_repas_rows,
-        'revenus_mensuel': revenus_mensuel,
+        'montant_abonnements': sum((a.montant_du for a in montants), 0),
+        'deja_paye': sum((a.deja_paye for a in montants), 0),
+        'reste_a_payer': sum((a.reste_a_payer for a in montants), 0),
         'recettes': recettes_par_periode(qs, CHAMP_DATE_CANTINE),
     }
     return render(request, 'bus/cantine/tableau_bord.html', context)
@@ -123,13 +121,10 @@ def liste_abonnements_cantine(request):
     # Recherche
     q = (request.GET.get('q') or '').strip()
     if q:
-        qs = qs.filter(
-            Q(eleve__nom__icontains=q) |
-            Q(eleve__prenom__icontains=q) |
-            Q(eleve__matricule__icontains=q) |
-            Q(reference_externe__icontains=q) |
-            Q(contact_parent__icontains=q)
-        )
+        qs = filtrer_termes(qs, q, (
+            'eleve__nom', 'eleve__prenom', 'eleve__matricule',
+            'eleve__classe__nom', 'reference_externe', 'contact_parent',
+        ), ('eleve__nom', 'eleve__prenom'))
     
     # Filtres
     filtre = (request.GET.get('filtre') or '').strip().lower()
@@ -161,9 +156,10 @@ def liste_abonnements_cantine(request):
     # Tri
     qs = qs.order_by('-date_expiration', 'eleve__nom')
     
+    abonnements = list(qs)
     context = {
         'titre_page': 'Liste des Abonnements Cantine',
-        'abonnements': qs,
+        'abonnements': abonnements,
         'q': q,
         'filtre': filtre,
         'type_repas': type_repas,
@@ -171,7 +167,11 @@ def liste_abonnements_cantine(request):
         'periode': periode,
         'periode_libelle': LIBELLES_PERIODES.get(periode, ''),
         'recettes': recettes,
-        'total_filtre': qs.aggregate(total=Sum('montant'))['total'] or 0,
+        'total_filtre': sum((a.montant or 0 for a in abonnements), 0),
+        'total_tarif': sum((a.montant_brut for a in abonnements), 0),
+        'total_remise': sum((a.montant_remise for a in abonnements), 0),
+        'total_du': sum((a.montant_du for a in abonnements), 0),
+        'total_reste': sum((a.reste_a_payer for a in abonnements), 0),
     }
     return render(request, 'bus/cantine/liste.html', context)
 
@@ -254,76 +254,90 @@ def supprimer_abonnement_cantine(request, pk):
     return render(request, 'bus/cantine/confirmer_suppression.html', context)
 
 
-@login_required
-def export_cantine_excel(request):
-    """Exporter la liste des abonnements cantine en Excel"""
-    qs = AbonnementCantine.objects.select_related('eleve', 'eleve__classe')
-    # IMPORTANT: Seul le superuser peut voir toutes les écoles
+def _export_cantine(request, fmt):
+    """Exporte chaque abonnement visible avec les filtres de la liste."""
+    qs = AbonnementCantine.objects.select_related('eleve', 'eleve__classe', 'eleve__classe__ecole')
     if not user_is_superadmin(request.user):
         qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
-    
-    # Appliquer les mêmes filtres que la liste
-    qs = filtrer_periode(qs, request.GET.get('periode') or '', CHAMP_DATE_CANTINE)
+    periode = request.GET.get('periode') or ''
+    if periode in LIBELLES_PERIODES:
+        qs = filtrer_periode(qs, periode, CHAMP_DATE_CANTINE)
+    q = (request.GET.get('q') or '').strip()
+    if q:
+        qs = filtrer_termes(qs, q, (
+            'eleve__nom', 'eleve__prenom', 'eleve__matricule',
+            'eleve__classe__nom', 'reference_externe', 'contact_parent',
+        ), ('eleve__nom', 'eleve__prenom'))
+    if request.GET.get('type_repas'):
+        qs = qs.filter(type_repas=request.GET['type_repas'])
+    if (request.GET.get('classe') or '').isdigit():
+        qs = qs.filter(eleve__classe_id=int(request.GET['classe']))
     filtre = request.GET.get('filtre', '').strip().lower()
     if filtre == 'actif':
         qs = qs.filter(statut='ACTIF')
     elif filtre == 'expire':
         qs = qs.filter(statut='EXPIRE')
+    elif filtre == 'suspendu':
+        qs = qs.filter(statut='SUSPENDU')
     elif filtre == 'proche_expiration':
         today = timezone.localdate()
         date_limite = today + timedelta(days=7)
         qs = qs.filter(statut='ACTIF', date_expiration__lte=date_limite, date_expiration__gte=today)
-    
-    # Créer le workbook
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Abonnements Cantine"
-    
-    # En-têtes
-    headers = [
-        'Matricule', 'Nom', 'Prénom', 'Classe', 'Type Repas', 'Périodicité', 
-        'Montant (GNF)', 'Date Début', 'Date Expiration', 'Jours Restants', 
-        'Statut', 'Référence externe', 'Régime Alimentaire', 'Allergies',
-        'Contact Parent'
+    elif filtre == 'critique':
+        today = timezone.localdate()
+        date_limite = today + timedelta(days=3)
+        qs = qs.filter(statut='ACTIF', date_expiration__lte=date_limite, date_expiration__gte=today)
+    abonnements = list(qs.order_by('-date_expiration', 'eleve__nom'))
+    entetes_excel = [
+        'École', 'Élève', 'Matricule', 'Classe', 'Type repas', 'Périodicité',
+        'Montant abonnement (GNF)', 'Type remise', 'Valeur remise', 'Remise (GNF)',
+        'Dû net (GNF)', 'Déjà payé (GNF)', 'Reste à payer (GNF)',
+        'Date début', 'Date expiration', 'Jours restants', 'Statut',
+        'Référence externe', 'Régime alimentaire', 'Allergies', 'Contact parent',
+        'Observations',
     ]
-    ws.append(headers)
-    
-    # Données
-    for abo in qs:
-        ws.append([
-            abo.eleve.matricule or '',
-            abo.eleve.nom,
-            abo.eleve.prenom,
-            abo.eleve.classe.nom if abo.eleve.classe else '',
-            abo.get_type_repas_display(),
-            abo.get_periodicite_display(),
-            float(abo.montant),
-            abo.date_debut.strftime('%d/%m/%Y'),
-            abo.date_expiration.strftime('%d/%m/%Y'),
-            abo.jours_restants,
-            abo.get_statut_display(),
-            abo.reference_externe or '',
-            abo.regime_alimentaire or '',
-            abo.allergies or '',
-            abo.contact_parent or '',
+    entetes_pdf = [
+        'Élève', 'Matricule', 'Classe', 'Repas', 'Périodicité', 'Montant',
+        'Remise', 'Dû net', 'Déjà payé', 'Reste', 'Début', 'Fin', 'Référence',
+    ]
+    lignes_excel, lignes_pdf = [], []
+    for abo in abonnements:
+        eleve = abo.eleve
+        nom = f'{eleve.prenom} {eleve.nom}'
+        classe = eleve.classe.nom if eleve.classe_id else ''
+        ecole = eleve.classe.ecole.nom if eleve.classe_id else ''
+        lignes_excel.append([
+            ecole, nom, eleve.matricule or '', classe,
+            abo.get_type_repas_display(), abo.get_periodicite_display(),
+            abo.montant_brut, abo.get_type_remise_display(), abo.valeur_remise,
+            abo.montant_remise, abo.montant_du, abo.deja_paye, abo.reste_a_payer,
+            abo.date_debut, abo.date_expiration, abo.jours_restants,
+            abo.get_statut_display(), abo.reference_externe or '',
+            abo.regime_alimentaire or '', abo.allergies or '',
+            abo.contact_parent or '', abo.observations or '',
         ])
-    
-    # Ajuster la largeur des colonnes
-    for i, col in enumerate(ws.columns, 1):
-        ws.column_dimensions[get_column_letter(i)].width = 15
-    
-    # Sauvegarder dans un buffer
-    buffer = io.BytesIO()
-    wb.save(buffer)
-    buffer.seek(0)
-    
-    # Réponse HTTP
-    response = HttpResponse(
-        buffer.getvalue(),
-        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        lignes_pdf.append([
+            nom, eleve.matricule or '', classe, abo.get_type_repas_display(),
+            abo.get_periodicite_display(), abo.montant_brut,
+            abo.montant_remise, abo.montant_du, abo.deja_paye,
+            abo.reste_a_payer, abo.date_debut, abo.date_expiration,
+            abo.reference_externe or '',
+        ])
+    return exporter_liste(
+        fmt, 'abonnements_cantine', 'Abonnements cantine',
+        entetes_excel, lignes_excel, entetes_pdf, lignes_pdf,
+        sum((abo.montant or 0 for abo in abonnements), 0),
     )
-    response['Content-Disposition'] = f'attachment; filename="abonnements_cantine_{timezone.now().strftime("%Y%m%d")}.xlsx"'
-    return response
+
+
+@login_required
+def export_cantine_excel(request):
+    return _export_cantine(request, 'excel')
+
+
+@login_required
+def export_cantine_pdf(request):
+    return _export_cantine(request, 'pdf')
 
 
 @login_required
@@ -568,7 +582,11 @@ def generer_recu_cantine_pdf(request, abo_id):
     line('École', getattr(getattr(el.classe, 'ecole', None), 'nom', ''))
     line('Type de repas', abo.get_type_repas_display())
     line('Périodicité', abo.get_periodicite_display())
-    line('Montant', f"{int(abo.montant):,}".replace(',', ' ') + ' GNF')
+    line('Tarif', f"{int(abo.montant_brut):,}".replace(',', ' ') + ' GNF')
+    line('Remise', f"{int(abo.montant_remise):,}".replace(',', ' ') + ' GNF')
+    line('Dû net', f"{int(abo.montant_du):,}".replace(',', ' ') + ' GNF')
+    line('Encaissé', f"{int(abo.montant):,}".replace(',', ' ') + ' GNF')
+    line('Reste', f"{int(abo.reste_a_payer):,}".replace(',', ' ') + ' GNF')
     line('Début', abo.date_debut.strftime('%d/%m/%Y') if abo.date_debut else '')
     line('Expiration', abo.date_expiration.strftime('%d/%m/%Y') if abo.date_expiration else '')
     

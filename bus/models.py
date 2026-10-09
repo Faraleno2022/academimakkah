@@ -193,6 +193,11 @@ class GrilleTarifaireBus(SyncTrackedModel):
                 (Decimal(directs.get(code) or 0) for code, debut in TRANCHE_DE_DEPART.items() if debut == depart),
                 Decimal('0'),
             )
+            if depart == 'T1':
+                restant += sum(
+                    (Decimal(valeur or 0) for code, valeur in directs.items()
+                     if code not in TRANCHE_DE_DEPART), Decimal('0'),
+                )
             for code in ORDRE_TRANCHES[ORDRE_TRANCHES.index(depart):]:
                 part = min(max(tranches[code] - payes[code], Decimal('0')), restant)
                 payes[code] += part
@@ -207,9 +212,7 @@ class GrilleTarifaireBus(SyncTrackedModel):
             }
             for code in ORDRE_TRANCHES
         }
-        total_paye = sum(
-            (Decimal(directs.get(code) or 0) for code in PERIODICITES_GRILLE), Decimal('0')
-        )
+        total_paye = sum((Decimal(valeur or 0) for valeur in directs.values()), Decimal('0'))
         du_annuel = sum(tranches.values(), Decimal('0'))
         brut_annuel = sum(bruts.values(), Decimal('0'))
         situation['ANNUEL'] = {
@@ -535,6 +538,8 @@ class AbonnementCantine(SyncTrackedModel):
         HEBDOMADAIRE = 'HEBDOMADAIRE', 'Hebdomadaire'
         MENSUEL = 'MENSUEL', 'Mensuel'
         TRIMESTRIEL = 'TRIMESTRIEL', 'Trimestriel'
+        DEUX_TRIMESTRES = 'DEUX_TRIMESTRES', '2 trimestres'
+        TROIS_TRIMESTRES = 'TROIS_TRIMESTRES', '3 trimestres'
         ANNUEL = 'ANNUEL', 'Annuel'
     
     class TypeRepas(models.TextChoices):
@@ -546,7 +551,13 @@ class AbonnementCantine(SyncTrackedModel):
         REPAS_10H_14H = 'REPAS_10H_14H', 'Repas de 10 h + 14 h'
     
     eleve = models.ForeignKey(Eleve, on_delete=models.CASCADE, related_name='abonnements_cantine')
-    montant = models.DecimalField(max_digits=10, decimal_places=0, verbose_name="Montant (GNF)")
+    montant = models.DecimalField(max_digits=10, decimal_places=0, verbose_name="Montant encaissé (GNF)")
+    montant_tarif = models.DecimalField(max_digits=10, decimal_places=0, null=True, blank=True,
+                                       verbose_name="Tarif avant remise (GNF)")
+    type_remise = models.CharField(max_length=12, choices=[('POURCENTAGE', 'Pourcentage'), ('MONTANT', 'Montant fixe')],
+                                   blank=True, verbose_name="Type de remise")
+    valeur_remise = models.DecimalField(max_digits=10, decimal_places=2, default=0,
+                                        verbose_name="Valeur de la remise")
     reference_externe = models.CharField(
         max_length=100,
         blank=True,
@@ -554,7 +565,7 @@ class AbonnementCantine(SyncTrackedModel):
         help_text="Numéro du reçu externe, transaction Mobile Money, chèque, etc.",
     )
     periodicite = models.CharField(
-        max_length=15,
+        max_length=20,
         choices=Periodicite.choices,
         default=Periodicite.MENSUEL,
         verbose_name="Type de paiement / périodicité",
@@ -604,6 +615,38 @@ class AbonnementCantine(SyncTrackedModel):
     
     def __str__(self):
         return f"Cantine: {self.eleve} ({self.get_periodicite_display()})"
+
+    @property
+    def montant_brut(self):
+        return Decimal(self.montant_tarif if self.montant_tarif is not None else self.montant or 0)
+
+    @property
+    def montant_remise(self):
+        brut = self.montant_brut
+        valeur = max(Decimal(self.valeur_remise or 0), Decimal('0'))
+        if self.type_remise == 'POURCENTAGE':
+            valeur = (brut * min(valeur, Decimal('100')) / Decimal('100')).quantize(
+                Decimal('1'), rounding=ROUND_HALF_UP)
+        elif self.type_remise != 'MONTANT':
+            valeur = Decimal('0')
+        return min(brut, valeur.quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+
+    @property
+    def montant_du(self):
+        return self.montant_brut - self.montant_remise
+
+    @property
+    def deja_paye(self):
+        """Le montant du reçu cantine est l'encaissement réel de l'élève."""
+        return Decimal(self.montant or 0)
+
+    @property
+    def reste_a_payer(self):
+        return max(self.montant_du - self.deja_paye, Decimal('0'))
+
+    @property
+    def solde(self):
+        return self.montant_du - self.deja_paye
     
     @property
     def est_proche_expiration(self) -> bool:

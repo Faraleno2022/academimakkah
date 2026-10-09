@@ -1,4 +1,8 @@
 from datetime import date
+from io import BytesIO
+
+from openpyxl import load_workbook
+from pypdf import PdfReader
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -150,6 +154,36 @@ class GrilleEtPaiementBusTests(TestCase):
         self.assertEqual(suggestion.json()['du'], 125000)
         self.assertEqual(suggestion.json()['paye'], 80000)
         self.assertEqual(suggestion.json()['reste'], 45000)
+
+    def test_deja_paye_et_exports_de_tous_les_versements_bus(self):
+        for montant in (50000, 75000):
+            AbonnementBus.objects.create(
+                eleve=self.eleve, grille=self.grille, periodicite='T1',
+                montant=montant, date_debut=date(2026, 10, 1),
+                date_expiration=date(2027, 1, 1), mode_paiement=self.mode,
+            )
+        AbonnementBus.objects.create(
+            eleve=self.autre_eleve, grille=self.autre_grille, periodicite='T1',
+            montant=999000, date_debut=date(2026, 10, 1),
+            date_expiration=date(2027, 1, 1), mode_paiement=self.mode,
+        )
+        liste = self.client.get(reverse('bus:liste'))
+        self.assertContains(liste, 'Déjà payé')
+        self.assertEqual(len(liste.context['abonnements']), 2)
+        self.assertEqual([int(a.deja_paye) for a in liste.context['abonnements']], [125000, 125000])
+        excel = self.client.get(reverse('bus:export_abonnements_bus', args=['excel']))
+        self.assertEqual(excel.status_code, 200)
+        ws = load_workbook(BytesIO(excel.content), data_only=True).active
+        self.assertEqual(ws.max_row, 6)
+        entetes = [cell.value for cell in ws[4]]
+        paye_col = entetes.index('Déjà payé cumulé (GNF)') + 1
+        self.assertEqual([ws.cell(row, paye_col).value for row in (5, 6)], [125000, 125000])
+        pdf = self.client.get(reverse('bus:export_abonnements_bus', args=['pdf']))
+        self.assertEqual(pdf.status_code, 200)
+        self.assertTrue(pdf.content.startswith(b'%PDF'))
+        texte = ' '.join(page.extract_text() for page in PdfReader(BytesIO(pdf.content)).pages)
+        self.assertIn('BUS-A-001', texte)
+        self.assertNotIn('BUS-B-001', texte)
 
     def test_formulaire_reporte_l_excedent_et_refuse_le_depassement_de_l_annee(self):
         AbonnementBus.objects.create(

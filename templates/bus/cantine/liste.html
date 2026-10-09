@@ -23,8 +23,11 @@
                     <a href="{% url 'bus:historique_abonnements' %}?type=cantine" class="btn btn-outline-dark">
                         <i class="fas fa-id-card"></i> Abonnements par élève
                     </a>
-                    <a href="{% url 'bus:export_cantine_excel' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-primary">
-                        <i class="fas fa-file-excel"></i> Export Excel
+                    <a href="{% url 'bus:export_cantine_pdf' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-outline-danger">
+                        <i class="fas fa-file-pdf"></i> Tous les abonnements PDF
+                    </a>
+                    <a href="{% url 'bus:export_cantine_excel' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-outline-success">
+                        <i class="fas fa-file-excel"></i> Tous les abonnements Excel
                     </a>
                 </div>
             </div>
@@ -79,6 +82,14 @@
     </div>
     {% endif %}
 
+    <div class="alert alert-light border d-flex flex-wrap gap-3">
+        <span>Tarif : <strong>{{ total_tarif|intcomma }} GNF</strong></span>
+        <span>Remises : <strong>{{ total_remise|intcomma }} GNF</strong></span>
+        <span>Dû net : <strong>{{ total_du|intcomma }} GNF</strong></span>
+        <span>Encaissé : <strong>{{ total_filtre|intcomma }} GNF</strong></span>
+        <span>Reste : <strong>{{ total_reste|intcomma }} GNF</strong></span>
+    </div>
+
     <!-- Tableau -->
     <div class="card">
         <div class="card-body">
@@ -90,7 +101,12 @@
                             <th>Classe</th>
                             <th>Type Repas</th>
                             <th>Périodicité</th>
-                            <th>Montant</th>
+                            <th>Montant abonnement</th>
+                            <th>Remise</th>
+                            <th>Dû net</th>
+                            <th>Déjà payé</th>
+                            <th>Reste à payer</th>
+                            <th>Début</th>
                             <th>Réf. externe</th>
                             <th>Date Expiration</th>
                             <th>Jours Restants</th>
@@ -116,7 +132,12 @@
                                 </span>
                             </td>
                             <td>{{ abo.get_periodicite_display }}</td>
-                            <td>{{ abo.montant|intcomma }} GNF</td>
+                            <td>{{ abo.montant_brut|intcomma }} GNF</td>
+                            <td>{{ abo.montant_remise|intcomma }} GNF{% if abo.type_remise %}<br><small class="text-muted">{{ abo.get_type_remise_display }} : {% if abo.type_remise == 'POURCENTAGE' %}{{ abo.valeur_remise|floatformat:2 }} %{% else %}{{ abo.valeur_remise|floatformat:0 }} GNF{% endif %}</small>{% endif %}</td>
+                            <td>{{ abo.montant_du|intcomma }} GNF</td>
+                            <td>{{ abo.deja_paye|intcomma }} GNF</td>
+                            <td>{{ abo.reste_a_payer|intcomma }} GNF</td>
+                            <td>{{ abo.date_debut|date:"d/m/Y" }}</td>
                             <td>{{ abo.reference_externe|default:"—" }}</td>
                             <td>{{ abo.date_expiration|date:"d/m/Y" }}</td>
                             <td>
@@ -176,7 +197,7 @@
                         </tr>
                         {% empty %}
                         <tr>
-                            <td colspan="11" class="text-center text-muted py-4">
+                            <td colspan="16" class="text-center text-muted py-4">
                                 <i class="fas fa-inbox fa-3x mb-3"></i>
                                 <p>Aucun abonnement trouvé.</p>
                                 <a href="{% url 'bus:creer_abonnement_cantine' %}" class="btn btn-success">

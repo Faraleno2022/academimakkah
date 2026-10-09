@@ -140,7 +140,24 @@
                                 <div class="row">
                                     <div class="col-md-4">
                                         <div class="mb-3">
-                                            <label class="form-label">Montant (GNF) *</label>
+                                            <label class="form-label">Tarif avant remise (GNF)</label>
+                                            {{ form.montant_tarif }}
+                                            <small class="text-muted">Si vide, le tarif est égal au montant encaissé.</small>
+                                            {% if form.montant_tarif.errors %}<div class="text-danger">{{ form.montant_tarif.errors }}</div>{% endif %}
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="mb-3">
+                                            <label class="form-label">Remise</label>
+                                            {{ form.type_remise }}
+                                            {{ form.valeur_remise }}
+                                            {% if form.type_remise.errors %}<div class="text-danger">{{ form.type_remise.errors }}</div>{% endif %}
+                                            {% if form.valeur_remise.errors %}<div class="text-danger">{{ form.valeur_remise.errors }}</div>{% endif %}
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="mb-3">
+                                            <label class="form-label">Montant encaissé (GNF) *</label>
                                             {{ form.montant }}
                                             {% if form.montant.errors %}
                                                 <div class="text-danger">{{ form.montant.errors }}</div>
@@ -149,23 +166,16 @@
                                     </div>
                                     <div class="col-md-4">
                                         <div class="mb-3">
-                                            <label class="form-label">Date de Début *</label>
+                                            <label class="form-label">Date de début *</label>
                                             {{ form.date_debut }}
                                             {% if form.date_debut.errors %}
                                                 <div class="text-danger">{{ form.date_debut.errors }}</div>
                                             {% endif %}
-                                        </div>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <div class="mb-3">
-                                            <label class="form-label">Date d'Expiration *</label>
-                                            {{ form.date_expiration }}
-                                            {% if form.date_expiration.errors %}
-                                                <div class="text-danger">{{ form.date_expiration.errors }}</div>
-                                            {% endif %}
+                                            <small class="text-muted">La date de fin est calculée selon la périodicité choisie.</small>
                                         </div>
                                     </div>
                                 </div>
+                                <div id="apercu-financier-cantine" class="alert alert-info py-2" aria-live="polite"></div>
                                 <div class="row">
                                     <div class="col-md-6">
                                         <div class="mb-3">
@@ -471,5 +481,51 @@ document.addEventListener('DOMContentLoaded', function() {
             });
     }
 });
+</script>
+<script>
+(function () {
+    const champ = id => document.getElementById(id);
+    const format = montant => new Intl.NumberFormat('fr-FR', {maximumFractionDigits: 0}).format(montant) + ' GNF';
+    const champs = ['id_montant_tarif', 'id_type_remise', 'id_valeur_remise', 'id_montant', 'id_periodicite', 'id_date_debut'];
+    function actualiser() {
+        const sortie = champ('apercu-financier-cantine');
+        if (!sortie) return;
+        const encaisse = Math.max(0, Number(champ('id_montant')?.value || 0));
+        const tarif = Math.max(0, Number(champ('id_montant_tarif')?.value || encaisse));
+        const type = champ('id_type_remise')?.value;
+        const valeur = Math.max(0, Number(champ('id_valeur_remise')?.value || 0));
+        const remise = type === 'POURCENTAGE'
+            ? Math.min(tarif, Math.round(tarif * Math.min(valeur, 100) / 100))
+            : type === 'MONTANT' ? Math.min(tarif, Math.round(valeur)) : 0;
+        const du = tarif - remise;
+        const reste = Math.max(du - encaisse, 0);
+        let fin = '';
+        const dateTexte = champ('id_date_debut')?.value;
+        const periode = champ('id_periodicite')?.value;
+        if (dateTexte && periode) {
+            const [annee, mois, jour] = dateTexte.split('-').map(Number);
+            const durees = {MENSUEL: 1, TRIMESTRIEL: 3, DEUX_TRIMESTRES: 6, TROIS_TRIMESTRES: 9, ANNUEL: 12};
+            const date = new Date(annee, mois - 1, jour, 12);
+            if (periode === 'HEBDOMADAIRE') date.setDate(date.getDate() + 6);
+            else if (durees[periode]) {
+                const premier = new Date(annee, mois - 1 + durees[periode], 1, 12);
+                const dernierJour = new Date(premier.getFullYear(), premier.getMonth() + 1, 0).getDate();
+                premier.setDate(Math.min(jour, dernierJour));
+                premier.setDate(premier.getDate() - 1);
+                date.setTime(premier.getTime());
+            }
+            fin = ' — Fin : ' + date.toLocaleDateString('fr-FR');
+        }
+        sortie.textContent = `Remise : ${format(remise)} — Dû net : ${format(du)} — Encaissé : ${format(encaisse)} — Reste : ${format(reste)}${fin}`;
+    }
+    for (const id of champs) {
+        const element = champ(id);
+        if (element) {
+            element.addEventListener('input', actualiser);
+            element.addEventListener('change', actualiser);
+        }
+    }
+    actualiser();
+})();
 </script>
 {% endblock %}
