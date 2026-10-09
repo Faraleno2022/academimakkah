@@ -12,6 +12,8 @@
 <a class="btn btn-outline-dark" href="{% url 'bus:historique_abonnements' %}"><i class="fas fa-id-card me-1"></i>Abonnements par élève</a>
 <a class="btn btn-outline-info" href="{% url 'bus:remises' %}"><i class="fas fa-percent me-1"></i>Élèves avec remise</a>
 <a class="btn btn-success" href="{% url 'bus:nouveau' %}"><i class="fas fa-plus me-1"></i>Nouveau paiement bus</a>
+<a class="btn btn-outline-danger" href="{% url 'bus:export_abonnements_bus' 'pdf' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}"><i class="fas fa-file-pdf me-1"></i>Tous les abonnements PDF</a>
+<a class="btn btn-outline-success" href="{% url 'bus:export_abonnements_bus' 'excel' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}"><i class="fas fa-file-excel me-1"></i>Tous les abonnements Excel</a>
 {% endblock %}
 {% block content %}
 {% include 'bus/_suivi_classe.html' %}
@@ -20,6 +22,12 @@
   {% include 'bus/_recettes_periodes.html' with titre_recettes="Recettes bus encaissées" %}
 </div>
 <h2 class="h5 mt-2">Historique des versements bus — toutes les classes</h2>
+<div class="alert alert-light border d-flex flex-wrap gap-3">
+  <span>Dû net : <strong>{{ total_du_bus|intcomma }} GNF</strong></span>
+  <span>Remises : <strong>{{ total_remise_bus|intcomma }} GNF</strong></span>
+  <span>Payé : <strong>{{ total_paye_bus|intcomma }} GNF</strong></span>
+  <span>Reste : <strong>{{ total_reste_bus|intcomma }} GNF</strong></span>
+</div>
 <form method="get" class="row g-2 mb-3">
   {% if periode %}<input type="hidden" name="periode" value="{{ periode }}">{% endif %}
   <div class="col-md-4">
@@ -214,7 +222,11 @@
       <th>Zone / année</th>
       <th>Tranche</th>
       <th>Montant</th>
+      <th>Dû net</th>
+      <th>Déjà payé<br><small>(cumul élève)</small></th>
+      <th>Reste à payer</th>
       <th>Date</th>
+      <th>Fin</th>
       <th>Mode</th>
       <th>Statut</th>
       <th>Actions</th>
@@ -230,7 +242,11 @@
       <td>{{ a.grille.zone|default:a.zone }}<br><small class="text-muted">{{ a.annee_scolaire|default:"—" }}</small></td>
       <td>{{ a.get_periodicite_display }}</td>
       <td>{{ a.montant|intcomma }} GNF</td>
+      <td>{% if a.situation_financiere %}{{ a.situation_financiere.du|intcomma }} GNF{% else %}—{% endif %}</td>
+      <td>{{ a.deja_paye|intcomma }} GNF</td>
+      <td>{% if a.situation_financiere %}{{ a.situation_financiere.reste|intcomma }} GNF{% else %}—{% endif %}</td>
       <td>{{ a.date_debut|date:'d/m/Y' }}</td>
+      <td>{{ a.date_expiration|date:'d/m/Y' }}</td>
       <td>{{ a.mode_paiement.nom|default:"—" }}</td>
       <td>{{ a.get_statut_display }}</td>
       <td>
@@ -244,7 +260,7 @@
       </td>
     </tr>
     {% empty %}
-    <tr><td colspan="11" class="text-center text-muted py-4">Aucun abonnement trouvé</td></tr>
+    <tr><td colspan="15" class="text-center text-muted py-4">Aucun abonnement trouvé</td></tr>
     {% endfor %}
   </tbody>
 </table>

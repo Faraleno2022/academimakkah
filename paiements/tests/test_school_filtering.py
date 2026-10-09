@@ -154,6 +154,23 @@ class SchoolFilteringTests(TestCase):
         self.assertIn(self.paiement1.id, ids)
         self.assertNotIn(self.paiement2.id, ids)
 
+    def test_liste_paiements_admin_ecole_garde_son_ecole_et_toutes_les_annees(self):
+        self.user1.profil.role = 'ADMIN'
+        self.user1.profil.save(update_fields=['role'])
+        ancien = Paiement.objects.create(
+            eleve=self.eleve1, type_paiement=self.type_insc,
+            mode_paiement=self.mode_espece, montant=1000,
+            annee_scolaire='2023-2024', statut='VALIDE',
+            date_paiement=date(2023, 9, 10),
+        )
+        self.login1()
+        response = self.client.get(reverse('paiements:liste_paiements'))
+        self.assertEqual(response.status_code, 200)
+        ids = {paiement.pk for paiement in response.context['paiements']}
+        self.assertIn(self.paiement1.pk, ids)
+        self.assertIn(ancien.pk, ids)
+        self.assertNotIn(self.paiement2.pk, ids)
+
     def test_api_paiement_detail_for_other_school_is_404(self):
         self.login1()
         url = reverse("paiements:api_paiement_detail", kwargs={"pk": self.paiement2.id})

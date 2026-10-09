@@ -100,10 +100,10 @@
                                 <div class="card-body text-center">
                                     <i class="fas fa-calendar-day fa-3x text-primary mb-3"></i>
                                     <h6 class="card-title">Rapport Journalier</h6>
-                                    <p class="card-text text-muted">Génère le rapport d'activité du jour</p>
+                                    <p class="card-text text-muted">Scolarité, bus et cantine, avec chaque paiement détaillé.</p>
                                     <div class="d-flex flex-column gap-2">
                                         <button class="btn btn-primary btn-sm" onclick="genererRapport('journalier')">
-                                            <i class="fas fa-download me-1"></i>Aujourd'hui
+                                            <i class="fas fa-file-pdf me-1"></i>Télécharger PDF
                                         </button>
                                         <button class="btn btn-outline-secondary btn-sm" onclick="exporterRapport('journalier')">
                                             <i class="fas fa-file-excel me-1"></i>Exporter Excel
@@ -345,7 +345,8 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                <button type="button" class="btn btn-primary" onclick="genererRapportAvecDate('journalier')">Générer</button>
+                <button type="button" class="btn btn-outline-success" onclick="exporterRapportAvecDate()">Excel</button>
+                <button type="button" class="btn btn-primary" onclick="genererRapportAvecDate('journalier')">PDF</button>
             </div>
         </div>
     </div>

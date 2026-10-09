@@ -8,6 +8,7 @@ from django.utils import timezone as django_timezone
 from decimal import Decimal
 import json
 from io import BytesIO
+from html import escape
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
@@ -22,7 +23,7 @@ from eleves.models import Eleve, Ecole
 from eleves.utils_annee import get_annee_active
 from paiements.models import Paiement, PaiementRemise, EcheancierPaiement, TypePaiement
 from paiements.allocation import registration_kind_for_type
-from bus.models import AbonnementBus
+from bus.models import AbonnementBus, AbonnementCantine, remises_par_eleve_grille
 from depenses.models import Depense
 from salaires.models import Enseignant, EtatSalaire
 from utilisateurs.utils import user_is_admin, user_is_superadmin, user_school
@@ -98,7 +99,9 @@ def generer_rapport_journalier(request):
         pdf_buffer
     )
     
-    return HttpResponse(pdf_buffer.getvalue(), content_type='application/pdf')
+    response = HttpResponse(pdf_buffer.getvalue(), content_type='application/pdf')
+    response['Content-Disposition'] = f'attachment; filename="rapport_journalier_{date_rapport:%Y%m%d}.pdf"'
+    return response
 
 @login_required
 @user_passes_test(can_access_rapports)
@@ -487,6 +490,47 @@ def _build_excel_from_donnees(donnees, titre):
     for i, w in enumerate([26, 26, 18], start=1):
         ws3.column_dimensions[get_column_letter(i)].width = w
 
+    if 'date' in donnees:
+        ws4 = wb.create_sheet('Tous les paiements')
+        ws4.append(['École', 'Service', 'Élève', 'Matricule', 'Classe', 'Reçu / référence',
+                    'Périodicité / type', 'Date', 'Tarif brut', 'Remise', 'Dû net',
+                    'Encaissé', 'Reste à payer', 'Mode'])
+        for cell in ws4[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+        for e in donnees.get('ecoles', {}).values():
+            for ligne in e.get('lignes_paiements', []):
+                ws4.append([e['nom'], ligne['service'], ligne['eleve'], ligne['matricule'],
+                            ligne['classe'], ligne['reference'], ligne['type'],
+                            ligne['date'], float(ligne['brut']), float(ligne['remise']),
+                            float(ligne['du']), float(ligne['encaisse']),
+                            float(ligne['reste']), ligne['mode']])
+        ws4.freeze_panes = 'A2'
+        ws4.auto_filter.ref = ws4.dimensions
+        for index, largeur in enumerate([26, 15, 28, 18, 20, 24, 25, 15, 16, 16, 16, 16, 18, 18], 1):
+            ws4.column_dimensions[get_column_letter(index)].width = largeur
+        for ligne in ws4.iter_rows(min_row=2, min_col=9, max_col=13):
+            for cell in ligne:
+                cell.number_format = numbers.FORMAT_NUMBER_COMMA_SEPARATED1
+        for cells in ws4.iter_rows(min_row=2, min_col=8, max_col=8):
+            cells[0].number_format = 'DD/MM/YYYY'
+        ws5 = wb.create_sheet('Totaux par service')
+        ws5.append(['École', 'Service', 'Paiements', 'Dû net', 'Remises', 'Encaissé', 'Reste à payer'])
+        for cell in ws5[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+        for e in donnees.get('ecoles', {}).values():
+            for service in ('Scolarité', 'Bus', 'Cantine'):
+                total = e.get('totaux_services', {}).get(service, {})
+                ws5.append([e['nom'], service, total.get('nombre', 0),
+                            float(total.get('du', 0) or 0), float(total.get('remise', 0) or 0),
+                            float(total.get('encaisse', 0) or 0), float(total.get('reste', 0) or 0)])
+        for index, largeur in enumerate([30, 18, 14, 18, 18, 18, 20], 1):
+            ws5.column_dimensions[get_column_letter(index)].width = largeur
+        for ligne in ws5.iter_rows(min_row=2, min_col=4, max_col=7):
+            for cell in ligne:
+                cell.number_format = numbers.FORMAT_NUMBER_COMMA_SEPARATED1
+
     return wb
 
 def collecter_donnees_journalieres(date_rapport, user=None):
@@ -533,6 +577,8 @@ def collecter_donnees_journalieres(date_rapport, user=None):
 
         donnees_ecole = {
             'nom': _nom_affiche,
+            'lignes_paiements': [],
+            'totaux_services': {},
             'nouveaux_eleves': Eleve.objects.filter(
                 classe__ecole=ecole,
                 date_inscription=date_rapport
@@ -593,6 +639,94 @@ def collecter_donnees_journalieres(date_rapport, user=None):
         )
         donnees_ecole['classes'] = soldes.pop('classes')
         donnees_ecole['paiements'].update(soldes)
+
+        lignes = donnees_ecole['lignes_paiements']
+        for paiement in paiements_jour.select_related('eleve__classe', 'type_paiement', 'mode_paiement').prefetch_related('remises'):
+            remise = sum((r.montant_remise for r in paiement.remises.all()), Decimal('0'))
+            encaisse = Decimal(paiement.montant or 0)
+            lignes.append({
+                'service': 'Scolarité', 'eleve': str(paiement.eleve),
+                'matricule': paiement.eleve.matricule or '',
+                'classe': paiement.eleve.classe.nom if paiement.eleve.classe_id else '',
+                'reference': paiement.numero_recu or paiement.reference_externe or '',
+                'type': paiement.type_paiement.nom, 'date': date_rapport,
+                'brut': encaisse + remise, 'remise': remise, 'du': encaisse,
+                'encaisse': encaisse, 'reste': Decimal('0'),
+                'mode': paiement.mode_paiement.nom,
+            })
+
+        bus_du_jour = list(AbonnementBus.objects.filter(
+            eleve__classe__ecole=ecole, date_debut=date_rapport,
+        ).select_related('eleve__classe', 'mode_paiement', 'grille'))
+        paires_bus = {(abo.eleve_id, abo.grille_id) for abo in bus_du_jour if abo.grille_id}
+        remises_bus = remises_par_eleve_grille(paires_bus)
+        versements_bus = {}
+        if paires_bus:
+            for row in AbonnementBus.objects.filter(
+                eleve_id__in={e for e, _ in paires_bus},
+                grille_id__in={g for _, g in paires_bus},
+                date_debut__lte=date_rapport,
+            ).values('eleve_id', 'grille_id', 'periodicite').annotate(total=Sum('montant')):
+                cle = (row['eleve_id'], row['grille_id'])
+                if cle in paires_bus:
+                    versements_bus.setdefault(cle, {})[row['periodicite']] = row['total'] or 0
+        situations_bus = {}
+        for abo in bus_du_jour:
+            encaisse = Decimal(abo.montant or 0)
+            situation = None
+            if abo.grille_id:
+                cle = (abo.eleve_id, abo.grille_id)
+                if cle not in situations_bus:
+                    situations_bus[cle] = abo.grille.situation_depuis_totaux(
+                        versements_bus.get(cle, {}), remises_bus.get(cle),
+                    )['ANNUEL']
+                situation = situations_bus[cle]
+            brut = situation['brut'] if situation else encaisse
+            montant_remise = situation['remise'] if situation else Decimal('0')
+            net = situation['du'] if situation else encaisse
+            lignes.append({
+                'service': 'Bus', 'eleve': str(abo.eleve), 'matricule': abo.eleve.matricule or '',
+                'sans_grille': not abo.grille_id,
+                'classe': abo.eleve.classe.nom if abo.eleve.classe_id else '',
+                'reference': abo.numero_recu or abo.reference_externe or '',
+                'type': abo.get_periodicite_display(), 'date': date_rapport,
+                'brut': brut, 'remise': montant_remise, 'du': net,
+                'encaisse': encaisse, 'reste': situation['reste'] if situation else Decimal('0'),
+                'mode': abo.mode_paiement.nom if abo.mode_paiement_id else '',
+            })
+
+        for abo in AbonnementCantine.objects.filter(
+            eleve__classe__ecole=ecole, date_debut=date_rapport,
+        ).select_related('eleve__classe'):
+            lignes.append({
+                'service': 'Cantine', 'eleve': str(abo.eleve), 'matricule': abo.eleve.matricule or '',
+                'classe': abo.eleve.classe.nom if abo.eleve.classe_id else '',
+                'reference': abo.reference_externe or f'Cantine #{abo.pk}',
+                'type': abo.get_periodicite_display(), 'date': date_rapport,
+                'brut': abo.montant_brut, 'remise': abo.montant_remise,
+                'du': abo.montant_du, 'encaisse': Decimal(abo.montant or 0),
+                'reste': abo.reste_a_payer, 'mode': '',
+            })
+        for service in ('Scolarité', 'Bus', 'Cantine'):
+            service_lignes = [ligne for ligne in lignes if ligne['service'] == service]
+            donnees_ecole['totaux_services'][service] = {
+                'nombre': len(service_lignes),
+                'encaisse': sum((ligne['encaisse'] for ligne in service_lignes), Decimal('0')),
+                'remise': sum((ligne['remise'] for ligne in service_lignes), Decimal('0')),
+                'du': sum((ligne['du'] for ligne in service_lignes), Decimal('0')),
+                'reste': sum((ligne['reste'] for ligne in service_lignes), Decimal('0')),
+            }
+        if situations_bus:
+            donnees_ecole['totaux_services']['Bus'].update({
+                champ: sum((s[champ] for s in situations_bus.values()), Decimal('0'))
+                + sum((ligne[champ] for ligne in lignes
+                       if ligne['service'] == 'Bus' and ligne.get('sans_grille')), Decimal('0'))
+                for champ in ('remise', 'du', 'reste')
+            })
+        donnees_ecole['totaux_services']['Scolarité'].update({
+            'du': donnees_ecole['paiements'].get('total_du_concernes', Decimal('0')),
+            'reste': donnees_ecole['paiements'].get('reste_a_payer', Decimal('0')),
+        })
 
         # Dépenses: pas de répartition par école (le modèle n'est pas rattaché à Ecole)
         # On laisse 0 au niveau de l'école et on affiche un total global dans le résumé
@@ -725,6 +859,43 @@ def generer_pdf_journalier(donnees, date_rapport):
         
         story.append(table)
         story.append(Spacer(1, 16))
+
+        for service in ('Scolarité', 'Bus', 'Cantine'):
+            lignes_service = [ligne for ligne in donnees_ecole.get('lignes_paiements', [])
+                              if ligne['service'] == service]
+            total_service = sum((ligne['encaisse'] for ligne in lignes_service), Decimal('0'))
+            story.append(Paragraph(
+                f"{service} — {len(lignes_service)} paiement(s), {total_service:,.0f} GNF".replace(',', ' '),
+                styles['Heading3'],
+            ))
+            total = donnees_ecole.get('totaux_services', {}).get(service, {})
+            story.append(Paragraph(
+                "Dû net : {du:,.0f} GNF | Remises : {remise:,.0f} GNF | "
+                "Encaissé : {encaisse:,.0f} GNF | Reste : {reste:,.0f} GNF".format(
+                    du=total.get('du', 0) or 0, remise=total.get('remise', 0) or 0,
+                    encaisse=total.get('encaisse', 0) or 0, reste=total.get('reste', 0) or 0,
+                ).replace(',', ' '), styles['Normal'],
+            ))
+            details = [['Élève', 'Reçu / référence', 'Type', 'Remise', 'Encaissé']]
+            for ligne in lignes_service:
+                details.append([
+                    Paragraph(escape(ligne['eleve']), styles['Normal']),
+                    Paragraph(escape(ligne['reference']), styles['Normal']),
+                    Paragraph(escape(ligne['type']), styles['Normal']),
+                    f"{ligne['remise']:,.0f}".replace(',', ' '),
+                    f"{ligne['encaisse']:,.0f}".replace(',', ' '),
+                ])
+            if not lignes_service:
+                details.append(['Aucun paiement', '', '', '', ''])
+            details_table = Table(details, colWidths=[115, 100, 90, 65, 75], repeatRows=1)
+            details_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 0.25, colors.grey),
+            ]))
+            story.append(details_table)
+            story.append(Spacer(1, 12))
 
         # Répartition par classe
         if donnees_ecole.get('classes'):

@@ -1,4 +1,8 @@
 from datetime import date, datetime, timedelta
+from io import BytesIO
+
+from openpyxl import load_workbook
+from pypdf import PdfReader
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -122,6 +126,29 @@ class RecettesAbonnementsTests(TestCase):
         export = self.client.get(reverse('bus:export_cantine_excel'), {'periode': 'annee'})
         self.assertTrue(export.content.startswith(b'PK'))
 
+    def test_cantine_sans_tarif_distinct_est_deja_payee_et_exportable(self):
+        today = timezone.localdate()
+        abonnement = self._cantine(self.eleve, today, 300000)
+        self._cantine(self.autre_eleve, today, 900000)
+        self.assertEqual(int(abonnement.deja_paye), 300000)
+        self.assertEqual(int(abonnement.reste_a_payer), 0)
+        liste = self.client.get(reverse('bus:liste_abonnements_cantine'))
+        self.assertContains(liste, 'Déjà payé')
+        self.assertEqual(int(liste.context['total_reste']), 0)
+        self.assertEqual(int(liste.context['total_filtre']), 300000)
+        excel = self.client.get(reverse('bus:export_cantine_excel'))
+        ws = load_workbook(BytesIO(excel.content), data_only=True).active
+        self.assertEqual(ws.max_row, 5)
+        entetes = [cell.value for cell in ws[4]]
+        self.assertEqual(ws.cell(5, entetes.index('Déjà payé (GNF)') + 1).value, 300000)
+        self.assertEqual(ws.cell(5, entetes.index('Reste à payer (GNF)') + 1).value, 0)
+        pdf = self.client.get(reverse('bus:export_cantine_pdf'))
+        self.assertEqual(pdf.status_code, 200)
+        self.assertTrue(pdf.content.startswith(b'%PDF'))
+        texte = ' '.join(page.extract_text() for page in PdfReader(BytesIO(pdf.content)).pages)
+        self.assertIn('REC-001', texte)
+        self.assertNotIn('REC-900', texte)
+
     def test_details_cantine_reste_dans_la_cantine(self):
         today = timezone.localdate()
         self._bus(self.eleve, today, 100000)
@@ -149,3 +176,7 @@ class RecettesAbonnementsTests(TestCase):
         cantine = self.client.get(reverse('bus:tableau_bord_cantine'))
         self.assertEqual(int({r['code']: r for r in cantine.context['recettes']}['jour']['montant']), 300000)
         self.assertContains(cantine, 'Recettes cantine encaissées')
+        self.assertEqual(int(cantine.context['montant_abonnements']), 300000)
+        self.assertEqual(int(cantine.context['deja_paye']), 300000)
+        self.assertEqual(int(cantine.context['reste_a_payer']), 0)
+        self.assertContains(cantine, reverse('bus:export_cantine_pdf'))

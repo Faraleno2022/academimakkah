@@ -1800,6 +1800,7 @@ def export_eleves_admission_pdf(request, nature):
 def liste_paiements(request):
     """Liste des paiements optimisée avec cache intelligent et requêtes optimisées"""
     from ecole_moderne.performance_config import get_cached_or_set, CACHE_TTL, OptimizedQueryMixin
+    from ecole_moderne.recherche import filtrer_termes
     
     titre_page = "Liste des paiements"
     q = (request.GET.get('q') or '').strip()
@@ -1810,40 +1811,33 @@ def liste_paiements(request):
     # Cache de l'école utilisateur
     user_school_cache_key = f'user_school_{request.user.id}'
     user_school_obj = cache.get(user_school_cache_key)
-    if user_school_obj is None and not user_is_admin(request.user):
+    if user_school_obj is None and not user_is_superadmin(request.user):
         from utilisateurs.utils import user_school
         user_school_obj = user_school(request.user)
         if user_school_obj:
             cache.set(user_school_cache_key, user_school_obj, CACHE_TTL['user_school'])
 
     # Année scolaire active (utilisée par défaut si pas de filtre explicite)
-    ecole_for_annee = user_school_obj or user_school(request.user) if not user_is_admin(request.user) else None
+    ecole_for_annee = user_school_obj
     annee_active = get_annee_active(request, ecole_for_annee) if ecole_for_annee else None
 
     # Queryset optimisé avec prefetch
     qs = OptimizedQueryMixin.get_optimized_paiements_queryset(user_school_obj)
 
     # Restreindre par école de l'utilisateur (sauf admin)
-    if not user_is_admin(request.user) and user_school_obj:
-        qs = qs.filter(eleve__classe__ecole=user_school_obj)
+    qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
 
     # Filtre par année scolaire (via la classe de l'élève)
     if annee_filtre:
         qs = qs.filter(annee_scolaire=annee_filtre)
-    elif annee_active:
-        # Par défaut, montrer uniquement l'année active
-        qs = qs.filter(annee_scolaire=annee_active)
 
     # Filtre recherche optimisé
     if q:
-        qs = qs.filter(
-            Q(numero_recu__icontains=q) |
-            Q(reference_externe__icontains=q) |
-            Q(observations__icontains=q) |
-            Q(eleve__nom__icontains=q) |
-            Q(eleve__prenom__icontains=q) |
-            Q(eleve__matricule__icontains=q)
-        )
+        qs = filtrer_termes(qs, q, (
+            'numero_recu', 'reference_externe', 'observations',
+            'eleve__nom', 'eleve__prenom', 'eleve__matricule',
+            'eleve__classe__nom', 'type_paiement__nom',
+        ), ('eleve__nom', 'eleve__prenom'))
 
     # Appliquer filtre par statut
     if statut:
@@ -1952,12 +1946,11 @@ def liste_paiements(request):
     eleves_qs = Eleve.objects.select_related('classe', 'classe__ecole').all()
     eleves_qs = filter_by_user_school(eleves_qs, request.user, 'classe__ecole')
     if q:
-        eleves_qs = eleves_qs.filter(
-            Q(nom__icontains=q) | Q(prenom__icontains=q) | Q(matricule__icontains=q)
-            | Q(classe__nom__icontains=q) | Q(classe__ecole__nom__icontains=q)
-            | Q(paiements__numero_recu__icontains=q) | Q(paiements__reference_externe__icontains=q)
-            | Q(paiements__observations__icontains=q)
-        ).distinct()
+        eleves_qs = filtrer_termes(eleves_qs, q, (
+            'nom', 'prenom', 'matricule', 'classe__nom', 'classe__ecole__nom',
+            'paiements__numero_recu', 'paiements__reference_externe',
+            'paiements__observations',
+        ), ('nom', 'prenom')).distinct()
 
     # Toujours compter les élèves restreints à l'école de l'utilisateur
     eleves_count = eleves_qs.count()
@@ -2118,12 +2111,15 @@ def liste_paiements(request):
     # Pagination
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(page)
+    autres_filtres = request.GET.copy()
+    autres_filtres.pop('page', None)
 
     context = {
         'titre_page': titre_page,
         'q': q,
         'statut': statut,
-        'annee_filtre': annee_filtre or (annee_active or ''),
+        'annee_filtre': annee_filtre,
+        'pagination_query': autres_filtres.urlencode(),
         'annee_active': annee_active or '',
         'can_view_reports': has_permission(request.user, 'peut_consulter_rapports'),
         'user_permissions': get_user_permissions(request.user),

@@ -11,7 +11,6 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
-from datetime import timedelta
 import io
 import csv
 
@@ -19,6 +18,7 @@ from eleves.models import Eleve
 from .models import (
     LIBELLES_TRANCHES, ORDRE_TRANCHES, PERIODICITES_GRILLE, TRANCHE_DE_DEPART,
     AbonnementBus, GrilleTarifaireBus, tranches_couvertes,
+    remises_par_eleve_grille,
 )
 from .remises import construire_remise, remise_json
 from .forms import AbonnementBusForm, GrilleTarifaireBusForm
@@ -31,22 +31,13 @@ from utilisateurs.permissions import can_delete_subscriptions, permission_requir
 from ecole_moderne.security_decorators import require_school_object
 from ecole_moderne.pdf_utils import draw_logo_watermark
 from paiements.twilio_utils import send_message_async
+from ecole_moderne.recherche import filtrer_termes
+from .periodes import fin_abonnement
+from .export_listes import exporter_liste
 
 
 def _ecole_utilisateur(user):
     return None if user_is_superadmin(user) else user_school(user)
-
-
-def _date_fin_grille(grille, date_paiement):
-    echeances = [
-        date_value for date_value in (
-            grille.date_echeance_tranche_1,
-            grille.date_echeance_tranche_2,
-            grille.date_echeance_tranche_3,
-        ) if date_value
-    ]
-    date_fin = max(echeances) if echeances else date_paiement + timedelta(days=365)
-    return max(date_fin, date_paiement)
 
 
 @login_required
@@ -106,17 +97,11 @@ def _filtrer_abonnements(request, qs):
     if periode:
         qs = filtrer_periode(qs, periode, CHAMP_DATE_BUS)
     if q:
-        qs = qs.filter(
-            Q(eleve__nom__icontains=q) |
-            Q(eleve__prenom__icontains=q) |
-            Q(eleve__matricule__icontains=q) |
-            Q(numero_recu__icontains=q) |
-            Q(reference_externe__icontains=q) |
-            Q(zone__icontains=q) |
-            Q(itineraire__icontains=q) |
-            Q(point_arret__icontains=q) |
-            Q(contact_parent__icontains=q)
-        )
+        qs = filtrer_termes(qs, q, (
+            'eleve__nom', 'eleve__prenom', 'eleve__matricule',
+            'eleve__classe__nom', 'numero_recu', 'reference_externe',
+            'zone', 'itineraire', 'point_arret', 'contact_parent',
+        ), ('eleve__nom', 'eleve__prenom'))
 
     # Appliquer le filtre de statut/échéance
     today = timezone.localdate()
@@ -137,6 +122,34 @@ def _filtrer_abonnements(request, qs):
                         ids_proches.append(a_id)
         qs = qs.filter(id__in=ids_proches)
     return qs, q, filtre, periode
+
+
+def _abonnements_avec_situation(user, qs):
+    """Charge chaque versement visible avec le cumul payé de sa grille."""
+    abonnements = list(qs.order_by('-updated_at'))
+    paires = {(a.eleve_id, a.grille_id) for a in abonnements if a.grille_id}
+    totaux = {}
+    if paires:
+        for row in _abonnements_visibles(user).filter(
+            eleve_id__in={e for e, _ in paires}, grille_id__in={g for _, g in paires},
+        ).values('eleve_id', 'grille_id', 'periodicite').annotate(total=Sum('montant')):
+            cle = (row['eleve_id'], row['grille_id'])
+            if cle in paires:
+                totaux.setdefault(cle, {})[row['periodicite']] = row['total'] or 0
+    remises = remises_par_eleve_grille(paires)
+    situations = {}
+    for abo in abonnements:
+        if abo.grille_id:
+            cle = (abo.eleve_id, abo.grille_id)
+            if cle not in situations:
+                situations[cle] = abo.grille.situation_depuis_totaux(
+                    totaux.get(cle, {}), remises.get(cle),
+                )['ANNUEL']
+            abo.situation_financiere = situations[cle]
+            abo.deja_paye = situations[cle]['paye']
+        else:
+            abo.deja_paye = abo.montant
+    return abonnements, situations
 
 
 @login_required
@@ -194,9 +207,11 @@ def liste_abonnements(request):
             'montant': row['montant'] or 0,
         })
 
+    abonnements, situations = _abonnements_avec_situation(request.user, qs)
+
     context = {
         'titre_page': 'Abonnements Bus - Liste',
-        'abonnements': qs.order_by('-updated_at')[:500],
+        'abonnements': abonnements,
         'q': q,
         'filtre': filtre,
         'periode': periode,
@@ -205,6 +220,10 @@ def liste_abonnements(request):
         # Dashboard context
         'total_count': total_count,
         'total_montant': agg.get('total_montant') or 0,
+        'total_du_bus': sum((s['du'] for s in situations.values()), 0),
+        'total_paye_bus': sum((s['paye'] for s in situations.values()), 0),
+        'total_reste_bus': sum((s['reste'] for s in situations.values()), 0),
+        'total_remise_bus': sum((s['remise'] for s in situations.values()), 0),
         'nb_actifs': agg.get('nb_actifs') or 0,
         'nb_expires': agg.get('nb_expires') or 0,
         'nb_suspendus': agg.get('nb_suspendus') or 0,
@@ -219,6 +238,55 @@ def liste_abonnements(request):
     }
     context.update(contexte_suivi_classe(request))
     return render(request, 'bus/liste.html', context)
+
+
+@login_required
+def export_abonnements_bus(request, fmt):
+    """Tous les versements bus visibles, avec le cumul payé par élève et grille."""
+    if fmt not in ('pdf', 'excel'):
+        return HttpResponse('Format invalide', status=400)
+    qs, _q, _filtre, _periode = _filtrer_abonnements(request, _abonnements_visibles(request.user))
+    abonnements, _situations = _abonnements_avec_situation(request.user, qs)
+    entetes_excel = [
+        'École', 'Élève', 'Matricule', 'Classe', 'N° reçu', 'Référence externe',
+        'Zone', 'Année scolaire', 'Périodicité', 'Paiement encaissé (GNF)',
+        'Dû net annuel (GNF)', 'Remise annuelle (GNF)', 'Déjà payé cumulé (GNF)',
+        'Reste à payer (GNF)', 'Date paiement', 'Date expiration',
+        'Mode paiement', 'Statut', 'Itinéraire', 'Arrêt', 'Contact parent',
+    ]
+    entetes_pdf = [
+        'Élève', 'Matricule', 'Classe', 'Zone', 'Périodicité', 'N° reçu',
+        'Date', 'Fin', 'Encaissé', 'Dû net', 'Remise', 'Déjà payé', 'Reste',
+    ]
+    lignes_excel, lignes_pdf = [], []
+    for abo in abonnements:
+        situation = getattr(abo, 'situation_financiere', None) or {}
+        eleve = abo.eleve
+        nom = f'{eleve.prenom} {eleve.nom}'
+        classe = eleve.classe.nom if eleve.classe_id else ''
+        ecole = eleve.classe.ecole.nom if eleve.classe_id else ''
+        zone = abo.grille.zone if abo.grille_id else abo.zone
+        lignes_excel.append([
+            ecole, nom, eleve.matricule or '', classe,
+            abo.numero_recu or '', abo.reference_externe or '', zone,
+            abo.annee_scolaire or '', abo.get_periodicite_display(), abo.montant,
+            situation.get('du'), situation.get('remise'), abo.deja_paye,
+            situation.get('reste'), abo.date_debut, abo.date_expiration,
+            abo.mode_paiement.nom if abo.mode_paiement_id else '',
+            abo.get_statut_display(), abo.itineraire or '', abo.point_arret or '',
+            abo.contact_parent or '',
+        ])
+        lignes_pdf.append([
+            nom, eleve.matricule or '', classe, zone, abo.get_periodicite_display(),
+            abo.numero_recu or '', abo.date_debut, abo.date_expiration,
+            abo.montant, situation.get('du'), situation.get('remise'),
+            abo.deja_paye, situation.get('reste'),
+        ])
+    return exporter_liste(
+        fmt, 'abonnements_bus', 'Abonnements bus — tous les versements',
+        entetes_excel, lignes_excel, entetes_pdf, lignes_pdf,
+        sum((a.montant or 0 for a in abonnements), 0),
+    )
 
 
 @login_required
@@ -418,7 +486,7 @@ def abonnement_create(request):
             abo.statut = AbonnementBus.Statut.ACTIF
             abo.zone = abo.grille.zone
             abo.annee_scolaire = abo.grille.annee_scolaire
-            abo.date_expiration = _date_fin_grille(abo.grille, abo.date_debut)
+            abo.date_expiration = fin_abonnement(abo.date_debut, abo.periodicite, 'bus')
             # Itinéraire, arrêt et contact ne sont pas ressaisis : repris du dernier abonnement.
             for champ, valeur in infos_logistiques_bus(abo.eleve).items():
                 if not getattr(abo, champ):
@@ -453,7 +521,7 @@ def abonnement_edit(request, abo_id):
             if abo.grille_id:
                 abo.zone = abo.grille.zone
                 abo.annee_scolaire = abo.grille.annee_scolaire
-                abo.date_expiration = _date_fin_grille(abo.grille, abo.date_debut)
+            abo.date_expiration = fin_abonnement(abo.date_debut, abo.periodicite, 'bus')
             abo.save()
             form.enregistrer_remise(request.user)
             messages.success(request, "Abonnement mis à jour.")

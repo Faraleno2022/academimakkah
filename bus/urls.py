@@ -12,6 +12,7 @@ urlpatterns = [
     # Abonnements Bus
     path('', views.liste_abonnements, name='index'),
     path('liste/', views.liste_abonnements, name='liste'),
+    path('export/abonnements/<str:fmt>/', views.export_abonnements_bus, name='export_abonnements_bus'),
     path('export/breakdown/<str:kind>.csv', views.export_abonnements_breakdown_csv, name='export_breakdown_csv'),
     path('export/controle/<str:fmt>/', views.export_controle_chauffeur, name='export_controle'),
     path('grilles/', views.grilles_bus, name='grilles'),
@@ -49,6 +50,7 @@ urlpatterns = [
     path('cantine/<int:pk>/supprimer/', views_cantine.supprimer_abonnement_cantine, name='supprimer_abonnement_cantine'),
     path('cantine/<int:abo_id>/recu/pdf/', views_cantine.generer_recu_cantine_pdf, name='recu_cantine_pdf'),
     path('cantine/export/excel/', views_cantine.export_cantine_excel, name='export_cantine_excel'),
+    path('cantine/export/pdf/', views_cantine.export_cantine_pdf, name='export_cantine_pdf'),
     path('cantine/api/alertes/', views_cantine.alertes_cantine_json, name='alertes_cantine_json'),
     path('cantine/api/eleve/<int:eleve_id>/', views_cantine.get_eleve_info_json, name='get_eleve_info_json'),
     

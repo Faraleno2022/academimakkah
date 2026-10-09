@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from django import forms
 
@@ -311,13 +311,16 @@ class AbonnementCantineForm(forms.ModelForm):
     class Meta:
         model = AbonnementCantine
         fields = [
-            'classe', 'eleve', 'montant', 'periodicite', 'type_repas', 'date_debut', 'date_expiration',
+            'classe', 'eleve', 'montant_tarif', 'type_remise', 'valeur_remise', 'montant',
+            'periodicite', 'type_repas', 'date_debut',
             'statut', 'alerte_avant_jours', 'regime_alimentaire', 'allergies', 
             'contact_parent', 'reference_externe', 'observations'
         ]
         widgets = {
             'date_debut': forms.DateInput(attrs={'type': 'date', 'class': 'form-control'}),
-            'date_expiration': forms.DateInput(attrs={'type': 'date', 'class': 'form-control'}),
+            'montant_tarif': forms.NumberInput(attrs={'class': 'form-control', 'min': 0}),
+            'type_remise': forms.Select(attrs={'class': 'form-control'}),
+            'valeur_remise': forms.NumberInput(attrs={'class': 'form-control', 'min': 0, 'step': 'any'}),
             'montant': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Montant en GNF'}),
             'periodicite': forms.Select(attrs={'class': 'form-control'}),
             'type_repas': forms.Select(attrs={'class': 'form-control'}),
@@ -337,6 +340,10 @@ class AbonnementCantineForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.ecole_autorisee = ecole
         _configurer_selection_eleve(self, ecole)
+        self.fields['montant_tarif'].required = False
+        self.fields['valeur_remise'].required = False
+        if self.instance.pk and self.instance.montant_tarif is None:
+            self.initial['montant_tarif'] = self.instance.montant
 
     def clean(self):
         cleaned = super().clean()
@@ -348,7 +355,43 @@ class AbonnementCantineForm(forms.ModelForm):
             ecole_eleve_id = getattr(getattr(eleve, 'classe', None), 'ecole_id', None)
             if ecole_eleve_id != self.ecole_autorisee.pk:
                 self.add_error('eleve', "Cet élève n'appartient pas à votre école.")
+        tarif = cleaned.get('montant_tarif')
+        montant = cleaned.get('montant')
+        if tarif is None and montant is not None:
+            tarif = montant
+            cleaned['montant_tarif'] = tarif
+        if cleaned.get('valeur_remise') is None:
+            cleaned['valeur_remise'] = Decimal('0')
+        valeur = cleaned.get('valeur_remise') or Decimal('0')
+        type_remise = cleaned.get('type_remise')
+        if tarif is not None and tarif < 0:
+            self.add_error('montant_tarif', "Le tarif doit être positif ou nul.")
+        if montant is not None and montant < 0:
+            self.add_error('montant', "Le montant encaissé doit être positif ou nul.")
+        if valeur < 0:
+            self.add_error('valeur_remise', "La remise doit être positive ou nulle.")
+        if valeur > 0 and not type_remise:
+            self.add_error('type_remise', "Choisissez le type de remise.")
+        if type_remise and valeur <= 0:
+            self.add_error('valeur_remise', "Indiquez une remise supérieure à zéro.")
+        if type_remise == 'POURCENTAGE' and valeur > 100:
+            self.add_error('valeur_remise', "La remise ne peut pas dépasser 100 %.")
+        if tarif is not None and type_remise == 'MONTANT' and valeur > tarif:
+            self.add_error('valeur_remise', "La remise ne peut pas dépasser le tarif.")
+        if tarif is not None and montant is not None and not self.errors:
+            remise = (tarif * valeur / Decimal('100')).quantize(Decimal('1'), rounding=ROUND_HALF_UP) if type_remise == 'POURCENTAGE' else (valeur if type_remise == 'MONTANT' else Decimal('0'))
+            if montant > tarif - remise:
+                self.add_error('montant', "Le montant encaissé dépasse le tarif après remise.")
         return cleaned
+
+    def save(self, commit=True):
+        from .periodes import fin_abonnement
+        abonnement = super().save(commit=False)
+        abonnement.date_expiration = fin_abonnement(abonnement.date_debut, abonnement.periodicite, 'cantine')
+        if commit:
+            abonnement.save()
+            self.save_m2m()
+        return abonnement
 
 
 class RemiseBusForm(forms.ModelForm):
