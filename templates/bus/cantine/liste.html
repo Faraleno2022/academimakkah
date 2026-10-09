@@ -11,7 +11,7 @@
             <div class="d-flex justify-content-between align-items-center">
                 <div>
                     <h2><i class="fas fa-list text-success"></i> {{ titre_page }}</h2>
-                    <p class="text-muted">Liste complète des abonnements cantine</p>
+                    <p class="text-muted">{% if avec_remise %}Abonnements bénéficiant d'une remise{% else %}Liste complète des abonnements cantine{% endif %}</p>
                 </div>
                 <div>
                     <a href="{% url 'bus:tableau_bord_cantine' %}" class="btn btn-secondary">
@@ -23,11 +23,20 @@
                     <a href="{% url 'bus:historique_abonnements' %}?type=cantine" class="btn btn-outline-dark">
                         <i class="fas fa-id-card"></i> Abonnements par élève
                     </a>
+                    {% if avec_remise %}
+                    <a href="{% url 'bus:liste_abonnements_cantine' %}" class="btn btn-outline-info">
+                        <i class="fas fa-list"></i> Tous les abonnements
+                    </a>
+                    {% else %}
+                    <a href="{% url 'bus:liste_abonnements_cantine' %}?remise=oui" class="btn btn-outline-info">
+                        <i class="fas fa-percent"></i> Élèves avec remise
+                    </a>
+                    {% endif %}
                     <a href="{% url 'bus:export_cantine_pdf' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-outline-danger">
-                        <i class="fas fa-file-pdf"></i> Tous les abonnements PDF
+                        <i class="fas fa-file-pdf"></i> {% if avec_remise %}Remises PDF{% else %}Tous les abonnements PDF{% endif %}
                     </a>
                     <a href="{% url 'bus:export_cantine_excel' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-outline-success">
-                        <i class="fas fa-file-excel"></i> Tous les abonnements Excel
+                        <i class="fas fa-file-excel"></i> {% if avec_remise %}Remises Excel{% else %}Tous les abonnements Excel{% endif %}
                     </a>
                 </div>
             </div>
@@ -42,6 +51,7 @@
         <div class="card-body">
             <form method="get" class="row g-3">
                 {% if periode %}<input type="hidden" name="periode" value="{{ periode }}">{% endif %}
+                {% if avec_remise %}<input type="hidden" name="remise" value="oui">{% endif %}
                 <div class="col-md-4">
                     <label class="form-label">Recherche</label>
                     <input type="text" name="q" class="form-control" placeholder="Nom, prénom, matricule..." value="{{ q }}">
@@ -79,6 +89,13 @@
     <div class="alert alert-success py-2">
         <i class="fas fa-filter me-1"></i>Abonnements payés <strong>{{ periode_libelle|lower }}</strong> :
         {{ abonnements|length }} abonnement{{ abonnements|length|pluralize }} — <strong>{{ total_filtre|intcomma }} GNF</strong>
+    </div>
+    {% endif %}
+
+    {% if avec_remise %}
+    <div class="alert alert-info py-2">
+        <i class="fas fa-percent me-1"></i>{{ abonnements|length }} abonnement{{ abonnements|length|pluralize }} avec remise —
+        <strong>{{ total_remise|intcomma }} GNF</strong> de remises accordées.
     </div>
     {% endif %}
 
