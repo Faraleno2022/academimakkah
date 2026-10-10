@@ -16,8 +16,9 @@ from reportlab.lib.units import inch
 from eleves.models import Eleve, Ecole
 from paiements.models import Paiement, EcheancierPaiement, PaiementRemise, RemiseReduction
 from paiements.allocation import registration_kind_for_type
+from bus.models import AbonnementBus, AbonnementCantine
 from depenses.models import Depense
-from salaires.models import Enseignant, EtatSalaire
+from salaires.models import AvanceSalaire, Enseignant, EtatSalaire
 from utilisateurs.utils import user_is_admin, user_is_superadmin, user_school
 from django.contrib.staticfiles import finders
 from django.conf import settings
@@ -200,6 +201,8 @@ def soldes_actuels_par_classe(ecole, paiements, debut, fin):
 
 def collecter_donnees_periode(debut, fin, type_periode, user=None):
     """Collecte les données pour une période donnée"""
+    debut_date = debut.date() if isinstance(debut, datetime) else debut
+    fin_date = fin.date() if isinstance(fin, datetime) else fin
     donnees = {
         'debut': debut,
         'fin': fin,
@@ -266,9 +269,14 @@ def collecter_donnees_periode(debut, fin, type_periode, user=None):
                 'montant_total': Decimal('0')
             },
             'salaires': {
-                'etats_valides': 0,
+                'etats_payes': 0,
+                'montant_avances': Decimal('0'),
                 'montant_total': Decimal('0')
-            }
+            },
+            'totaux_services': {
+                'Bus': {'encaisse': Decimal('0')},
+                'Cantine': {'encaisse': Decimal('0')},
+            },
         }
         
         paiements_periode = Paiement.objects.filter(
@@ -294,17 +302,38 @@ def collecter_donnees_periode(debut, fin, type_periode, user=None):
         # Dépenses: pas de répartition par école (le modèle n'est pas rattaché à Ecole)
         # On laisse 0 au niveau de l'école et on affiche un total global dans le résumé
         
-        # États de salaire de la période
+        donnees_ecole['totaux_services']['Bus']['encaisse'] = (
+            AbonnementBus.objects.filter(
+                eleve__classe__ecole=ecole, date_debut__range=(debut_date, fin_date),
+            ).aggregate(total=Sum('montant'))['total'] or Decimal('0')
+        )
+        donnees_ecole['totaux_services']['Cantine']['encaisse'] = (
+            AbonnementCantine.objects.filter(
+                eleve__classe__ecole=ecole,
+                created_at__date__range=(debut_date, fin_date),
+            ).aggregate(total=Sum('montant'))['total'] or Decimal('0')
+        )
+
+        # Seules les sommes effectivement versées pendant la période sortent.
         etats_periode = EtatSalaire.objects.filter(
             enseignant__ecole=ecole,
-            date_validation__date__range=[debut, fin],
-            valide=True
+            date_paiement__date__range=(debut_date, fin_date),
+            paye=True,
         )
-        
-        donnees_ecole['salaires']['etats_valides'] = etats_periode.count()
-        donnees_ecole['salaires']['montant_total'] = etats_periode.aggregate(
+        avances_periode = AvanceSalaire.objects.filter(
+            enseignant__ecole=ecole, date_avance__range=(debut_date, fin_date),
+        )
+        net_paye = etats_periode.aggregate(
             total=Sum('salaire_net')
         )['total'] or Decimal('0')
+        montant_avances = avances_periode.aggregate(
+            total=Sum('montant')
+        )['total'] or Decimal('0')
+        donnees_ecole['salaires'].update({
+            'etats_payes': etats_periode.count(),
+            'montant_avances': montant_avances,
+            'montant_total': net_paye + montant_avances,
+        })
         
         donnees['ecoles'][ecole.id] = donnees_ecole
     
@@ -339,7 +368,7 @@ def generer_pdf_periode(donnees, debut, fin, type_periode, ecole=None):
         data = [
             ['Indicateur', 'Valeur'],
             ['Nouveaux élèves inscrits', str(donnees_ecole['nouveaux_eleves'])],
-            ['Nombre de paiements', str(donnees_ecole['paiements']['nombre'])],
+            ['Nombre de paiements scolaires', str(donnees_ecole['paiements']['nombre'])],
             ['Scolarité normale', f"{donnees_ecole['paiements'].get('total_du_concernes', Decimal('0')):,} GNF".replace(',', ' ')],
             ['Scolarité payé', f"{donnees_ecole['paiements']['scolarite']:,} GNF".replace(',', ' ')],
             ['Frais d\'inscription', f"{donnees_ecole['paiements']['frais_inscription']:,} GNF".replace(',', ' ')],
@@ -347,11 +376,14 @@ def generer_pdf_periode(donnees, debut, fin, type_periode, ecole=None):
             ['Solde actuel restant', f"{donnees_ecole['paiements'].get('reste_a_payer', Decimal('0')):,} GNF".replace(',', ' ')],
             ['Montant original (avant remises)', f"{donnees_ecole['paiements']['montant_original']:,} GNF".replace(',', ' ')],
             ['Total des remises accordées', f"{donnees_ecole['paiements']['total_remises']:,} GNF".replace(',', ' ')],
-            ['Montant net encaissé', f"{donnees_ecole['paiements']['montant_total']:,} GNF".replace(',', ' ')],
+            ['Paiements scolaires encaissés', f"{donnees_ecole['paiements']['montant_total']:,} GNF".replace(',', ' ')],
+            ['Bus encaissé', f"{donnees_ecole['totaux_services']['Bus']['encaisse']:,} GNF".replace(',', ' ')],
+            ['Cantine encaissée', f"{donnees_ecole['totaux_services']['Cantine']['encaisse']:,} GNF".replace(',', ' ')],
             ['Nombre de dépenses', str(donnees_ecole['depenses']['nombre'])],
             ['Montant total des dépenses', f"{donnees_ecole['depenses']['montant_total']:,} GNF".replace(',', ' ')],
-            ['États de salaire validés', str(donnees_ecole['salaires']['etats_valides'])],
-            ['Montant total des salaires', f"{donnees_ecole['salaires']['montant_total']:,} GNF".replace(',', ' ')],
+            ['Salaires payés', str(donnees_ecole['salaires']['etats_payes'])],
+            ['Avances versées', f"{donnees_ecole['salaires']['montant_avances']:,} GNF".replace(',', ' ')],
+            ['Salaires versés (avances comprises)', f"{donnees_ecole['salaires']['montant_total']:,} GNF".replace(',', ' ')],
         ]
         
         table = Table(data, colWidths=[3*inch, 2*inch])
@@ -440,7 +472,10 @@ def generer_pdf_periode(donnees, debut, fin, type_periode, ecole=None):
     story.append(Spacer(1, 16))
 
     # Résumé global
-    total_paiements = sum(d['paiements']['montant_total'] for d in donnees['ecoles'].values())
+    total_scolarite = sum(d['paiements']['montant_total'] for d in donnees['ecoles'].values())
+    total_bus = sum(d['totaux_services']['Bus']['encaisse'] for d in donnees['ecoles'].values())
+    total_cantine = sum(d['totaux_services']['Cantine']['encaisse'] for d in donnees['ecoles'].values())
+    total_paiements = total_scolarite + total_bus + total_cantine
     total_depenses = donnees['depenses_globales']['montant_total']
     total_salaires = sum(d['salaires']['montant_total'] for d in donnees['ecoles'].values())
     
@@ -448,7 +483,10 @@ def generer_pdf_periode(donnees, debut, fin, type_periode, ecole=None):
     story.append(Spacer(1, 10))
     
     resume_data = [
-        ['Total des paiements', f"{total_paiements:,} GNF".replace(',', ' ')],
+        ['Paiements scolaires encaissés', f"{total_scolarite:,} GNF".replace(',', ' ')],
+        ['Bus encaissé', f"{total_bus:,} GNF".replace(',', ' ')],
+        ['Cantine encaissée', f"{total_cantine:,} GNF".replace(',', ' ')],
+        ['Total encaissé', f"{total_paiements:,} GNF".replace(',', ' ')],
         ['Total des dépenses', f"{total_depenses:,} GNF".replace(',', ' ')],
         ['Total des salaires', f"{total_salaires:,} GNF".replace(',', ' ')],
         ['Solde net', f"{total_paiements - total_depenses - total_salaires:,} GNF".replace(',', ' ')],
