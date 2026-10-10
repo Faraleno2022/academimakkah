@@ -185,6 +185,46 @@ class GrilleEtPaiementBusTests(TestCase):
         self.assertIn('BUS-A-001', texte)
         self.assertNotIn('BUS-B-001', texte)
 
+    def test_periodicites_bus_dedoublent_la_situation_annuelle_et_filtrent_les_exports(self):
+        for montant in (50000, 75000):
+            AbonnementBus.objects.create(
+                eleve=self.eleve, grille=self.grille, periodicite='T1',
+                montant=montant, date_debut=date(2026, 10, 1),
+                date_expiration=date(2027, 1, 1), mode_paiement=self.mode,
+            )
+        AbonnementBus.objects.create(
+            eleve=self.eleve, grille=self.grille, periodicite='ANNUEL',
+            montant=100000, date_debut=date(2026, 10, 2),
+            date_expiration=date(2027, 6, 30), mode_paiement=self.mode,
+        )
+        AbonnementBus.objects.create(
+            eleve=self.autre_eleve, grille=self.autre_grille, periodicite='T1',
+            montant=900000, date_debut=date(2026, 10, 1),
+            date_expiration=date(2027, 1, 1), mode_paiement=self.mode,
+        )
+
+        url = reverse('bus:liste')
+        liste = self.client.get(url)
+        lignes = {row['code']: row for row in liste.context['periodicite_rows']}
+        self.assertEqual((lignes['T1']['nb'], lignes['ANNUEL']['nb']), (2, 1))
+        self.assertEqual(int(lignes['ANNUEL']['montant']), 100000)
+        self.assertEqual(
+            tuple(int(lignes['T1'][key]) for key in ('montant', 'du', 'paye', 'reste')),
+            (125000, 400000, 225000, 175000),
+        )
+        self.assertContains(liste, f'{url}?periodicite=T1#abonnements')
+        filtree = self.client.get(url, {'periodicite': 'T1'})
+        self.assertEqual(len(filtree.context['abonnements']), 2)
+        self.assertEqual(int(filtree.context['total_du_bus']), 400000)
+        self.assertEqual(int(filtree.context['total_paye_bus']), 225000)
+        self.assertEqual(int(filtree.context['total_reste_bus']), 175000)
+        self.assertContains(filtree, 'name="periodicite" value="T1"')
+
+        excel = self.client.get(reverse('bus:export_abonnements_bus', args=['excel']), {'periodicite': 'T1'})
+        ws = load_workbook(BytesIO(excel.content), data_only=True).active
+        self.assertEqual(ws.max_row, 6)
+        self.assertEqual({ws.cell(row, 3).value for row in (5, 6)}, {'BUS-A-001'})
+
     def test_formulaire_reporte_l_excedent_et_refuse_le_depassement_de_l_annee(self):
         AbonnementBus.objects.create(
             eleve=self.eleve,
