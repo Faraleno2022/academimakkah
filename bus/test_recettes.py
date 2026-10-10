@@ -149,6 +149,47 @@ class RecettesAbonnementsTests(TestCase):
         self.assertIn('REC-001', texte)
         self.assertNotIn('REC-900', texte)
 
+    def test_periodicites_cantine_totaux_remises_listes_et_export(self):
+        today = timezone.localdate()
+        trimestre = self._cantine(self.eleve, today, 150000)
+        trimestre.periodicite = 'TRIMESTRIEL'
+        trimestre.montant_tarif = 300000
+        trimestre.type_remise = 'POURCENTAGE'
+        trimestre.valeur_remise = 10
+        trimestre.save(update_fields=['periodicite', 'montant_tarif', 'type_remise', 'valeur_remise'])
+        second = self._cantine(self.eleve2, today, 200000)
+        second.periodicite = 'TRIMESTRIEL'
+        second.save(update_fields=['periodicite'])
+        annuel = self._cantine(self.eleve2, today, 450000)
+        annuel.periodicite = 'ANNUEL'
+        annuel.save(update_fields=['periodicite'])
+        autre = self._cantine(self.autre_eleve, today, 999000)
+        autre.periodicite = 'TRIMESTRIEL'
+        autre.save(update_fields=['periodicite'])
+
+        url = reverse('bus:liste_abonnements_cantine')
+        liste = self.client.get(url)
+        lignes = {row['code']: row for row in liste.context['periodicite_rows']}
+        self.assertEqual((lignes['TRIMESTRIEL']['nb'], lignes['ANNUEL']['nb']), (2, 1))
+        self.assertEqual(
+            tuple(int(lignes['ANNUEL'][key]) for key in ('brut', 'du', 'paye', 'reste')),
+            (450000, 450000, 450000, 0),
+        )
+        self.assertEqual(
+            tuple(int(lignes['TRIMESTRIEL'][key]) for key in ('brut', 'remise', 'du', 'paye', 'reste')),
+            (500000, 30000, 470000, 350000, 120000),
+        )
+        self.assertContains(liste, f'{url}?periodicite=TRIMESTRIEL#liste-abonnements')
+        filtree = self.client.get(url, {'periodicite': 'TRIMESTRIEL'})
+        self.assertEqual({a.pk for a in filtree.context['abonnements']}, {trimestre.pk, second.pk})
+        self.assertEqual(int(filtree.context['total_reste']), 120000)
+        self.assertContains(filtree, 'name="periodicite" value="TRIMESTRIEL"')
+
+        excel = self.client.get(reverse('bus:export_cantine_excel'), {'periodicite': 'TRIMESTRIEL'})
+        ws = load_workbook(BytesIO(excel.content), data_only=True).active
+        self.assertEqual(ws.max_row, 6)
+        self.assertEqual({ws.cell(row, 3).value for row in (5, 6)}, {'REC-001', 'REC-002'})
+
     def test_bouton_cantine_affiche_seulement_les_abonnements_avec_remise(self):
         today = timezone.localdate()
         abonnement = self._cantine(self.eleve, today, 180000)

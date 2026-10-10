@@ -23,6 +23,9 @@
                     <a href="{% url 'bus:historique_abonnements' %}?type=cantine" class="btn btn-outline-dark">
                         <i class="fas fa-id-card"></i> Abonnements par élève
                     </a>
+                    <a href="#periodicites" class="btn btn-outline-primary">
+                        <i class="fas fa-calendar-alt"></i> Périodicités cantine
+                    </a>
                     {% if avec_remise %}
                     <a href="{% url 'bus:liste_abonnements_cantine' %}" class="btn btn-outline-info">
                         <i class="fas fa-list"></i> Tous les abonnements
@@ -33,10 +36,10 @@
                     </a>
                     {% endif %}
                     <a href="{% url 'bus:export_cantine_pdf' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-outline-danger">
-                        <i class="fas fa-file-pdf"></i> {% if avec_remise %}Remises PDF{% else %}Tous les abonnements PDF{% endif %}
+                        <i class="fas fa-file-pdf"></i> {% if avec_remise %}Remises PDF{% elif periodicite %}Liste PDF{% else %}Tous les abonnements PDF{% endif %}
                     </a>
                     <a href="{% url 'bus:export_cantine_excel' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="btn btn-outline-success">
-                        <i class="fas fa-file-excel"></i> {% if avec_remise %}Remises Excel{% else %}Tous les abonnements Excel{% endif %}
+                        <i class="fas fa-file-excel"></i> {% if avec_remise %}Remises Excel{% elif periodicite %}Liste Excel{% else %}Tous les abonnements Excel{% endif %}
                     </a>
                 </div>
             </div>
@@ -46,11 +49,37 @@
     {% url 'bus:liste_abonnements_cantine' as url_liste %}
     {% include 'bus/_recettes_periodes.html' with titre_recettes="Recettes cantine encaissées" %}
 
+    <div class="card mb-4" id="periodicites">
+        <div class="card-header"><i class="fas fa-calendar-alt me-1"></i>Abonnements par périodicité</div>
+        <div class="card-body table-responsive">
+            <table class="table table-sm table-striped align-middle mb-0">
+                <thead><tr><th>Périodicité</th><th class="text-end">Abonnements</th><th class="text-end">Montant global</th><th class="text-end">Remises</th><th class="text-end">Dû net</th><th class="text-end">Déjà payé</th><th class="text-end">Reste à payer</th><th></th></tr></thead>
+                <tbody>
+                    {% for r in periodicite_rows %}
+                    <tr {% if periodicite == r.code %}class="table-primary"{% endif %}>
+                        <td>{{ r.label }}</td>
+                        <td class="text-end">{{ r.nb|intcomma }}</td>
+                        <td class="text-end">{{ r.brut|intcomma }} GNF</td>
+                        <td class="text-end">{{ r.remise|intcomma }} GNF</td>
+                        <td class="text-end">{{ r.du|intcomma }} GNF</td>
+                        <td class="text-end">{{ r.paye|intcomma }} GNF</td>
+                        <td class="text-end">{{ r.reste|intcomma }} GNF</td>
+                        <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{% url 'bus:liste_abonnements_cantine' %}?periodicite={{ r.code|urlencode }}#liste-abonnements">Voir la liste</a></td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="8" class="text-center text-muted">Aucun abonnement</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
     <!-- Filtres et Recherche -->
     <div class="card mb-4">
         <div class="card-body">
             <form method="get" class="row g-3">
                 {% if periode %}<input type="hidden" name="periode" value="{{ periode }}">{% endif %}
+                {% if periodicite %}<input type="hidden" name="periodicite" value="{{ periodicite }}">{% endif %}
                 {% if avec_remise %}<input type="hidden" name="remise" value="oui">{% endif %}
                 <div class="col-md-4">
                     <label class="form-label">Recherche</label>
@@ -99,6 +128,13 @@
     </div>
     {% endif %}
 
+    {% if periodicite %}
+    <div class="alert alert-primary py-2">
+        <i class="fas fa-filter me-1"></i>{{ abonnements|length }} abonnement{{ abonnements|length|pluralize }} « {{ periodicite_libelle }} ».
+        <a href="{% url 'bus:liste_abonnements_cantine' %}#periodicites" class="ms-2">Toutes les périodicités</a>
+    </div>
+    {% endif %}
+
     <div class="alert alert-light border d-flex flex-wrap gap-3">
         <span>Tarif : <strong>{{ total_tarif|intcomma }} GNF</strong></span>
         <span>Remises : <strong>{{ total_remise|intcomma }} GNF</strong></span>
@@ -108,7 +144,7 @@
     </div>
 
     <!-- Tableau -->
-    <div class="card">
+    <div class="card" id="liste-abonnements">
         <div class="card-body">
             <div class="table-responsive">
                 <table class="table table-striped table-hover">

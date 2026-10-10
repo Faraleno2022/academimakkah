@@ -121,6 +121,9 @@ def _filtrer_abonnements(request, qs):
                     if 0 <= delta <= (alerte_jours or 7):
                         ids_proches.append(a_id)
         qs = qs.filter(id__in=ids_proches)
+    periodicite = (request.GET.get('periodicite') or '').strip()
+    if periodicite in dict(AbonnementBus.Periodicite.choices):
+        qs = qs.filter(periodicite=periodicite)
     return qs, q, filtre, periode
 
 
@@ -156,6 +159,38 @@ def _abonnements_avec_situation(user, qs):
 def liste_abonnements(request):
     qs = _abonnements_visibles(request.user)
 
+    # Le récapitulatif couvre tous les abonnements visibles de l'école.
+    tous_abonnements, toutes_situations = _abonnements_avec_situation(request.user, qs)
+    libelles_periodicites = dict(AbonnementBus.Periodicite.choices)
+    resumes = {}
+    for abo in tous_abonnements:
+        code = abo.periodicite
+        resume = resumes.setdefault(code, {
+            'code': code, 'label': libelles_periodicites.get(code, code or 'Non renseignée'),
+            'nb': 0, 'montant': 0, 'du': 0, 'remise': 0, 'paye': 0, 'reste': 0,
+            'paires': set(),
+        })
+        resume['nb'] += 1
+        resume['montant'] += abo.montant or 0
+        paire = (abo.eleve_id, abo.grille_id)
+        if abo.grille_id and paire not in resume['paires']:
+            situation = toutes_situations[paire]
+            resume['du'] += situation['du']
+            resume['remise'] += situation['remise']
+            resume['paye'] += situation['paye']
+            resume['reste'] += situation['reste']
+            resume['paires'].add(paire)
+    periodicite_rows = list(resumes.values())
+    periodicite_rows.sort(key=lambda row: (
+        list(libelles_periodicites).index(row['code'])
+        if row['code'] in libelles_periodicites else len(libelles_periodicites), row['label'],
+    ))
+    for row in periodicite_rows:
+        del row['paires']
+    periodicite = (request.GET.get('periodicite') or '').strip()
+    if periodicite not in libelles_periodicites:
+        periodicite = ''
+
     # Recettes de l'école sur les périodes, indépendamment de la recherche
     recettes = recettes_par_periode(qs, CHAMP_DATE_BUS)
 
@@ -186,18 +221,6 @@ def liste_abonnements(request):
                 if 0 <= delta <= (int(alerte_jours) if alerte_jours else 7):
                     nb_expiration_proche += 1
 
-    # Periodicite breakdown
-    choices_map = dict(AbonnementBus.Periodicite.choices)
-    periodicite_rows = []
-    for row in qs.values('periodicite').annotate(nb=Count('id'), montant=Sum('montant')):
-        code = row['periodicite']
-        periodicite_rows.append({
-            'code': code,
-            'label': choices_map.get(code, code or '-'),
-            'nb': row['nb'] or 0,
-            'montant': row['montant'] or 0,
-        })
-
     # Top zones breakdown (limit 10)
     zone_rows = []
     for row in qs.values('zone').annotate(nb=Count('id'), montant=Sum('montant')).order_by('-nb')[:10]:
@@ -216,6 +239,8 @@ def liste_abonnements(request):
         'filtre': filtre,
         'periode': periode,
         'periode_libelle': LIBELLES_PERIODES.get(periode, ''),
+        'periodicite': periodicite,
+        'periodicite_libelle': libelles_periodicites.get(periodicite, ''),
         'recettes': recettes,
         # Dashboard context
         'total_count': total_count,

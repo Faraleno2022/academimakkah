@@ -26,6 +26,7 @@ from utilisateurs.permissions import can_delete_subscriptions
 from ecole_moderne.security_decorators import require_school_object
 from ecole_moderne.recherche import filtrer_termes
 from .export_listes import exporter_liste
+from .periodicites import resumes_periodicites_cantine
 
 
 def _abonnements_cantine_tries(qs, avec_remise=False):
@@ -119,9 +120,17 @@ def liste_abonnements_cantine(request):
     # IMPORTANT: Seul le superuser peut voir toutes les écoles
     if not user_is_superadmin(request.user):
         qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
-    
+
+    periodicite_rows = resumes_periodicites_cantine(qs.select_related(None).only(
+        'periodicite', 'montant', 'montant_tarif', 'type_remise', 'valeur_remise',
+    ))
+    periodicite = (request.GET.get('periodicite') or '').strip()
+    if periodicite not in dict(AbonnementCantine.Periodicite.choices):
+        periodicite = ''
     # Recettes de l'école sur les périodes, indépendamment des filtres
     recettes = recettes_par_periode(qs, CHAMP_DATE_CANTINE)
+    if periodicite:
+        qs = qs.filter(periodicite=periodicite)
     periode = request.GET.get('periode') or ''
     if periode not in LIBELLES_PERIODES:
         periode = ''
@@ -169,6 +178,9 @@ def liste_abonnements_cantine(request):
         'titre_page': 'Élèves abonnés à la cantine avec remise' if avec_remise else 'Liste des Abonnements Cantine',
         'abonnements': abonnements,
         'avec_remise': avec_remise,
+        'periodicite': periodicite,
+        'periodicite_libelle': dict(AbonnementCantine.Periodicite.choices).get(periodicite, ''),
+        'periodicite_rows': periodicite_rows,
         'q': q,
         'filtre': filtre,
         'type_repas': type_repas,
@@ -268,6 +280,9 @@ def _export_cantine(request, fmt):
     qs = AbonnementCantine.objects.select_related('eleve', 'eleve__classe', 'eleve__classe__ecole')
     if not user_is_superadmin(request.user):
         qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
+    periodicite = (request.GET.get('periodicite') or '').strip()
+    if periodicite in dict(AbonnementCantine.Periodicite.choices):
+        qs = qs.filter(periodicite=periodicite)
     periode = request.GET.get('periode') or ''
     if periode in LIBELLES_PERIODES:
         qs = filtrer_periode(qs, periode, CHAMP_DATE_CANTINE)
