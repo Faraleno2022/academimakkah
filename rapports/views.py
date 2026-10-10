@@ -25,7 +25,7 @@ from paiements.models import Paiement, PaiementRemise, EcheancierPaiement, TypeP
 from paiements.allocation import registration_kind_for_type
 from bus.models import AbonnementBus, AbonnementCantine, remises_par_eleve_grille
 from depenses.models import Depense
-from salaires.models import Enseignant, EtatSalaire
+from salaires.models import AvanceSalaire, Enseignant, EtatSalaire
 from utilisateurs.utils import user_is_admin, user_is_superadmin, user_school
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side, numbers
@@ -381,15 +381,17 @@ def _build_excel_from_donnees(donnees, titre):
 
     # Titre
     ws1.append([titre])
-    ws1.merge_cells(start_row=1, start_column=1, end_row=1, end_column=8)
     ws1['A1'].font = Font(bold=True, size=14)
     ws1['A1'].alignment = Alignment(horizontal='center')
 
     headers1 = [
-        'École', 'Nouveaux élèves', 'Nb paiements', 'Scolarité normale', "Scolarité payée",
-        "Frais d'inscription", "Frais de réinscription", 'Reste à payer', 'Montant original', 'Remises', 'Net encaissé',
-        'Nb dépenses', 'Total dépenses', 'États salaires', 'Total salaires'
+        'École', 'Nouveaux élèves', 'Nb paiements scolaires', 'Scolarité normale', "Scolarité payée",
+        "Frais d'inscription", "Frais de réinscription", 'Reste à payer', 'Montant original', 'Remises', 'Paiements scolaires encaissés',
+        'Nb dépenses', 'Total dépenses', 'Salaires payés',
+        'Salaires versés (avances comprises)',
+        'Bus encaissé', 'Cantine encaissée', 'Total encaissé',
     ]
+    ws1.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers1))
     ws1.append(headers1)
     for col in range(1, len(headers1) + 1):
         c = ws1.cell(row=2, column=col)
@@ -414,9 +416,13 @@ def _build_excel_from_donnees(donnees, titre):
             float(e['paiements'].get('montant_total', 0) or 0),
             e['depenses'].get('nombre', 0),
             float(donnees.get('depenses_globales', {}).get('montant_total', 0) or 0) if False else float(e['depenses'].get('montant_total', 0) or 0),
-            e['salaires'].get('etats_valides', 0),
+            e['salaires'].get('etats_payes', 0),
             float(e['salaires'].get('montant_total', 0) or 0),
         ]
+        total_bus = e.get('totaux_services', {}).get('Bus', {}).get('encaisse', 0) or 0
+        total_cantine = e.get('totaux_services', {}).get('Cantine', {}).get('encaisse', 0) or 0
+        vals.extend([float(total_bus), float(total_cantine),
+                     float(e['paiements'].get('montant_total', 0) or 0) + float(total_bus) + float(total_cantine)])
         ws1.append(vals)
         for col in range(1, len(headers1) + 1):
             cell = ws1.cell(row=row, column=col)
@@ -426,7 +432,7 @@ def _build_excel_from_donnees(donnees, titre):
         row += 1
 
     # Largeurs
-    widths = [26, 16, 14, 18, 18, 18, 18, 16, 18, 16, 16, 14, 16, 14, 16]
+    widths = [26, 16, 14, 18, 18, 18, 18, 16, 18, 16, 16, 14, 16, 14, 16, 18, 18, 18]
     for i, w in enumerate(widths, start=1):
         ws1.column_dimensions[get_column_letter(i)].width = w
 
@@ -602,7 +608,9 @@ def collecter_donnees_journalieres(date_rapport, user=None):
                 'montant_total': Decimal('0')
             },
             'salaires': {
-                'etats_valides': 0,
+                'etats_payes': 0,
+                'avances_versees': 0,
+                'montant_avances': Decimal('0'),
                 'montant_total': Decimal('0')
             }
         }
@@ -696,7 +704,7 @@ def collecter_donnees_journalieres(date_rapport, user=None):
             })
 
         for abo in AbonnementCantine.objects.filter(
-            eleve__classe__ecole=ecole, date_debut=date_rapport,
+            eleve__classe__ecole=ecole, created_at__date=date_rapport,
         ).select_related('eleve__classe'):
             lignes.append({
                 'service': 'Cantine', 'eleve': str(abo.eleve), 'matricule': abo.eleve.matricule or '',
@@ -731,21 +739,31 @@ def collecter_donnees_journalieres(date_rapport, user=None):
         # Dépenses: pas de répartition par école (le modèle n'est pas rattaché à Ecole)
         # On laisse 0 au niveau de l'école et on affiche un total global dans le résumé
 
-        # États de salaire validés
-        # Convertir la date en timezone aware pour éviter les warnings
+        # Flux de trésorerie : le net sort le jour du paiement, les avances
+        # sortent à leur propre date de versement, jamais à la validation.
         debut_jour = django_timezone.make_aware(datetime.combine(date_rapport, datetime.min.time()))
         fin_jour = django_timezone.make_aware(datetime.combine(date_rapport, datetime.max.time()))
         
         etats_jour = EtatSalaire.objects.filter(
             enseignant__ecole=ecole,
-            date_validation__range=[debut_jour, fin_jour],
-            valide=True
+            date_paiement__range=[debut_jour, fin_jour],
+            paye=True,
         )
-        
-        donnees_ecole['salaires']['etats_valides'] = etats_jour.count()
-        donnees_ecole['salaires']['montant_total'] = etats_jour.aggregate(
+        avances_jour = AvanceSalaire.objects.filter(
+            enseignant__ecole=ecole, date_avance=date_rapport,
+        )
+        net_paye = etats_jour.aggregate(
             total=Sum('salaire_net')
         )['total'] or Decimal('0')
+        montant_avances = avances_jour.aggregate(
+            total=Sum('montant')
+        )['total'] or Decimal('0')
+        donnees_ecole['salaires'].update({
+            'etats_payes': etats_jour.count(),
+            'avances_versees': avances_jour.count(),
+            'montant_avances': montant_avances,
+            'montant_total': net_paye + montant_avances,
+        })
         
         donnees['ecoles'][ecole.id] = donnees_ecole
     
@@ -830,7 +848,7 @@ def generer_pdf_journalier(donnees, date_rapport):
         data = [
             ['Indicateur', 'Valeur'],
             ['Nouveaux élèves inscrits', str(donnees_ecole['nouveaux_eleves'])],
-            ['Nombre de paiements', str(donnees_ecole['paiements']['nombre'])],
+            ['Nombre de paiements scolaires', str(donnees_ecole['paiements']['nombre'])],
             ["Scolarité normale", f"{donnees_ecole['paiements'].get('total_du_concernes', Decimal('0')):,} GNF".replace(',', ' ')],
             ['Scolarité payé', f"{donnees_ecole['paiements']['scolarite']:,} GNF".replace(',', ' ')],
             ["Frais d'inscription", f"{donnees_ecole['paiements']['frais_inscription']:,} GNF".replace(',', ' ')],
@@ -838,11 +856,12 @@ def generer_pdf_journalier(donnees, date_rapport):
             ["Solde actuel restant", f"{donnees_ecole['paiements'].get('reste_a_payer', Decimal('0')):,} GNF".replace(',', ' ')],
             ['Montant original (avant remises)', f"{donnees_ecole['paiements']['montant_original']:,} GNF".replace(',', ' ')],
             ['Total des remises accordées', f"{donnees_ecole['paiements']['total_remises']:,} GNF".replace(',', ' ')],
-            ['Montant net encaissé', f"{donnees_ecole['paiements']['montant_total']:,} GNF".replace(',', ' ')],
+            ['Paiements scolaires encaissés', f"{donnees_ecole['paiements']['montant_total']:,} GNF".replace(',', ' ')],
             ['Nombre de dépenses', str(donnees_ecole['depenses']['nombre'])],
             ['Montant total des dépenses', f"{donnees_ecole['depenses']['montant_total']:,} GNF".replace(',', ' ')],
-            ['États de salaire validés', str(donnees_ecole['salaires']['etats_valides'])],
-            ['Montant total des salaires', f"{donnees_ecole['salaires']['montant_total']:,} GNF".replace(',', ' ')],
+            ['Salaires payés', str(donnees_ecole['salaires']['etats_payes'])],
+            ['Avances versées', f"{donnees_ecole['salaires']['montant_avances']:,} GNF".replace(',', ' ')],
+            ['Salaires versés (avances comprises)', f"{donnees_ecole['salaires']['montant_total']:,} GNF".replace(',', ' ')],
         ]
         
         table = Table(data, colWidths=[3*inch, 2*inch])
@@ -968,7 +987,10 @@ def generer_pdf_journalier(donnees, date_rapport):
     story.append(Spacer(1, 16))
 
     # Résumé global
-    total_paiements = sum(d['paiements']['montant_total'] for d in donnees['ecoles'].values())
+    total_scolarite = sum(d['paiements']['montant_total'] for d in donnees['ecoles'].values())
+    total_bus = sum(d['totaux_services']['Bus']['encaisse'] for d in donnees['ecoles'].values())
+    total_cantine = sum(d['totaux_services']['Cantine']['encaisse'] for d in donnees['ecoles'].values())
+    total_paiements = total_scolarite + total_bus + total_cantine
     total_depenses = donnees['depenses_globales']['montant_total']
     total_paiements_original = sum(d['paiements']['montant_original'] for d in donnees['ecoles'].values())
     total_remises = sum(d['paiements']['total_remises'] for d in donnees['ecoles'].values())
@@ -977,9 +999,12 @@ def generer_pdf_journalier(donnees, date_rapport):
     # Résumé global
     resume_data = [
         ['Indicateur', 'Montant'],
-        ['Montant original des paiements', f"{total_paiements_original:,} GNF".replace(',', ' ')],
-        ['Total des remises accordées', f"{total_remises:,} GNF".replace(',', ' ')],
-        ['Montant net des paiements', f"{total_paiements:,} GNF".replace(',', ' ')],
+        ['Paiements scolaires avant remises', f"{total_paiements_original:,} GNF".replace(',', ' ')],
+        ['Remises sur paiements scolaires', f"{total_remises:,} GNF".replace(',', ' ')],
+        ['Paiements scolaires encaissés', f"{total_scolarite:,} GNF".replace(',', ' ')],
+        ['Bus encaissé', f"{total_bus:,} GNF".replace(',', ' ')],
+        ['Cantine encaissée', f"{total_cantine:,} GNF".replace(',', ' ')],
+        ['Total encaissé', f"{total_paiements:,} GNF".replace(',', ' ')],
         ['Total des dépenses', f"{total_depenses:,} GNF".replace(',', ' ')],
         ['Total des salaires', f"{total_salaires:,} GNF".replace(',', ' ')],
         ['Solde net', f"{total_paiements - total_depenses - total_salaires:,} GNF".replace(',', ' ')],
