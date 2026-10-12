@@ -380,6 +380,7 @@ class SessionSecurityMiddleware(MiddlewareMixin):
         path = request.path_info or ''
         if path.startswith(('/static/', '/media/')):
             return None
+        revision_poll = request.method == 'GET' and path == '/api/v1/sync/revision/'
         if self.is_session_expired(request):
             username = user.username
             logout(request)
@@ -400,7 +401,7 @@ class SessionSecurityMiddleware(MiddlewareMixin):
                 verified = 0 <= age <= getattr(settings, 'PHONE_VERIFY_TTL_SECONDS', 8 * 3600)
             except (ValueError, TypeError, OverflowError):
                 verified = False
-        if not verified:
+        if not verified and not revision_poll:
             request.session['phone_verified'] = False
             request.session['phone_verified_at'] = None
 
@@ -413,8 +414,11 @@ class SessionSecurityMiddleware(MiddlewareMixin):
             from django.urls import reverse
             from urllib.parse import urlencode
             return redirect(reverse('utilisateurs:verify_phone') + '?' + urlencode({'next': path}))
-        request.session['last_activity'] = now
-        request.session['user_ip'] = self.get_client_ip(request)
+        # Une lecture automatique des données ne constitue pas une activité
+        # humaine et ne doit pas écrire la session toutes les deux secondes.
+        if not revision_poll:
+            request.session['last_activity'] = now
+            request.session['user_ip'] = self.get_client_ip(request)
         return None
 
     def get_client_ip(self, request):

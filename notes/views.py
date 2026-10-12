@@ -5,6 +5,7 @@ from django.http import HttpResponse, JsonResponse
 from django.db.models import Q, Avg, Count, Sum
 from django.core.paginator import Paginator
 from django.core.cache import cache
+from synchronisation.realtime import revision_pour_requete
 from django.utils import timezone
 from django.template.loader import render_to_string
 from django.db import IntegrityError
@@ -286,7 +287,8 @@ def supprimer_classe(request, classe_id):
 def matieres_classe(request, classe_id):
     """Liste optimisée et gestion des matières d'une classe avec cache."""
     # Cache de la classe
-    classe_cache_key = f'classe_{classe_id}_{request.user.id}'
+    revision = revision_pour_requete(request)
+    classe_cache_key = f'classe_{classe_id}_{request.user.id}_{revision}'
     classe = cache.get(classe_cache_key)
     
     if classe is None:
@@ -297,7 +299,7 @@ def matieres_classe(request, classe_id):
         cache.set(classe_cache_key, classe, 300)  # 5 minutes
     
     # Cache des matières
-    matieres_cache_key = f'matieres_classe_{classe_id}'
+    matieres_cache_key = f'matieres_classe_{classe_id}_{revision}'
     matieres = cache.get(matieres_cache_key)
     
     if matieres is None:

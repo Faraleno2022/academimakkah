@@ -151,6 +151,27 @@ class SynchronisationResilienceTests(TestCase):
             self.assertEqual(session.return_value.post.call_args.kwargs['timeout'], (5, 120))
 
 
+    def test_identifiants_stables_apres_coupure_et_distincts_par_changement(self):
+        SyncChange.objects.filter(ecole=self.ecole).delete()
+        objet = uuid4()
+        changements = [self.refus(object_uuid=objet, statut=SyncChange.STATUT_PENDING) for _ in range(2)]
+        envois = []
+
+        def transporter(url, device_id, token, payload, timeout):
+            envois.append(payload['changes'])
+            if len(envois) == 1:
+                raise SyncTransportError('Réponse perdue')
+            return {'ok': True, 'accepted': [{'index': 0}, {'index': 1}], 'rejected': []}
+
+        with patch('synchronisation.client._post_json', side_effect=transporter):
+            with self.assertRaises(SyncTransportError):
+                push_pending('https://sync.invalid', 'dev', 'token', self.ecole)
+            self.assertEqual(SyncChange.objects.filter(pk__in=[c.pk for c in changements], statut=SyncChange.STATUT_PENDING).count(), 2)
+            self.assertEqual(push_pending('https://sync.invalid', 'dev', 'token', self.ecole), 2)
+        self.assertEqual([c['event_id'] for c in envois[0]], [c['event_id'] for c in envois[1]])
+        self.assertNotEqual(envois[0][0]['event_id'], envois[0][1]['event_id'])
+
+
 class SynchronisationTransactionsServeurTests(TransactionTestCase):
     """Transactions réelles pour reproduire un savepoint perdu côté serveur."""
 
@@ -227,3 +248,113 @@ class SynchronisationTransactionsServeurTests(TransactionTestCase):
         self.ecole.refresh_from_db()
         self.assertEqual(self.ecole.nom, 'ÉCOLE TRANSACTIONS')
         self.assertFalse(SyncChange.objects.exists())
+
+
+    def envoyer_evenement(self, nom, event_id):
+        return self.client.post(
+            reverse('synchronisation:push'),
+            data={'changes': [{
+                'model': 'eleves.Ecole', 'object_uuid': str(self.ecole.sync_uuid),
+                'operation': 'UPDATE', 'payload': {'nom': nom}, 'event_id': event_id,
+            }]}, content_type='application/json',
+            HTTP_X_SYNC_DEVICE=str(self.poste.device_id), HTTP_X_SYNC_TOKEN='test-token',
+        )
+
+    def test_acquittement_perdu_ne_rejoue_pas_une_ancienne_valeur(self):
+        event_id = str(uuid4())
+        premier = self.envoyer_evenement('Ancienne valeur', event_id)
+        self.assertEqual(premier.status_code, 200)
+        # Le serveur valide, mais la réponse n'arrive pas au poste. Une saisie
+        # web intervient avant le prochain essai du même changement.
+        Ecole.objects.filter(pk=self.ecole.pk).update(nom='SAISIE PLUS RÉCENTE')
+        second = self.envoyer_evenement('Ancienne valeur', event_id)
+        self.assertEqual(second.status_code, 200)
+        self.ecole.refresh_from_db()
+        self.assertEqual(self.ecole.nom, 'SAISIE PLUS RÉCENTE')
+        self.assertEqual(premier.json()['accepted'], second.json()['accepted'])
+        self.assertEqual(SyncChange.objects.filter(device=self.poste, statut=SyncChange.STATUT_APPLIED).count(), 1)
+
+
+    def test_un_nouvel_evenement_peut_reappliquer_la_meme_valeur(self):
+        self.envoyer_evenement('Valeur voulue', str(uuid4()))
+        Ecole.objects.filter(pk=self.ecole.pk).update(nom='AUTRE VALEUR')
+        second = self.envoyer_evenement('Valeur voulue', str(uuid4()))
+        self.assertEqual(second.json()['accepted_count'], 1)
+        self.ecole.refresh_from_db()
+        self.assertEqual(self.ecole.nom, 'VALEUR VOULUE')
+        self.assertEqual(SyncChange.objects.filter(device=self.poste, statut=SyncChange.STATUT_APPLIED).count(), 2)
+
+    def test_identifiant_reutilise_avec_autres_donnees_est_refuse(self):
+        event_id = str(uuid4())
+        self.envoyer_evenement('Première valeur', event_id)
+        second = self.envoyer_evenement('Valeur différente', event_id)
+        self.assertEqual(second.json()['accepted_count'], 0)
+        self.assertIn('données différentes', second.json()['rejected'][0]['error'])
+        self.ecole.refresh_from_db()
+        self.assertEqual(self.ecole.nom, 'PREMIÈRE VALEUR')
+
+    def test_evenement_refuse_peut_etre_repris_apres_une_panne(self):
+        event_id = str(uuid4())
+        with patch('synchronisation.views.apply_sync_change', side_effect=OperationalError('database is locked')):
+            premier = self.envoyer_evenement('Après reprise', event_id)
+        self.assertTrue(premier.json()['rejected'][0]['retryable'])
+        self.assertFalse(SyncChange.objects.filter(source_event_id=event_id).exists())
+        second = self.envoyer_evenement('Après reprise', event_id)
+        self.assertEqual(second.json()['accepted_count'], 1)
+        self.ecole.refresh_from_db()
+        self.assertEqual(self.ecole.nom, 'APRÈS REPRISE')
+
+    def test_un_identifiant_est_propre_a_son_poste(self):
+        event_id = str(uuid4())
+        self.envoyer_evenement('Poste initial', event_id)
+        autre = SyncDevice(ecole=self.ecole, nom='Autre poste')
+        autre.definir_token('test-token')
+        autre.save()
+        self.poste = autre
+        second = self.envoyer_evenement('Autre poste', event_id)
+        self.assertEqual(second.json()['accepted_count'], 1)
+        self.ecole.refresh_from_db()
+        self.assertEqual(self.ecole.nom, 'AUTRE POSTE')
+
+    def test_identifiant_invalide_est_refuse_sans_modifier_la_donnee(self):
+        response = self.envoyer_evenement('Invalide', 'pas-un-uuid')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['accepted_count'], 0)
+        self.assertEqual(response.json()['rejected_count'], 1)
+        self.ecole.refresh_from_db()
+        self.assertEqual(self.ecole.nom, 'ÉCOLE TRANSACTIONS')
+
+    def test_reemission_suppression_ne_supprime_pas_un_objet_recree(self):
+        from eleves.models import Classe
+        from synchronisation.context import mute_sync
+        event_id = str(uuid4())
+        with mute_sync():
+            classe = Classe.objects.create(ecole=self.ecole, nom='CE1', niveau='PRIMAIRE_1', annee_scolaire='2026-2027')
+        object_uuid = classe.sync_uuid
+        donnees = {'changes': [{
+            'model': 'eleves.Classe', 'object_uuid': str(object_uuid),
+            'operation': 'DELETE', 'payload': {}, 'event_id': event_id,
+        }]}
+        headers = {'HTTP_X_SYNC_DEVICE': str(self.poste.device_id), 'HTTP_X_SYNC_TOKEN': 'test-token'}
+        premier = self.client.post(reverse('synchronisation:push'), data=donnees, content_type='application/json', **headers)
+        self.assertEqual(premier.json()['accepted_count'], 1)
+        self.assertFalse(Classe.objects.filter(sync_uuid=object_uuid).exists())
+        with mute_sync():
+            Classe.objects.create(ecole=self.ecole, sync_uuid=object_uuid, nom='CE1 recréée', niveau='PRIMAIRE_1', annee_scolaire='2026-2027')
+        second = self.client.post(reverse('synchronisation:push'), data=donnees, content_type='application/json', **headers)
+        self.assertEqual(second.json()['accepted'], premier.json()['accepted'])
+        self.assertTrue(Classe.objects.filter(sync_uuid=object_uuid).exists())
+
+
+    def test_changement_decole_du_poste_ne_reutilise_pas_un_ancien_acquittement(self):
+        event_id = str(uuid4())
+        self.envoyer_evenement('École initiale', event_id)
+        autre_ecole = Ecole.objects.create(
+            nom='Autre école', adresse='Kindia', telephone='600000001', directeur='Direction',
+        )
+        SyncDevice.objects.filter(pk=self.poste.pk).update(ecole=autre_ecole)
+        response = self.envoyer_evenement('École initiale', event_id)
+        self.assertEqual(response.json()['accepted_count'], 0)
+        self.assertEqual(response.json()['rejected_count'], 1)
+        autre_ecole.refresh_from_db()
+        self.assertEqual(autre_ecole.nom, 'AUTRE ÉCOLE')

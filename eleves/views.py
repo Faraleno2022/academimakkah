@@ -1,4 +1,5 @@
 from django.shortcuts import render, get_object_or_404, redirect
+from synchronisation.realtime import revision_pour_requete
 from django.contrib import messages
 from django.contrib.auth import login as auth_login
 from django.contrib.auth.decorators import login_required
@@ -913,7 +914,7 @@ def detail_eleve(request, eleve_id):
 def ajouter_eleve(request):
     """Vue optimisée pour ajouter un nouvel élève avec enregistrement ultra-rapide"""
     # Cache de l'école utilisateur pour éviter les requêtes répétées
-    user_school_cache_key = f'user_school_{request.user.id}'
+    user_school_cache_key = f'user_school_{request.user.id}_{revision_pour_requete(request)}'
     user_school_obj = cache.get(user_school_cache_key)
     
     if user_school_obj is None and not user_is_admin(request.user):
@@ -932,7 +933,7 @@ def ajouter_eleve(request):
         # Cache des classes pour éviter les requêtes répétées (filtrées par année active)
         if not user_is_admin(request.user):
             annee_active = get_annee_active(request, user_school_obj)
-            classes_cache_key = f'classes_ecole_{user_school_obj.id}_{annee_active}'
+            classes_cache_key = f'classes_ecole_{user_school_obj.id}_{annee_active}_{revision_pour_requete(request)}'
             classes_qs = cache.get(classes_cache_key)
             if classes_qs is None:
                 qs = Classe.objects.filter(ecole=user_school_obj).select_related('ecole')
@@ -1057,7 +1058,7 @@ def ajouter_eleve(request):
         # Cache des classes pour le formulaire GET (filtrées par année active)
         if not user_is_admin(request.user) and user_school_obj:
             annee_active = get_annee_active(request, user_school_obj)
-            classes_cache_key = f'classes_ecole_{user_school_obj.id}_{annee_active}'
+            classes_cache_key = f'classes_ecole_{user_school_obj.id}_{annee_active}_{revision_pour_requete(request)}'
             classes_qs = cache.get(classes_cache_key)
             if classes_qs is None:
                 qs = Classe.objects.filter(ecole=user_school_obj).select_related('ecole')
@@ -1096,7 +1097,7 @@ def ajouter_eleve(request):
             eleve_ajoute = None
     
     # Statistiques optimisées avec cache
-    stats_cache_key = f'stats_eleves_{request.user.id}'
+    stats_cache_key = f'stats_eleves_{request.user.id}_{revision_pour_requete(request)}'
     stats = cache.get(stats_cache_key)
     
     if stats is None:
@@ -2862,7 +2863,7 @@ def ajax_rechercher_responsable_telephone(request):
     
     try:
         # Cache de l'école utilisateur
-        user_school_cache_key = f'user_school_{request.user.id}'
+        user_school_cache_key = f'user_school_{request.user.id}_{revision_pour_requete(request)}'
         user_school_obj = cache.get(user_school_cache_key)
         
         if user_school_obj is None and not user_is_admin(request.user):
@@ -2871,7 +2872,7 @@ def ajax_rechercher_responsable_telephone(request):
                 cache.set(user_school_cache_key, user_school_obj, 300)
         
         # Cache de la recherche
-        search_cache_key = f'search_resp_{request.user.id}_{telephone}'
+        search_cache_key = f'search_resp_{request.user.id}_{telephone}_{revision_pour_requete(request)}'
         responsables_list = cache.get(search_cache_key)
         
         if responsables_list is None:

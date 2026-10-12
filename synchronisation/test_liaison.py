@@ -17,7 +17,7 @@ from eleves.models import Ecole
 from paiements.tests.support import MIDDLEWARE_SANS_LICENCE
 from utilisateurs.models import Profil
 
-from .autosync import _pret, charger_config
+from .autosync import INTERVALLE_DEFAUT, _pret, charger_config
 from .liaison import LiaisonImpossible, lier_poste, script_connexion_poste, verifier_ecole_compatible
 from .models import SyncCheckpoint, SyncDevice
 
@@ -128,7 +128,7 @@ class LiaisonPosteTests(TestCase):
         chemin = os.path.join(self.dossier.name, 'sync_config.json')
         config = json.load(open(chemin, encoding='utf-8'))
         self.assertEqual(config['MYSCHOOL_SYNC_SERVER_URL'], SERVEUR)
-        self.assertEqual(config['MYSCHOOL_SYNC_INTERVAL'], '4')
+        self.assertEqual(config['MYSCHOOL_SYNC_INTERVAL'], str(INTERVALLE_DEFAUT))
         poste = SyncDevice.objects.get(device_id=config['MYSCHOOL_SYNC_DEVICE_ID'])
         self.assertTrue(poste.verifier_token(config['MYSCHOOL_SYNC_TOKEN']))
         lu = charger_config(self.dossier.name)

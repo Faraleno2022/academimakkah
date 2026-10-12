@@ -7,6 +7,7 @@ app_name = 'synchronisation'
 
 urlpatterns = [
     path('health/', views.health, name='health'),
+    path('revision/', views.revision, name='revision'),
     path('devices/setup/', views.device_setup, name='device_setup'),
     path('devices/register/', views.register_device, name='register_device'),
     path('devices/liaison/', views.liaison, name='liaison'),

@@ -177,6 +177,7 @@ MIDDLEWARE = [
     'utilisateurs.middleware.LectureSeuleMiddleware',
     # Rend la requête courante accessible aux signaux de la corbeille mémoire
     'administration.middleware.audit.AuditContextMiddleware',
+    'synchronisation.realtime.SyncPageRevisionMiddleware',
 ]
 
 # Ajouter middlewares d'optimisation images

@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
     {% load static %}
-    {% load static_versioned %}
+    {% load static_versioned sync_tags %}
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}G.S HKD{% endblock %}</title>
@@ -1292,5 +1292,13 @@
       });
     })();
     </script>
+    {% if user.is_authenticated %}
+    {% sync_page_revision as sync_revision %}
+    {% if sync_revision %}
+    <script src="{% static_versioned 'js/sync-refresh.js' %}" defer
+            data-sync-revision="{{ sync_revision }}"
+            data-sync-url="{% url 'synchronisation:revision' %}"></script>
+    {% endif %}
+    {% endif %}
 </body>
 </html>

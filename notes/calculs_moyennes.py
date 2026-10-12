@@ -682,9 +682,11 @@ def calculer_moyennes_classe_optimise(eleves, matieres, periode, system_type='me
 
     # ── Cache: évite de recalculer si déjà fait dans les 10 dernières minutes ──
     # La version est incrémentée à chaque sauvegarde de note pour invalider le cache
+    from synchronisation.realtime import revision_ecole
+    revision = revision_ecole(classe.ecole_id) if use_cache else ''
     _version = cache.get(f"moy_version_classe_{classe.id}", 0)
     selection = _signature_selection(eleves_ids, matieres_ids)
-    _cache_key = f"moy_classe_s{CALCUL_CACHE_SCHEMA_VERSION}_{classe.id}_{periode}_{system_type}_v{_version}_{selection}"
+    _cache_key = f"moy_classe_s{CALCUL_CACHE_SCHEMA_VERSION}_{classe.id}_{periode}_{system_type}_v{_version}_{selection}_{revision}"
     if use_cache:
         _cached = cache.get(_cache_key)
         if _cached is not None:
@@ -1021,6 +1023,8 @@ def calculer_classement_classe(eleves, matieres, periode, system_type='mensuel',
     matieres = list(matieres)
     cache_key = None
     if matieres:
+        from synchronisation.realtime import revision_ecole
+        revision = revision_ecole(matieres[0].classe.ecole_id) if use_cache else ''
         classe_id = matieres[0].classe_id
         version = cache.get(f"moy_version_classe_{classe_id}", 0)
         selection = _signature_selection(
@@ -1028,7 +1032,7 @@ def calculer_classement_classe(eleves, matieres, periode, system_type='mensuel',
         )
         cache_key = (
             f"classement_classe_s{CALCUL_CACHE_SCHEMA_VERSION}_{classe_id}"
-            f"_periode_{periode}_type_{system_type}_v{version}_{selection}"
+            f"_periode_{periode}_type_{system_type}_v{version}_{selection}_{revision}"
         )
 
     # Vérifier le cache

@@ -1,12 +1,13 @@
 """Synchronisation automatique en tache de fond (poste offline <-> serveur).
 
 Meme principe que le worker de sauvegarde (ecole_moderne/sauvegarde.py) :
-une seule tache demon, demarree une fois au lancement de l'application.
+deux tâches démon, démarrées une fois au lancement de l'application.
 
 Vitesse :
 - Push declenche immediatement des qu'un changement local est enregistre
   (evenement, pas d'attente de l'intervalle) grace a `notifier_changement()`,
   appele par les signaux post_save/pre_delete de `synchronisation.signals`.
+- Envoi et réception utilisent deux tâches indépendantes.
 - Pull effectue a intervalle court (configurable, quelques secondes) car le
   serveur ne peut pas pousser vers le poste (pas de canal push serveur->client).
 - Transport mutualise (connexions persistantes + gzip) via `synchronisation.client`.
@@ -24,17 +25,14 @@ logger = logging.getLogger(__name__)
 LOTS_PAR_DIRECTION = 1
 
 
-INTERVALLE_DEFAUT = 4  # secondes : le serveur ne peut pas pousser vers le poste,
-# donc la vitesse de reception depend entierement de ce delai. Verifie
-# supportable meme sous forte charge concurrente (mode WAL + API exclue du
-# rate limiting, cf. sessions precedentes) ; garde une marge au-dessus du
-# plancher pour ne pas coller au minimum absolu.
-INTERVALLE_MINIMUM = 3
+INTERVALLE_DEFAUT = 2  # secondes entre deux réceptions sans nouvelle donnée
+INTERVALLE_MINIMUM = 1
 DELAI_DEMARRAGE_DEFAUT = 15
 
 _verrou = threading.Lock()
 _worker_demarre = False
 _reveil = threading.Event()
+_reveil_reception = threading.Event()
 
 
 def notifier_changement():
@@ -81,8 +79,8 @@ def _pret(config):
     return bool(config['server_url'] and config['device_id'] and config['token'] and config['ecole_id'])
 
 
-def _cycle(base_dir):
-    """Un aller-retour push + pull. Retourne (config, nb_pousses, nb_recus)."""
+def _cycle(base_dir, direction=None):
+    """Une direction, ou les deux en mode manuel ; retourne les compteurs."""
     from eleves.models import Ecole
     from .client import pull_changes, push_pending, rattraper_modeles_ajoutes, reprogrammer_refus_temporaires
 
@@ -95,6 +93,8 @@ def _cycle(base_dir):
     # du serveur). On prend l'ecole unique deja presente, quel que soit son id.
     ecole = Ecole.objects.first()
     if not ecole:
+        if direction == 'push':
+            return config, 0, 0
         # Poste tout juste installe : rien en local encore, y compris
         # l'ecole elle-meme. pull_changes(ecole=None) l'amorce depuis le
         # premier lot recu du serveur avant de traiter le reste. Sans ce
@@ -106,30 +106,37 @@ def _cycle(base_dir):
         retirer_referentiels_inutilises()
         nb_recus = pull_changes(
             config['server_url'], config['device_id'], config['token'],
-            ecole=None, initial=True,
+            ecole=None, initial=True, max_cycles=LOTS_PAR_DIRECTION,
         )
         return config, 0, nb_recus
 
     from .models import SyncCheckpoint
     checkpoint = SyncCheckpoint.objects.filter(device_id=config['device_id']).first()
     if checkpoint is not None and not checkpoint.initial_complete:
-        nb_recus = pull_changes(config['server_url'], config['device_id'], config['token'], ecole)
+        if direction == 'push':
+            return config, 0, 0
+        nb_recus = pull_changes(config['server_url'], config['device_id'], config['token'], ecole, max_cycles=LOTS_PAR_DIRECTION)
         return config, 0, nb_recus
 
-    try:
-        _emettre_modeles_ajoutes()
-    except Exception:
-        logger.exception('[Sync] Mise en file du rattrapage impossible ; réception maintenue.')
     nb_pousses = nb_recus = 0
-    try:
-        reprogrammer_refus_temporaires(ecole)
-    except Exception:
-        logger.exception('[Sync] Reprise des refus temporaires impossible ; poursuite du cycle.')
-    for direction, fonction in (
+    if direction != 'pull':
+        try:
+            _emettre_modeles_ajoutes()
+        except Exception:
+            logger.exception('[Sync] Mise en file du rattrapage impossible ; réception maintenue.')
+        try:
+            reprogrammer_refus_temporaires(ecole)
+        except Exception:
+            logger.exception('[Sync] Reprise des refus temporaires impossible ; poursuite du cycle.')
+    for sens, fonction in (
         ('poste vers serveur', push_pending),
         ('serveur vers poste', pull_changes),
         ('rattrapage serveur vers poste', rattraper_modeles_ajoutes),
     ):
+        if direction == 'push' and fonction is not push_pending:
+            continue
+        if direction == 'pull' and fonction is push_pending:
+            continue
         debut = time.monotonic()
         try:
             nombre = fonction(
@@ -140,9 +147,9 @@ def _cycle(base_dir):
                 nb_pousses += nombre
             else:
                 nb_recus += nombre
-            logger.info('[Sync] %s : %s changement(s), %.2f s', direction, nombre, time.monotonic() - debut)
+            logger.info('[Sync] %s : %s changement(s), %.2f s', sens, nombre, time.monotonic() - debut)
         except Exception:
-            logger.exception('[Sync] Échec %s après %.2f s ; poursuite du cycle', direction, time.monotonic() - debut)
+            logger.exception('[Sync] Échec %s après %.2f s ; poursuite du cycle', sens, time.monotonic() - debut)
     return config, nb_pousses, nb_recus
 
 
@@ -163,23 +170,28 @@ def _emettre_modeles_ajoutes():
     _modeles_ajoutes_emis = True
 
 
-def _boucle(base_dir, delai_demarrage):
+def _boucle(base_dir, delai_demarrage, direction=None):
     time.sleep(max(0, delai_demarrage))
+    reveil = _reveil_reception if direction == 'pull' else _reveil
     while True:
+        # Effacer avant le travail : un enregistrement pendant le cycle garde
+        # son réveil, y compris s'il arrive juste après la sélection du lot.
+        reveil.clear()
         intervalle = INTERVALLE_DEFAUT
         try:
             close_old_connections()
-            config, nb_pousses, nb_recus = _cycle(base_dir)
+            config, nb_pousses, nb_recus = _cycle(base_dir, direction=direction)
             intervalle = config.get('interval', INTERVALLE_DEFAUT)
             if nb_pousses or nb_recus:
                 print(f"[Sync] {nb_pousses} envoye(s), {nb_recus} recu(s).")
+                # Vider les lots suivants sans attendre le prochain sondage.
+                intervalle = 0.1
         except Exception as exc:
             print(f"[Sync] Cycle ignore ({exc})")
         finally:
             close_old_connections()
 
-        _reveil.wait(timeout=intervalle)
-        _reveil.clear()
+        reveil.wait(timeout=intervalle)
 
 
 def demarrer_worker(base_dir, delai_demarrage=DELAI_DEMARRAGE_DEFAUT):
@@ -192,8 +204,9 @@ def demarrer_worker(base_dir, delai_demarrage=DELAI_DEMARRAGE_DEFAUT):
         if _worker_demarre:
             return False
         _worker_demarre = True
-    threading.Thread(
-        target=_boucle, args=(base_dir, delai_demarrage),
-        name='sync-auto', daemon=True,
-    ).start()
+    for direction in ('push', 'pull'):
+        threading.Thread(
+            target=_boucle, args=(base_dir, delai_demarrage, direction),
+            name=f'sync-auto-{direction}', daemon=True,
+        ).start()
     return True
