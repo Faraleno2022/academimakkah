@@ -19,6 +19,29 @@ from .recettes import CHAMP_DATE_BUS, CHAMP_DATE_CANTINE, debut_periode, recette
 
 @override_settings(MIDDLEWARE=MIDDLEWARE_SANS_LICENCE)
 class RecettesAbonnementsTests(TestCase):
+    def test_totaux_sql_cantine_respectent_arrondis_et_tarif_absent(self):
+        from decimal import Decimal
+        from .periodicites import totaux_cantine
+        objets = []
+        for tarif in (None, 0, 1, 101, 9999999999):
+            for type_remise, valeur in (
+                ('', '0'), ('POURCENTAGE', '0.01'), ('POURCENTAGE', '50'),
+                ('POURCENTAGE', '120'), ('MONTANT', '0.49'),
+                ('MONTANT', '0.50'), ('MONTANT', '200'),
+            ):
+                objets.append(AbonnementCantine(
+                    eleve=self.eleve, montant=40, montant_tarif=tarif,
+                    type_remise=type_remise, valeur_remise=Decimal(valeur),
+                    date_expiration=date(2027, 1, 1),
+                ))
+        AbonnementCantine.objects.bulk_create(objets)
+        totaux = totaux_cantine(AbonnementCantine.objects.all())
+        for cle, attribut in (
+            ('brut', 'montant_brut'), ('remise', 'montant_remise'),
+            ('du', 'montant_du'), ('paye', 'deja_paye'), ('reste', 'reste_a_payer'),
+        ):
+            self.assertEqual(totaux[cle], sum(getattr(objet, attribut) for objet in objets))
+
     def setUp(self):
         self.ecole = Ecole.objects.create(
             nom='École Recettes', adresse='Conakry', telephone='+224620000301', directeur='Direction',
@@ -198,6 +221,11 @@ class RecettesAbonnementsTests(TestCase):
         abonnement.valeur_remise = 10
         abonnement.save(update_fields=['montant_tarif', 'type_remise', 'valeur_remise'])
         self._cantine(self.eleve2, today, 100000)
+        remise_arrondie_a_zero = self._cantine(self.eleve2, today, 1)
+        remise_arrondie_a_zero.montant_tarif = 1
+        remise_arrondie_a_zero.type_remise = 'POURCENTAGE'
+        remise_arrondie_a_zero.valeur_remise = 1
+        remise_arrondie_a_zero.save(update_fields=['montant_tarif', 'type_remise', 'valeur_remise'])
         autre = self._cantine(self.autre_eleve, today, 450000)
         autre.montant_tarif = 500000
         autre.type_remise = 'POURCENTAGE'
@@ -222,6 +250,29 @@ class RecettesAbonnementsTests(TestCase):
         self.assertIn('REC-001', texte)
         self.assertNotIn('REC-002', texte)
         self.assertNotIn('REC-900', texte)
+
+    def test_liste_cantine_pagine_sans_reduire_les_soldes_ni_les_exports(self):
+        today = timezone.localdate()
+        AbonnementCantine.objects.bulk_create([
+            AbonnementCantine(
+                eleve=self.eleve, montant=40, montant_tarif=100,
+                type_remise='MONTANT', valeur_remise=10,
+                periodicite='MENSUEL', date_debut=today,
+                date_expiration=today + timedelta(days=30),
+            )
+            for _ in range(101)
+        ])
+        url = reverse('bus:liste_abonnements_cantine')
+        premiere = self.client.get(url, {'remise': 'oui'})
+        seconde = self.client.get(url, {'remise': 'oui', 'page': 2})
+        self.assertEqual((len(premiere.context['abonnements']), len(seconde.context['abonnements'])), (100, 1))
+        self.assertEqual(premiere.context['total_count'], 101)
+        self.assertEqual(int(premiere.context['total_filtre']), 4040)
+        self.assertEqual(int(premiere.context['total_remise']), 1010)
+        self.assertEqual(int(seconde.context['total_reste']), 5050)
+        self.assertContains(premiere, 'remise=oui&amp;page=2')
+        excel = self.client.get(reverse('bus:export_cantine_excel'), {'remise': 'oui'})
+        self.assertEqual(load_workbook(BytesIO(excel.content), data_only=True).active.max_row, 105)
 
     def test_details_cantine_reste_dans_la_cantine(self):
         today = timezone.localdate()

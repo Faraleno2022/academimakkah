@@ -225,6 +225,28 @@ class GrilleEtPaiementBusTests(TestCase):
         self.assertEqual(ws.max_row, 6)
         self.assertEqual({ws.cell(row, 3).value for row in (5, 6)}, {'BUS-A-001'})
 
+    def test_liste_bus_pagine_sans_reduire_les_totaux_ni_les_exports(self):
+        AbonnementBus.objects.bulk_create([
+            AbonnementBus(
+                eleve=self.eleve, grille=self.grille, periodicite='T1',
+                montant=1000, date_debut=date(2026, 10, 1),
+                date_expiration=date(2027, 1, 1), mode_paiement=self.mode,
+                numero_recu=f'BUS-PAGE-{i:03d}',
+            )
+            for i in range(101)
+        ])
+        url = reverse('bus:liste')
+        premiere = self.client.get(url, {'periodicite': 'T1'})
+        seconde = self.client.get(url, {'periodicite': 'T1', 'page': 2})
+        self.assertEqual((len(premiere.context['abonnements']), len(seconde.context['abonnements'])), (100, 1))
+        self.assertEqual(premiere.context['total_count'], 101)
+        self.assertEqual(int(premiere.context['total_montant']), 101000)
+        self.assertEqual(int(premiere.context['total_paye_bus']), 101000)
+        self.assertEqual(int(seconde.context['total_reste_bus']), 299000)
+        self.assertContains(premiere, 'periodicite=T1&amp;page=2')
+        excel = self.client.get(reverse('bus:export_abonnements_bus', args=['excel']), {'periodicite': 'T1'})
+        self.assertEqual(load_workbook(BytesIO(excel.content), data_only=True).active.max_row, 105)
+
     def test_formulaire_reporte_l_excedent_et_refuse_le_depassement_de_l_annee(self):
         AbonnementBus.objects.create(
             eleve=self.eleve,

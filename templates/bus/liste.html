@@ -278,6 +278,17 @@
   </tbody>
 </table>
 </div>
+{% if page_obj.has_other_pages %}
+<nav aria-label="Pages des abonnements bus" class="mt-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <span>{{ total_count }} abonnements — page {{ page_obj.number }} sur {{ page_obj.paginator.num_pages }}</span>
+    <div class="btn-group" role="group">
+      {% if page_obj.has_previous %}<a class="btn btn-outline-primary" href="?{% if page_query %}{{ page_query }}&amp;{% endif %}page={{ page_obj.previous_page_number }}#abonnements">Précédent</a>{% endif %}
+      {% if page_obj.has_next %}<a class="btn btn-outline-primary" href="?{% if page_query %}{{ page_query }}&amp;{% endif %}page={{ page_obj.next_page_number }}#abonnements">Suivant</a>{% endif %}
+    </div>
+  </div>
+</nav>
+{% endif %}
 {% endblock %}
 
 {% block extra_js %}

@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 import unicodedata
 
-from django.db.models import Count, DecimalField, F, Q, Sum, Value
+from django.db.models import Count, DecimalField, F, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -219,34 +219,30 @@ def _tuition_late_metrics(user, today):
     schedules = filter_by_user_school(
         schedules, user, "eleve__classe__ecole"
     )
-    schedule_rows = list(schedules)
     discounts_by_key = {}
-    if schedule_rows:
-        student_ids = {schedule.eleve_id for schedule in schedule_rows}
-        school_years = {schedule.annee_scolaire for schedule in schedule_rows}
-        discounts = (
-            PaiementRemise.objects
-            .filter(
-                paiement__statut="VALIDE",
-                paiement__eleve_id__in=student_ids,
-                paiement__annee_scolaire__in=school_years,
-            )
-            .select_related("paiement")
-            .order_by("paiement__date_paiement", "paiement_id", "id")
+    discounts = (
+        PaiementRemise.objects
+        .filter(
+            paiement__statut="VALIDE",
+            paiement__eleve_id__in=Subquery(schedules.order_by().values('eleve_id')),
+            paiement__annee_scolaire__in=Subquery(schedules.order_by().values('annee_scolaire')),
         )
-        discounts = filter_by_user_school(
-            discounts, user, "paiement__eleve__classe__ecole"
+        .select_related("paiement")
+        .order_by("paiement__date_paiement", "paiement_id", "id")
+    )
+    discounts = filter_by_user_school(
+        discounts, user, "paiement__eleve__classe__ecole"
+    )
+    for discount in discounts.iterator(chunk_size=2000):
+        key = (
+            discount.paiement.eleve_id,
+            discount.paiement.annee_scolaire,
         )
-        for discount in discounts:
-            key = (
-                discount.paiement.eleve_id,
-                discount.paiement.annee_scolaire,
-            )
-            discounts_by_key.setdefault(key, []).append(discount)
+        discounts_by_key.setdefault(key, []).append(discount)
 
     late_amount = Decimal("0")
     late_count = 0
-    for schedule in schedule_rows:
+    for schedule in schedules.iterator(chunk_size=2000):
         balances_after_cash = {
             key: max(
                 Decimal("0"),
@@ -302,9 +298,7 @@ def _subscription_metrics(models, user, today, starts):
     # génération du module.
     latest_by_student = {}
     for model in models:
-        qs = model.objects.select_related(
-            "eleve", "eleve__classe", "eleve__classe__ecole"
-        )
+        qs = model.objects.all()
         qs = filter_by_user_school(qs, user, "eleve__classe__ecole")
 
         aggregates = {}
@@ -330,33 +324,29 @@ def _subscription_metrics(models, user, today, starts):
             if hasattr(model, "date_expiration")
             else "date_fin"
         )
-        for subscription in qs.iterator():
-            end_date = getattr(subscription, end_field, None)
+        for eleve_id, end_date, start_date, subscription_id, statut, montant in qs.order_by().values_list(
+            'eleve_id', end_field, 'date_debut', 'pk', 'statut', 'montant',
+        ).iterator(chunk_size=2000):
             sort_key = (
                 end_date or date.min,
-                getattr(subscription, "date_debut", None) or date.min,
-                subscription.pk or 0,
+                start_date or date.min,
+                subscription_id or 0,
             )
-            current = latest_by_student.get(subscription.eleve_id)
+            current = latest_by_student.get(eleve_id)
             if current is None or sort_key > current[0]:
-                latest_by_student[subscription.eleve_id] = (
-                    sort_key, subscription, end_date
-                )
+                latest_by_student[eleve_id] = (sort_key, statut, montant, end_date)
 
     late_subscriptions = [
-        (subscription, end_date)
-        for _sort_key, subscription, end_date in latest_by_student.values()
-        if subscription.statut != "SUSPENDU"
+        montant
+        for _sort_key, statut, montant, end_date in latest_by_student.values()
+        if statut != "SUSPENDU"
         and (
             (end_date is not None and end_date < today)
-            or subscription.statut == "EXPIRE"
+            or statut == "EXPIRE"
         )
     ]
     late = {
-        "amount": sum(
-            int(subscription.montant or 0)
-            for subscription, _end_date in late_subscriptions
-        ),
+        "amount": sum(int(montant or 0) for montant in late_subscriptions),
         "count": len(late_subscriptions),
     }
     return values, late
