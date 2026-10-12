@@ -7,7 +7,7 @@ from uuid import UUID
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.db import transaction
+from django.db import DatabaseError, InterfaceError, OperationalError, transaction
 from django.db.models import Q
 from django.http import JsonResponse
 from django.shortcuts import render
@@ -307,6 +307,7 @@ def _register_device(request):
     }, status=201)
 
 
+@transaction.non_atomic_requests
 @csrf_exempt
 @require_POST
 def push(request):
@@ -326,46 +327,61 @@ def push(request):
     rejected = []
     valid_operations = {choice[0] for choice in SyncChange.OPERATION_CHOICES}
 
-    # Un seul commit pour tout le lot (au lieu d'un commit par changement) :
-    # nettement plus rapide sur de gros lots. Chaque changement reste isole
-    # dans son propre savepoint pour qu'un echec individuel n'annule pas le lot.
-    with transaction.atomic():
-        for index, change in enumerate(changes):
-            if not isinstance(change, dict):
-                rejected.append({'index': index, 'error': 'Changement invalide.'})
+    # Chaque donnée a sa transaction : les verrous sont libérés rapidement
+    # et un incident de base ne rend pas tout le lot inutilisable.
+    for index, change in enumerate(changes):
+        if not isinstance(change, dict):
+            rejected.append({'index': index, 'error': 'Changement invalide.'})
+            continue
+
+        raw_operation = change.get('operation')
+        raw_model = change.get('model') or change.get('model_label')
+        if not isinstance(raw_operation, str) or not isinstance(raw_model, str):
+            rejected.append({'index': index, 'error': 'Opération ou modèle invalide.'})
+            continue
+        operation = raw_operation.upper()
+        model_label = raw_model.strip()
+        payload = change.get('payload') or {}
+        raw_uuid = change.get('object_uuid')
+
+        if operation not in valid_operations:
+            rejected.append({'index': index, 'error': 'Operation invalide.'})
+            continue
+        if not model_label:
+            rejected.append({'index': index, 'error': 'Modele manquant.'})
+            continue
+        if not isinstance(payload, dict):
+            rejected.append({'index': index, 'error': 'Payload invalide.'})
+            continue
+
+        object_uuid = None
+        if raw_uuid:
+            try:
+                object_uuid = UUID(str(raw_uuid))
+            except ValueError:
+                rejected.append({'index': index, 'error': 'UUID objet invalide.'})
                 continue
 
-            raw_operation = change.get('operation')
-            raw_model = change.get('model') or change.get('model_label')
-            if not isinstance(raw_operation, str) or not isinstance(raw_model, str):
-                rejected.append({'index': index, 'error': 'Opération ou modèle invalide.'})
-                continue
-            operation = raw_operation.upper()
-            model_label = raw_model.strip()
-            payload = change.get('payload') or {}
-            raw_uuid = change.get('object_uuid')
+        if object_uuid and 'sync_uuid' not in payload:
+            payload = {**payload, 'sync_uuid': str(object_uuid)}
 
-            if operation not in valid_operations:
-                rejected.append({'index': index, 'error': 'Operation invalide.'})
-                continue
-            if not model_label:
-                rejected.append({'index': index, 'error': 'Modele manquant.'})
-                continue
-            if not isinstance(payload, dict):
-                rejected.append({'index': index, 'error': 'Payload invalide.'})
-                continue
-
-            object_uuid = None
-            if raw_uuid:
-                try:
-                    object_uuid = UUID(str(raw_uuid))
-                except ValueError:
-                    rejected.append({'index': index, 'error': 'UUID objet invalide.'})
-                    continue
-
-            if object_uuid and 'sync_uuid' not in payload:
-                payload = {**payload, 'sync_uuid': str(object_uuid)}
-
+        try:
+            with transaction.atomic():
+                sync_change = SyncChange.objects.create(
+                    ecole=device.ecole,
+                    device=device,
+                    model_label=model_label[:120],
+                    object_uuid=object_uuid,
+                    operation=operation,
+                    payload=payload,
+                )
+                apply_sync_change(sync_change)
+            accepted.append({'index': index, 'change_id': sync_change.id})
+        except Exception as exc:
+            # Le rollback de la donnée est terminé avant d'écrire son erreur.
+            # Un deadlock peut invalider tous les savepoints : une transaction
+            # englobant le lot empêcherait même l'enregistrement de ce refus.
+            logger.exception('[Sync] Échec du changement %s %s (index %s)', operation, model_label, index)
             try:
                 with transaction.atomic():
                     sync_change = SyncChange.objects.create(
@@ -375,21 +391,20 @@ def push(request):
                         object_uuid=object_uuid,
                         operation=operation,
                         payload=payload,
+                        statut=SyncChange.STATUT_FAILED,
+                        erreur=str(exc),
+                        date_application=timezone.now(),
                     )
-                    apply_sync_change(sync_change)
-                accepted.append({'index': index, 'change_id': sync_change.id})
-            except Exception as exc:
-                sync_change = SyncChange.objects.create(
-                    ecole=device.ecole,
-                    device=device,
-                    model_label=model_label[:120],
-                    object_uuid=object_uuid,
-                    operation=operation,
-                    payload=payload,
-                    statut=SyncChange.STATUT_FAILED,
-                    erreur=str(exc),
-                )
-                rejected.append({'index': index, 'change_id': sync_change.id, 'error': str(exc)})
+            except DatabaseError:
+                logger.exception('[Sync] Base indisponible lors de l’enregistrement du refus.')
+                # Sans acquittement fiable, le poste conserve son lot en attente.
+                return JsonResponse({
+                    'ok': False, 'error': 'Base de synchronisation indisponible. Réessayez plus tard.',
+                }, status=503)
+            rejected.append({
+                'index': index, 'change_id': sync_change.id, 'error': str(exc),
+                'retryable': isinstance(exc, (OperationalError, InterfaceError, transaction.TransactionManagementError)),
+            })
 
     return JsonResponse({
         'ok': True,

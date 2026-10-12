@@ -12,11 +12,16 @@ Vitesse :
 - Transport mutualise (connexions persistantes + gzip) via `synchronisation.client`.
 """
 import json
+import logging
 import os
 import threading
 import time
 
 from django.conf import settings
+from django.db import close_old_connections
+
+logger = logging.getLogger(__name__)
+LOTS_PAR_DIRECTION = 1
 
 
 INTERVALLE_DEFAUT = 4  # secondes : le serveur ne peut pas pousser vers le poste,
@@ -79,7 +84,7 @@ def _pret(config):
 def _cycle(base_dir):
     """Un aller-retour push + pull. Retourne (config, nb_pousses, nb_recus)."""
     from eleves.models import Ecole
-    from .client import pull_changes, push_pending, rattraper_modeles_ajoutes
+    from .client import pull_changes, push_pending, rattraper_modeles_ajoutes, reprogrammer_refus_temporaires
 
     config = charger_config(base_dir)
     if not _pret(config):
@@ -111,10 +116,33 @@ def _cycle(base_dir):
         nb_recus = pull_changes(config['server_url'], config['device_id'], config['token'], ecole)
         return config, 0, nb_recus
 
-    _emettre_modeles_ajoutes()
-    nb_pousses = push_pending(config['server_url'], config['device_id'], config['token'], ecole)
-    nb_recus = pull_changes(config['server_url'], config['device_id'], config['token'], ecole)
-    nb_recus += rattraper_modeles_ajoutes(config['server_url'], config['device_id'], config['token'], ecole)
+    try:
+        _emettre_modeles_ajoutes()
+    except Exception:
+        logger.exception('[Sync] Mise en file du rattrapage impossible ; réception maintenue.')
+    nb_pousses = nb_recus = 0
+    try:
+        reprogrammer_refus_temporaires(ecole)
+    except Exception:
+        logger.exception('[Sync] Reprise des refus temporaires impossible ; poursuite du cycle.')
+    for direction, fonction in (
+        ('poste vers serveur', push_pending),
+        ('serveur vers poste', pull_changes),
+        ('rattrapage serveur vers poste', rattraper_modeles_ajoutes),
+    ):
+        debut = time.monotonic()
+        try:
+            nombre = fonction(
+                config['server_url'], config['device_id'], config['token'], ecole,
+                max_cycles=LOTS_PAR_DIRECTION,
+            )
+            if fonction is push_pending:
+                nb_pousses += nombre
+            else:
+                nb_recus += nombre
+            logger.info('[Sync] %s : %s changement(s), %.2f s', direction, nombre, time.monotonic() - debut)
+        except Exception:
+            logger.exception('[Sync] Échec %s après %.2f s ; poursuite du cycle', direction, time.monotonic() - debut)
     return config, nb_pousses, nb_recus
 
 
@@ -140,12 +168,15 @@ def _boucle(base_dir, delai_demarrage):
     while True:
         intervalle = INTERVALLE_DEFAUT
         try:
+            close_old_connections()
             config, nb_pousses, nb_recus = _cycle(base_dir)
             intervalle = config.get('interval', INTERVALLE_DEFAUT)
             if nb_pousses or nb_recus:
                 print(f"[Sync] {nb_pousses} envoye(s), {nb_recus} recu(s).")
         except Exception as exc:
             print(f"[Sync] Cycle ignore ({exc})")
+        finally:
+            close_old_connections()
 
         _reveil.wait(timeout=intervalle)
         _reveil.clear()

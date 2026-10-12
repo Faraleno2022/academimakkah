@@ -9,6 +9,7 @@ import gzip
 import json
 import logging
 import threading
+from datetime import timedelta
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -24,6 +25,7 @@ PUSH_TIMEOUT = 120
 PULL_PAGE_SIZE = 500
 MAX_CYCLES_PAR_APPEL = 25  # garde-fou anti-boucle-infinie
 GZIP_SEUIL_OCTETS = 512
+CONNECT_TIMEOUT = 5
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +71,7 @@ def _post_json(url, device_id, token, payload, timeout=25):
     if compress:
         body = gzip.compress(body, compresslevel=6)
     try:
-        response = session.post(url, data=body, headers=_headers(device_id, token, compress), timeout=timeout)
+        response = session.post(url, data=body, headers=_headers(device_id, token, compress), timeout=(CONNECT_TIMEOUT, timeout))
     except requests.RequestException as exc:
         raise SyncTransportError(f"Serveur de synchronisation inaccessible: {exc}") from exc
     return _parse_response(response)
@@ -78,7 +80,7 @@ def _post_json(url, device_id, token, payload, timeout=25):
 def _get_json(url, device_id, token, params=None, timeout=25):
     session = _get_session()
     try:
-        response = session.get(url, params=params, headers=_headers(device_id, token, gzip_body=None), timeout=timeout)
+        response = session.get(url, params=params, headers=_headers(device_id, token, gzip_body=None), timeout=(CONNECT_TIMEOUT, timeout))
     except requests.RequestException as exc:
         raise SyncTransportError(f"Serveur de synchronisation inaccessible: {exc}") from exc
     return _parse_response(response)
@@ -89,16 +91,18 @@ def _parse_response(response):
         data = response.json()
     except ValueError as exc:
         raise SyncTransportError(f"Reponse serveur invalide (HTTP {response.status_code}).") from exc
+    if not isinstance(data, dict):
+        raise SyncTransportError(f"Reponse serveur invalide (HTTP {response.status_code}).")
     if response.status_code >= 400:
         raise SyncTransportError(data.get('error') or f"Erreur serveur {response.status_code}")
     return data
 
 
-def push_pending(server_url, device_id, token, ecole, batch_size=PUSH_BATCH_SIZE):
+def push_pending(server_url, device_id, token, ecole, batch_size=PUSH_BATCH_SIZE, max_cycles=None):
     """Envoie tous les changements PENDING de l'ecole, par lots, jusqu'a vidage."""
     total = 0
     dernier_id = 0
-    for _ in range(MAX_CYCLES_PAR_APPEL):
+    for _ in range(MAX_CYCLES_PAR_APPEL if max_cycles is None else max_cycles):
         # `id__gt` fait avancer la fenetre meme si le serveur n'accepte rien :
         # sans lui, un lot entierement refuse est reselectionne a l'identique
         # au cycle suivant et les changements qui le suivent ne partent jamais.
@@ -130,16 +134,31 @@ def push_pending(server_url, device_id, token, ecole, batch_size=PUSH_BATCH_SIZE
         if not response.get('ok'):
             raise SyncTransportError(response.get('error') or 'Push refuse.')
 
-        accepted_indexes = {item['index'] for item in response.get('accepted', [])}
+        # Une réponse partielle ne prouve pas que le serveur a traité le lot.
+        # Ne marquer aucune ligne tant que chaque index n'est pas acquitté une fois.
+        accepted = response.get('accepted', [])
+        rejected = response.get('rejected', [])
+        if not isinstance(accepted, list) or not isinstance(rejected, list):
+            raise SyncTransportError('Accusé de réception du lot invalide.')
+        indexes = []
+        for item in accepted + rejected:
+            index = item.get('index') if isinstance(item, dict) else None
+            if type(index) is not int or not 0 <= index < len(pending):
+                raise SyncTransportError('Index invalide dans l’accusé de réception.')
+            indexes.append(index)
+        if len(indexes) != len(pending) or len(set(indexes)) != len(pending):
+            raise SyncTransportError('Accusé de réception incomplet ou dupliqué ; lot conservé.')
+        accepted_indexes = {item['index'] for item in accepted}
         motifs = {
-            item['index']: (item.get('error') or 'Refus sans motif.')
-            for item in response.get('rejected', []) if isinstance(item, dict) and 'index' in item
+            item['index']: (('[TEMPORAIRE] ' if item.get('retryable') is True else '')
+                            + str(item.get('error') or 'Refus sans motif.'))
+            for item in rejected
         }
         from django.utils import timezone
         now = timezone.now()
         applied_ids = [c.id for i, c in enumerate(pending) if i in accepted_indexes]
         if applied_ids:
-            SyncChange.objects.filter(id__in=applied_ids).update(statut=SyncChange.STATUT_APPLIED, date_application=now)
+            SyncChange.objects.filter(id__in=applied_ids).update(statut=SyncChange.STATUT_APPLIED, date_application=now, erreur='')
             total += len(applied_ids)
 
         # Un changement refuse sort de la file d'attente avec son motif : laisse
@@ -169,6 +188,37 @@ def push_pending(server_url, device_id, token, ecole, batch_size=PUSH_BATCH_SIZE
 # applique : il est reessaye a chaque cycle et ne doit jamais etre renvoye.
 MARQUEUR_RECU = '_recu_du_serveur'
 REESSAIS_PAR_CYCLE = 200
+
+
+def reprogrammer_refus_temporaires(ecole, limite=100):
+    """Reprend les dépendances absentes et verrous après au moins une minute.
+
+    Les refus de validation restent visibles. Un ancien changement ne doit
+    jamais être rejoué si une version plus récente de cet objet existe.
+    """
+    from django.db.models import Exists, OuterRef, Q
+    from django.utils import timezone
+    plus_recents = SyncChange.objects.filter(
+        ecole=ecole, model_label=OuterRef('model_label'),
+        object_uuid=OuterRef('object_uuid'), id__gt=OuterRef('id'),
+    )
+    candidats = SyncChange.objects.filter(
+        ecole=ecole, statut=SyncChange.STATUT_FAILED,
+    ).exclude(payload__has_key=MARQUEUR_RECU).filter(
+        Q(date_application__lte=timezone.now() - timedelta(minutes=1))
+        | Q(date_application__isnull=True),
+    ).filter(
+        Q(erreur__startswith='Relation introuvable pour ')
+        | Q(erreur__startswith='[TEMPORAIRE] ')
+        | Q(erreur__icontains='database is locked')
+        | Q(erreur__icontains='database table is locked'),
+    ).filter(object_uuid__isnull=False).annotate(
+        remplace=Exists(plus_recents),
+    ).filter(remplace=False).order_by('date_application', 'id')
+    ids = list(candidats.values_list('pk', flat=True)[:limite])
+    return SyncChange.objects.filter(pk__in=ids, statut=SyncChange.STATUT_FAILED).update(
+        statut=SyncChange.STATUT_PENDING,
+    )
 
 
 def rejouer_refuses(ecole):
@@ -206,7 +256,7 @@ def reessayer_recus_en_echec(ecole, apply_change=None, limite=REESSAIS_PAR_CYCLE
     en_echec = list(
         SyncChange.objects.filter(
             ecole=ecole, statut=SyncChange.STATUT_FAILED, payload__has_key=MARQUEUR_RECU,
-        ).order_by('id')[:limite]
+        ).order_by('date_application', 'id')[:limite]
     )
     for change in en_echec:
         if change.object_uuid and SyncChange.objects.filter(
@@ -264,7 +314,7 @@ def _appliquer_lot(items, ecole, apply_change):
     return applied
 
 
-def rattraper_modeles_ajoutes(server_url, device_id, token, ecole, apply_change=None):
+def rattraper_modeles_ajoutes(server_url, device_id, token, ecole, apply_change=None, max_cycles=None):
     """Poste mis à jour : récupère l'historique des modèles ajoutés au registre.
 
     Avant la mise à jour, le serveur ne lui envoyait pas ces modèles et son
@@ -282,7 +332,7 @@ def rattraper_modeles_ajoutes(server_url, device_id, token, ecole, apply_change=
         return 0
     modeles = modeles_inconnus(checkpoint.registre)
     total = 0
-    for _ in range(MAX_CYCLES_PAR_APPEL):
+    for _ in range(MAX_CYCLES_PAR_APPEL if max_cycles is None else max_cycles):
         response = _get_json(f'{server_url}/api/v1/sync/pull/', device_id, token, params={
             'since_id': checkpoint.rattrapage_id, 'registre': REGISTRE_VERSION,
             'modeles': ','.join(modeles),
@@ -304,7 +354,7 @@ def rattraper_modeles_ajoutes(server_url, device_id, token, ecole, apply_change=
     return total
 
 
-def pull_changes(server_url, device_id, token, ecole, since_id=None, initial=False, apply_change=None):
+def pull_changes(server_url, device_id, token, ecole, since_id=None, initial=False, apply_change=None, max_cycles=None):
     """Import paginé et reprenable.
 
     Un changement qui ne s'applique pas est mis de côté pour un nouvel essai au
@@ -326,7 +376,7 @@ def pull_changes(server_url, device_id, token, ecole, since_id=None, initial=Fal
     if since_id is not None:
         checkpoint.last_change_id = int(since_id)
     total = 0
-    for _ in range(MAX_CYCLES_PAR_APPEL):
+    for _ in range(MAX_CYCLES_PAR_APPEL if max_cycles is None else max_cycles):
         bootstrapping = not checkpoint.initial_complete
         params = {'since_id': checkpoint.last_change_id, 'registre': REGISTRE_VERSION}
         if bootstrapping:
