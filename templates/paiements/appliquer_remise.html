@@ -127,13 +127,28 @@
                             <div class="col-md-8">
                                 <div class="card mb-3">
                                     <div class="card-header">
-                                        <h6 class="mb-0">Tranches concernées</h6>
+                                        <h6 class="mb-0">Postes concernés par la remise</h6>
                                     </div>
                                     <div class="card-body">
                                         <div class="alert alert-info py-2 mb-3">
                                             <i class="fas fa-info-circle me-1"></i>
-                                            La remise s'applique uniquement à la scolarité : jamais sur les frais d'inscription ni de réinscription.
+                                            {% if form.remise_inscription_autorisee %}
+                                            Cette école autorise les remises sur l'inscription et la réinscription. Cochez les frais concernés pour les inclure dans le calcul.
+                                            {% else %}
+                                            Les frais d'inscription et de réinscription sont exclus des remises pour cette école.
+                                            <a href="{% url 'eleves:configurer_ecole' ecole_remise.pk %}#remises-admission">Configurer les règles de l'école</a>
+                                            {% endif %}
                                         </div>
+                                        {% if form.remise_inscription_autorisee %}
+                                        <div class="tranche-card">
+                                            <div class="form-check">
+                                                {{ form.inclure_inscription }}
+                                                <label class="form-check-label" for="{{ form.inclure_inscription.id_for_label }}"><strong>{{ inscription_info.libelle }}</strong></label>
+                                            </div>
+                                            <small class="text-muted">Montant des frais : <strong>{{ inscription_info.due|floatformat:0 }} GNF</strong></small><br>
+                                            <small class="text-muted">Sur ce paiement : <strong>{{ inscription_info.sur_ce_paiement|floatformat:0 }} GNF</strong></small>
+                                        </div>
+                                        {% endif %}
                                         {% for t in tranches_info %}
                                         <div class="tranche-card">
                                             <div class="form-check">
@@ -161,7 +176,7 @@
                                         <div class="mt-2">
                                             <small class="text-muted d-block mb-1">Sélection rapide :</small>
                                             <button type="button" class="btn btn-sm btn-outline-secondary me-1" id="btnTranchesToutes">Toutes</button>
-                                            <button type="button" class="btn btn-sm btn-outline-secondary me-1" id="btnTranchesCePaiement">Tranches de ce paiement</button>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary me-1" id="btnTranchesCePaiement">Postes de ce paiement</button>
                                             <button type="button" class="btn btn-sm btn-outline-secondary" id="btnTranchesAucune">Aucune</button>
                                         </div>
                                     </div>
@@ -177,14 +192,14 @@
                                             <label class="form-check-label" for="base_paiement_echeance">
                                                 <strong>Paiement à l'échéance</strong>
                                             </label>
-                                            <small class="text-muted d-block">Le calcul porte sur la part de ce reçu affectée aux tranches cochées (hors inscription).</small>
+                                            <small class="text-muted d-block">Le calcul porte sur la part de ce reçu affectée aux postes cochés.</small>
                                         </div>
                                         <div class="form-check">
                                             <input class="form-check-input base-calcul-radio" type="radio" name="base_calcul" id="base_tranches_dues" value="tranches_dues" {% if form.base_calcul.value == 'tranches_dues' %}checked{% endif %}>
                                             <label class="form-check-label" for="base_tranches_dues">
-                                                <strong>Montant des tranches sélectionnées</strong>
+                                                <strong>Montant des postes sélectionnés</strong>
                                             </label>
-                                            <small class="text-muted d-block">Le calcul porte sur ce qui est dû pour ces tranches.</small>
+                                            <small class="text-muted d-block">Le calcul porte sur le tarif des postes cochés.</small>
                                         </div>
                                         <div class="mt-2">
                                             <small class="text-muted">Base retenue : <strong id="baseRetenueLabel">0 GNF</strong></small>
@@ -216,12 +231,12 @@
                                             </label>
                                             {{ form.pourcentage_scolarite }}
                                             <small class="text-muted d-block mt-1">
-                                                Le pourcentage choisi s'applique sur la base retenue ci-dessus (tranches cochées).
+                                                Le pourcentage choisi s'applique sur la base retenue ci-dessus (postes cochés).
                                             </small>
                                             <!-- Avertissement 100% -->
                                             <div id="pct100Warning" class="alert alert-warning mt-2 d-none" role="alert">
                                                 <i class="fas fa-exclamation-triangle me-1"></i>
-                                                Attention: vous avez sélectionné <strong>100%</strong> de remise sur les tranches sélectionnées. Vérifiez que vous avez l'autorisation nécessaire avant de confirmer.
+                                                Attention: vous avez sélectionné <strong>100%</strong> de remise sur les postes sélectionnés. Vérifiez que vous avez l'autorisation nécessaire avant de confirmer.
                                             </div>
                                         </div>
 
@@ -304,7 +319,7 @@
                                             </p>
                                             <hr>
                                             <p class="mb-2">
-                                                <strong>Reste dû sur les tranches cochées:</strong><br>
+                                                <strong>Tarif des postes cochés après remise :</strong><br>
                                                 <span class="montant-final" id="resteDu">0 GNF</span>
                                             </p>
                                             <small class="text-muted d-block mb-2">
@@ -517,7 +532,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         if (selectedTranches.length === 0) {
             e.preventDefault();
-            alert('Veuillez sélectionner au moins une tranche concernée par la remise.');
+            alert("Veuillez sélectionner au moins une tranche ou les frais d'inscription / réinscription.");
             return;
         }
         if (selectMotif && !selectMotif.value) {
@@ -536,7 +551,7 @@ document.addEventListener('DOMContentLoaded', function() {
             `Total des remises: ${totalRemises.toLocaleString('fr-FR')} GNF`
         );
         if (pctValue && parseFloat(pctValue) === 100) {
-            message += `\n\nATTENTION: Vous appliquez 100% de remise sur les tranches sélectionnées.`;
+            message += `\n\nATTENTION: Vous appliquez 100% de remise sur les postes sélectionnés.`;
         }
         const confirmation = confirm(message);
 

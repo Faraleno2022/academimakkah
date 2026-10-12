@@ -1,11 +1,14 @@
 """Rejoue les bases de remise enregistrées sans deviner les règles historiques."""
 from decimal import Decimal, ROUND_HALF_UP
 
-from .allocation import ALLOCATION_COMPONENTS, allocate_amount_sequentially
+from .allocation import (
+    ALLOCATION_COMPONENTS, allocate_amount_sequentially, allocate_discounts, repartir_remise_par_poste,
+)
 from .models import Paiement
 
 
-def memoriser_regle_remise(remise, base_calcul, tranches, *, montant_avant_remise=None, montant_net_enregistre=False):
+def memoriser_regle_remise(remise, base_calcul, tranches, *, montant_avant_remise=None,
+                          montant_net_enregistre=False, inclure_inscription=False):
     regle = {
         'base': base_calcul,
         'tranches': sorted(int(n) for n in tranches),
@@ -14,6 +17,8 @@ def memoriser_regle_remise(remise, base_calcul, tranches, *, montant_avant_remis
     }
     if montant_net_enregistre:
         regle['montant_net_enregistre'] = True
+    if inclure_inscription:
+        regle['inclure_inscription'] = True
     if montant_avant_remise is not None:
         regle['montant_avant_remise'] = str(montant_avant_remise)
     return regle
@@ -65,17 +70,38 @@ def recalculer_remises_echeancier(echeancier):
                 allocation_base, _, _ = allocate_amount_sequentially(
                     echeancier, Decimal(regle['montant_avant_remise']), initial_paid=payes,
                 )
-            base = sum((
-                Decimal(str(getattr(echeancier, f'tranche_{n}_due') or 0))
-                if regle['base'] == 'tranches_dues'
-                else allocation_base[f'tranche_{n}']
-                for n in regle['tranches']
-            ), Decimal('0'))
+            postes = [f'tranche_{n}' for n in regle['tranches'] if n in (1, 2, 3)]
+            if regle.get('inclure_inscription'):
+                postes.insert(0, 'inscription')
+            dus = {key: Decimal(str(getattr(echeancier, champ) or 0))
+                   for key, champ, _ in ALLOCATION_COMPONENTS}
+            bases = {key: max(Decimal('0'), dus[key] if regle['base'] == 'tranches_dues'
+                              else allocation_base[key]) for key in postes}
+            base = sum(bases.values(), Decimal('0'))
             valeur = Decimal(regle['valeur'])
             montant = base * valeur / 100 if regle['type'] == 'POURCENTAGE' else valeur
             montant = max(Decimal('0'), min(base, montant)).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+            champs = []
+            if regle.get('inclure_inscription'):
+                repartition = {key: str(valeur) for key, valeur in repartir_remise_par_poste(montant, bases).items()}
+                if regle.get('repartition') != repartition:
+                    ligne.regle_calcul = {**regle, 'repartition': repartition}
+                    champs.append('regle_calcul')
             if montant != ligne.montant_remise:
                 ligne.montant_remise = montant
-                ligne.save(update_fields=['montant_remise'])
+                champs.append('montant_remise')
+            if champs:
+                ligne.save(update_fields=champs)
         if paiement.statut == 'VALIDE':
-            payes = nouveaux_payes
+            remises_admission = [ligne for ligne in paiement.remises.all()
+                                if (ligne.regle_calcul or {}).get('inclure_inscription')]
+            if not remises_admission:
+                payes = nouveaux_payes
+            else:
+                soldes = {key: max(Decimal('0'), Decimal(str(getattr(echeancier, champ) or 0)) - payes[key])
+                          for key, champ, _ in ALLOCATION_COMPONENTS}
+                reserve, _ = allocate_discounts(echeancier, remises_admission, balances=soldes)
+                _, payes, _ = allocate_amount_sequentially(
+                    echeancier, paiement.montant,
+                    initial_paid={key: payes[key] + reserve[key] for key in payes},
+                )

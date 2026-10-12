@@ -546,6 +546,13 @@ class CouleursCartesEcoleForm(forms.ModelForm):
         }
 
 
+class RemisesScolariteEcoleForm(forms.ModelForm):
+    class Meta:
+        model = Ecole
+        fields = ['autoriser_remise_inscription']
+        widgets = {'autoriser_remise_inscription': forms.CheckboxInput(attrs={'class': 'form-check-input'})}
+
+
 class EcoleForm(forms.ModelForm):
     """Formulaire public (hors admin) pour créer une école avec upload du logo.
     Utilisé par la vue creer_ecole.

@@ -40,7 +40,7 @@ from ecole_moderne.security_decorators import require_school_object
 from .models import Paiement, EcheancierPaiement, TypePaiement, ModePaiement, RemiseReduction, PaiementRemise, Relance, TwilioInboundMessage
 from .allocation import (
     ALLOCATION_COMPONENTS,
-    allocate_amount_sequentially,
+    allocate_cash_with_discounts,
     allocate_discounts,
     get_payment_allocation,
     payment_type_plan,
@@ -378,9 +378,16 @@ def ensure_echeancier_for_eleve(
                     for _key, _due_field, paid_field in ALLOCATION_COMPONENTS
                 )
                 ech.frais_inscription_du = new_fee
-                _allocation, rebalanced_paid, unapplied = allocate_amount_sequentially(
+                from .recalcul_remises import recalculer_remises_echeancier
+                recalculer_remises_echeancier(ech)
+                discounts = list(PaiementRemise.objects.filter(
+                    paiement__eleve=eleve, paiement__annee_scolaire=ech.annee_scolaire,
+                    paiement__statut='VALIDE',
+                ))
+                _allocation, rebalanced_paid, unapplied = allocate_cash_with_discounts(
                     ech,
                     total_paid,
+                    discounts,
                     initial_paid={key: Decimal('0') for key, _due, _paid in ALLOCATION_COMPONENTS},
                 )
                 for key, _due_field, paid_field in ALLOCATION_COMPONENTS:
@@ -664,9 +671,15 @@ def ajax_montant_suggere(request):
             Decimal(str(getattr(ech, paid_field, 0) or 0))
             for _key, _due_field, paid_field in ALLOCATION_COMPONENTS
         ) if ech is not None else Decimal('0')
-        _allocation, projected_paid, _unapplied = allocate_amount_sequentially(
+        discounts = list(PaiementRemise.objects.filter(
+            paiement__eleve=eleve,
+            paiement__annee_scolaire=projected_ech.annee_scolaire,
+            paiement__statut='VALIDE',
+        ).select_related('paiement').order_by('paiement__date_paiement', 'paiement_id', 'id'))
+        _allocation, projected_paid, _unapplied = allocate_cash_with_discounts(
             projected_ech,
             total_paid,
+            discounts,
             initial_paid={
                 key: Decimal('0')
                 for key, _due_field, _paid_field in ALLOCATION_COMPONENTS
@@ -692,16 +705,6 @@ def ajax_montant_suggere(request):
 
         # Les remises validées couvrent aussi une partie de la dette, sans être
         # ajoutées aux champs *_paye qui représentent uniquement les encaissements.
-        discounts = (
-            PaiementRemise.objects
-            .filter(
-                paiement__eleve=eleve,
-                paiement__annee_scolaire=projected_ech.annee_scolaire,
-                paiement__statut='VALIDE',
-            )
-            .select_related('paiement')
-            .order_by('paiement__date_paiement', 'paiement_id', 'id')
-        )
         _discount_allocation, net_balances = allocate_discounts(
             projected_ech,
             discounts,
@@ -932,23 +935,19 @@ def _auto_validate_echeancier_for_eleve(
         )
         # Les champs *_paye représentent uniquement les encaissements réels.
         # Les remises participent au statut mais ne deviennent pas un encaissement.
-        cash_allocation, cash_paid, _ = allocate_amount_sequentially(
+        discounts = list(PaiementRemise.objects.filter(
+            paiement__eleve=eleve,
+            paiement__annee_scolaire=echeancier.annee_scolaire,
+            paiement__statut='VALIDE',
+        ).select_related('paiement').order_by('paiement__date_paiement', 'paiement_id', 'id'))
+        cash_allocation, cash_paid, _ = allocate_cash_with_discounts(
             echeancier,
             cash_to_allocate,
+            discounts,
             initial_paid={
                 key: Decimal('0')
                 for key, _due_field, _paid_field in ALLOCATION_COMPONENTS
             },
-        )
-        discounts = (
-            PaiementRemise.objects
-            .filter(
-                paiement__eleve=eleve,
-                paiement__annee_scolaire=echeancier.annee_scolaire,
-                paiement__statut='VALIDE',
-            )
-            .select_related('paiement')
-            .order_by('paiement__date_paiement', 'paiement_id', 'id')
         )
         balances_after_cash = {
             key: max(
@@ -3589,17 +3588,14 @@ def echeancier_eleve(request, eleve_id:int):
         today = date.today()
 
     finance_eleve = None
+    postes_echeances = []
     if echeancier:
-        remises_total = int(
-            PaiementRemise.objects
-            .filter(paiement__eleve=eleve, paiement__statut='VALIDE')
-            .aggregate(total=Coalesce(
-                Sum('montant_remise'),
-                Value(0, output_field=DecimalField(max_digits=12, decimal_places=0)),
-                output_field=DecimalField(max_digits=12, decimal_places=0),
-            ))
-            .get('total') or 0
-        )
+        remises = list(PaiementRemise.objects.filter(
+            paiement__eleve=eleve, paiement__statut='VALIDE',
+            paiement__annee_scolaire=echeancier.annee_scolaire,
+        ).order_by('paiement__date_paiement', 'paiement_id', 'pk'))
+        remises_total = int(sum((ligne.montant_remise for ligne in remises), Decimal('0')))
+        remises_par_poste, soldes_par_poste = allocate_discounts(echeancier, remises)
 
         postes = [
             {
@@ -3631,23 +3627,19 @@ def echeancier_eleve(request, eleve_id:int):
                 'echeance': echeancier.date_echeance_tranche_3,
             },
         ]
+        for poste, (key, _, _) in zip(postes, ALLOCATION_COMPONENTS):
+            poste['remise'] = int(remises_par_poste[key])
+            poste['reste'] = int(soldes_par_poste[key])
+            poste['en_retard'] = bool(poste['reste'] > 0 and poste['echeance'] and poste['echeance'] < today)
+        postes_echeances = postes
         total_du = sum(poste['du'] for poste in postes)
         total_paye_brut = sum(poste['paye'] for poste in postes)
         total_couvert = min(total_du, total_paye_brut + remises_total)
         reste_a_payer = max(total_du - total_couvert, 0)
-        exigible = sum(poste['du'] for poste in postes if poste['echeance'] and poste['echeance'] <= today)
-        retard_reel = max(exigible - total_couvert, 0)
+        retard_reel = sum(poste['reste'] for poste in postes if poste['echeance'] and poste['echeance'] <= today)
         taux_paye = round((total_couvert / total_du * 100), 1) if total_du > 0 else 0
 
-        postes_non_soldes = [
-            {
-                **poste,
-                'reste': max(poste['du'] - poste['paye'], 0),
-                'en_retard': bool(poste['echeance'] and poste['echeance'] < today and poste['paye'] < poste['du']),
-            }
-            for poste in postes
-            if poste['du'] > poste['paye']
-        ]
+        postes_non_soldes = [poste for poste in postes if poste['reste'] > 0]
         postes_non_soldes.sort(key=lambda item: (not item['en_retard'], item['echeance'] or today))
         prochain_paiement = postes_non_soldes[0] if postes_non_soldes else None
 
@@ -3715,6 +3707,7 @@ def echeancier_eleve(request, eleve_id:int):
         'paiements': paiements,
         'today': today,
         'finance_eleve': finance_eleve,
+        'postes_echeances': postes_echeances,
     }
     return render(request, 'paiements/echeancier_eleve.html', context)
 
@@ -4322,6 +4315,20 @@ def generer_recu_pdf(request, paiement_id:int):
                 # reçu annonce un montant payable supérieur à celui accepté par
                 # le formulaire de saisie).
                 restes = reste_par_tranche_avec_couverture(echeancier, couverture_effective)
+                remises_recu = list(PaiementRemise.objects.filter(
+                    paiement__eleve=paiement.eleve,
+                    paiement__annee_scolaire=paiement.annee_scolaire,
+                ).filter(Q(paiement__statut='VALIDE') | Q(paiement=paiement))
+                  .order_by('paiement__date_paiement', 'paiement_id', 'pk'))
+                if any((ligne.regle_calcul or {}).get('inclure_inscription') for ligne in remises_recu):
+                    cash_recu = sum_montant + (paiement.montant if paiement.statut != 'VALIDE' else 0)
+                    _, payes_recu, _ = allocate_cash_with_discounts(
+                        echeancier, cash_recu, remises_recu,
+                        initial_paid={key: Decimal('0') for key, _, _ in ALLOCATION_COMPONENTS},
+                    )
+                    soldes_recu = {key: max(Decimal('0'), Decimal(str(getattr(echeancier, champ) or 0)) - payes_recu[key])
+                                   for key, champ, _ in ALLOCATION_COMPONENTS}
+                    _, restes = allocate_discounts(echeancier, remises_recu, balances=soldes_recu)
                 r_insc = int(restes['inscription'])
                 r_t1 = int(restes['tranche_1'])
                 r_t2 = int(restes['tranche_2'])
@@ -4639,7 +4646,7 @@ def rapport_remises(request):
 @login_required
 @user_passes_test(lambda u: u.is_staff or (hasattr(u, 'profil') and u.profil.role in ['ADMIN', 'COMPTABLE', 'DIRECTEUR']))
 def liste_eleves_soldes(request):
-    """Liste des élèves soldés en tenant compte des remises (hors frais d'inscription).
+    """Liste des élèves soldés en tenant compte des remises accordées.
 
     Règles:
     - Frais d'inscription (30 000 GNF) non impactés par les remises.
@@ -5207,14 +5214,14 @@ def ajax_calculer_remise(request):
 def appliquer_remise_paiement(request, paiement_id:int):
     """Affiche et traite le formulaire d'application de remises pour un paiement.
 
-    La remise ne porte jamais sur les frais d'inscription/réinscription: le
-    caissier choisit explicitement les tranches (1/2/3) concernées, ainsi que
+    Selon l'autorisation de l'école, le caissier peut inclure les frais
+    d'inscription/réinscription et choisit les tranches (1/2/3), ainsi que
     la base de calcul (montant dû sur ces tranches, ou seulement la part de
     ce reçu qui leur est affectée). Chaque remise doit être justifiée par un
     motif.
     """
     paiement = get_object_or_404(
-        Paiement.objects.select_related('eleve', 'type_paiement', 'mode_paiement'),
+        Paiement.objects.select_related('eleve__classe__ecole', 'type_paiement', 'mode_paiement'),
         pk=paiement_id,
     )
 
@@ -5224,7 +5231,7 @@ def appliquer_remise_paiement(request, paiement_id:int):
         return redirect('paiements:detail_paiement', paiement_id=paiement.id)
 
     # Tranches de scolarité (1/2/3): montant dû restant et part de CE reçu qui les couvre.
-    # La remise ne porte jamais sur l'inscription/réinscription.
+    ecole_remise = paiement.eleve.classe.ecole
     ech = None
     try:
         ech = _echeancier_for_payment(paiement)
@@ -5250,8 +5257,12 @@ def appliquer_remise_paiement(request, paiement_id:int):
     allocation_paiement = {}
     if ech:
         try:
-            allocation_paiement, _paid, _remaining = allocate_amount_sequentially(ech, paiement.montant)
-            allocation_brute, _, _ = allocate_amount_sequentially(ech, montant_avant_remise)
+            remises_validees = list(PaiementRemise.objects.filter(
+                paiement__eleve=paiement.eleve, paiement__annee_scolaire=paiement.annee_scolaire,
+                paiement__statut='VALIDE',
+            ).order_by('paiement__date_paiement', 'paiement_id', 'pk'))
+            allocation_paiement, _paid, _remaining = allocate_cash_with_discounts(ech, paiement.montant, remises_validees)
+            allocation_brute, _, _ = allocate_cash_with_discounts(ech, montant_avant_remise, remises_validees)
         except Exception:
             allocation_paiement = {}
 
@@ -5267,13 +5278,29 @@ def appliquer_remise_paiement(request, paiement_id:int):
             'default_checked': sur_ce_paiement > 0,
         })
 
+    inscription_info = {
+        'libelle': ech.libelle_frais_admission if ech else "Frais d'inscription / réinscription",
+        'due': int(getattr(ech, 'frais_inscription_du', 0) or 0),
+        'sur_ce_paiement': int(allocation_paiement.get('inscription', 0)),
+        'sur_ce_paiement_brut': int(allocation_brute.get('inscription', 0)),
+    }
+
+    def renseigner_admission(formulaire):
+        formulaire.fields['inclure_inscription'].widget.attrs.update({
+            'data-due': inscription_info['due'],
+            'data-sur-ce-paiement': inscription_info['sur_ce_paiement'],
+            'data-sur-ce-paiement-brut': inscription_info['sur_ce_paiement_brut'],
+        })
+
     if request.method == 'POST':
         form = PaiementRemiseForm(request.POST, paiement=paiement)
+        renseigner_admission(form)
         if form.is_valid():
             remises = form.cleaned_data.get('remises') or []
             pct_str = form.cleaned_data.get('pourcentage_scolarite') or ''
             motif = form.cleaned_data.get('motif') or ''
             tranches_selectionnees = form.cleaned_data.get('tranches') or []
+            inclure_inscription = form.cleaned_data.get('inclure_inscription', False)
             base_calcul = form.cleaned_data.get('base_calcul') or 'paiement_echeance'
             try:
                 pct_value = int(pct_str) if str(pct_str).isdigit() else 0
@@ -5300,6 +5327,8 @@ def appliquer_remise_paiement(request, paiement_id:int):
                     'remises_existantes': remises_existantes,
                     'tranches_info': tranches_info,
                     'montant_avant_remise': montant_avant_remise,
+                    'inscription_info': inscription_info,
+                    'ecole_remise': ecole_remise,
                 }
                 return render(request, 'paiements/appliquer_remise.html', context)
 
@@ -5307,7 +5336,7 @@ def appliquer_remise_paiement(request, paiement_id:int):
             if pct_value == 100:
                 messages.warning(
                     request,
-                    "Attention: vous appliquez 100% de remise sur les tranches sélectionnées. Vérifiez l'autorisation avant de confirmer."
+                    "Attention: vous appliquez 100% de remise sur les postes sélectionnés. Vérifiez l'autorisation avant de confirmer."
                 )
 
             from .recalcul_remises import memoriser_regle_remise, recalculer_remises_echeancier
@@ -5325,8 +5354,13 @@ def appliquer_remise_paiement(request, paiement_id:int):
 
                 deduire_du_montant = form.cleaned_data.get('deduire_du_montant', False)
                 brut = montant_brut_pour_remise(paiement) if deduire_du_montant else None
-                allocation_base, _, _ = allocate_amount_sequentially(
+                remises_validees = list(PaiementRemise.objects.filter(
+                    paiement__eleve=paiement.eleve, paiement__annee_scolaire=paiement.annee_scolaire,
+                    paiement__statut='VALIDE',
+                ).order_by('paiement__date_paiement', 'paiement_id', 'pk'))
+                allocation_base, _, _ = allocate_cash_with_discounts(
                     echeancier_verrouille, brut if brut is not None else paiement.montant,
+                    remises_validees,
                 )
                 base_retenue = sum((
                     Decimal(str(getattr(echeancier_verrouille, f'tranche_{num}_due')))
@@ -5334,12 +5368,17 @@ def appliquer_remise_paiement(request, paiement_id:int):
                     else allocation_base[f'tranche_{num}']
                     for num in tranches_selectionnees
                 ), Decimal('0'))
+                if inclure_inscription:
+                    base_retenue += (
+                        Decimal(str(echeancier_verrouille.frais_inscription_du or 0))
+                        if base_calcul == 'tranches_dues' else allocation_base['inscription']
+                    )
                 # Remplacer les remises existantes par la sélection
                 PaiementRemise.objects.filter(paiement=paiement).delete()
                 created = 0
                 for remise in remises:
                     try:
-                        # Base = tranches cochées uniquement (jamais l'inscription/réinscription),
+                        # Base = postes cochés, y compris l'admission si autorisée,
                         # selon la base de calcul choisie par le caissier.
                         montant_remise = remise.calculer_remise(base_retenue)
                     except Exception:
@@ -5348,7 +5387,7 @@ def appliquer_remise_paiement(request, paiement_id:int):
                         paiement=paiement,
                         remise=remise,
                         montant_remise=montant_remise,
-                        regle_calcul=memoriser_regle_remise(remise, base_calcul, tranches_selectionnees, montant_avant_remise=brut, montant_net_enregistre=True),
+                        regle_calcul=memoriser_regle_remise(remise, base_calcul, tranches_selectionnees, montant_avant_remise=brut, montant_net_enregistre=True, inclure_inscription=inclure_inscription),
                     )
                     created += 1
 
@@ -5388,7 +5427,7 @@ def appliquer_remise_paiement(request, paiement_id:int):
                         paiement=paiement,
                         remise=remise_pct,
                         montant_remise=montant_remise_pct,
-                        regle_calcul=memoriser_regle_remise(remise_pct, base_calcul, tranches_selectionnees, montant_avant_remise=brut, montant_net_enregistre=True),
+                        regle_calcul=memoriser_regle_remise(remise_pct, base_calcul, tranches_selectionnees, montant_avant_remise=brut, montant_net_enregistre=True, inclure_inscription=inclure_inscription),
                     )
                     created += 1
 
@@ -5397,16 +5436,31 @@ def appliquer_remise_paiement(request, paiement_id:int):
                     paiement.remises.aggregate(total=Sum('montant_remise'))['total']
                     or Decimal('0')
                 )
+                remises_reservees = list(PaiementRemise.objects.filter(
+                    paiement__eleve=paiement.eleve,
+                    paiement__annee_scolaire=paiement.annee_scolaire,
+                    paiement__statut__in=('EN_ATTENTE', 'VALIDE'),
+                ).order_by('paiement__date_paiement', 'paiement_id', 'pk'))
+                if any((ligne.regle_calcul or {}).get('inclure_inscription') for ligne in remises_reservees):
+                    dus = {key: Decimal(str(getattr(echeancier_verrouille, champ) or 0))
+                           for key, champ, _ in ALLOCATION_COMPONENTS}
+                    repartition, _ = allocate_discounts(echeancier_verrouille, remises_reservees, balances=dus)
+                    if sum(repartition.values(), Decimal('0')) < sum(
+                        (ligne.montant_remise for ligne in remises_reservees), Decimal('0')
+                    ):
+                        transaction.set_rollback(True)
+                        messages.error(request, "Remise refusée : les remises cumulées dépasseraient le tarif d'un des postes sélectionnés.")
+                        return redirect('paiements:detail_paiement', paiement_id=paiement.id)
                 if deduire_du_montant:
-                    plafond_scolarite = min(
-                        base_retenue, max(Decimal('0'), brut - allocation_base['inscription']),
+                    plafond_remise = min(
+                        base_retenue, max(Decimal('0'), brut - (0 if inclure_inscription else allocation_base['inscription'])),
                     )
-                    if remise_courante > plafond_scolarite or brut - remise_courante <= 0:
+                    if remise_courante > plafond_remise or brut - remise_courante <= 0:
                         transaction.set_rollback(True)
                         messages.error(
                             request,
-                            "Remise refusée : les remises cumulées doivent rester dans le tarif de scolarité "
-                            "et laisser un montant net positif. Les frais d'inscription ne sont pas remisés.",
+                            "Remise refusée : les remises cumulées doivent rester dans le tarif des postes sélectionnés "
+                            "et laisser un montant net positif.",
                         )
                         return redirect('paiements:detail_paiement', paiement_id=paiement.id)
                     paiement.montant = brut - remise_courante
@@ -5474,10 +5528,16 @@ def appliquer_remise_paiement(request, paiement_id:int):
             messages.error(request, "Veuillez corriger les erreurs du formulaire de remises.")
     else:
         tranches_defaut = [str(t['num']) for t in tranches_info if t['default_checked']]
+        regle_existante = next((ligne.regle_calcul for ligne in paiement.remises.all()
+                               if (ligne.regle_calcul or {}).get('inclure_inscription')), None)
+        if regle_existante:
+            tranches_defaut = [str(n) for n in regle_existante.get('tranches', [])]
         form = PaiementRemiseForm(
             paiement=paiement,
-            initial={'tranches': tranches_defaut, 'base_calcul': 'paiement_echeance'},
+            initial={'tranches': tranches_defaut,
+                     'base_calcul': regle_existante.get('base', 'paiement_echeance') if regle_existante else 'paiement_echeance'},
         )
+        renseigner_admission(form)
 
     # Remises déjà liées au paiement (pour affichage et cases cochées)
     try:
@@ -5491,6 +5551,8 @@ def appliquer_remise_paiement(request, paiement_id:int):
         'remises_existantes': remises_existantes,
         'tranches_info': tranches_info,
         'montant_avant_remise': montant_avant_remise,
+        'inscription_info': inscription_info,
+        'ecole_remise': ecole_remise,
     }
     return render(request, 'paiements/appliquer_remise.html', context)
 

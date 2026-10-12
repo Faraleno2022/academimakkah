@@ -17,7 +17,7 @@ from utilisateurs.utils import filter_by_user_school
 
 from .allocation import (
     ALLOCATION_COMPONENTS,
-    allocate_amount_sequentially,
+    allocate_cash_with_discounts,
     allocate_discounts,
     payment_type_plan,
     registration_kind_for_type,
@@ -141,6 +141,18 @@ def _payment_period_metrics(user, today, starts):
         "eleve_id", "annee_scolaire", "date_paiement", "date_creation", "pk"
     )
 
+    discounts_by_key = {}
+    admission_discounts = PaiementRemise.objects.filter(
+        paiement__eleve_id__in=student_ids,
+        paiement__annee_scolaire__in=school_years,
+        paiement__statut='VALIDE',
+        paiement__date_paiement__lte=today,
+        regle_calcul__inclure_inscription=True,
+    ).select_related('paiement')
+    for discount in admission_discounts:
+        key = (discount.paiement.eleve_id, discount.paiement.annee_scolaire)
+        discounts_by_key.setdefault(key, []).append(discount)
+
     running_paid = {}
     for payment in history.iterator():
         service_category = _payment_service_category(payment.type_paiement)
@@ -166,8 +178,9 @@ def _payment_period_metrics(user, today, starts):
                     for component, _due_field, _paid_field in ALLOCATION_COMPONENTS
                 },
             )
-            allocation, paid_after, unapplied = allocate_amount_sequentially(
-                schedule, payment.montant, initial_paid=initial_paid
+            allocation, paid_after, unapplied = allocate_cash_with_discounts(
+                schedule, payment.montant, discounts_by_key.get(payment_key, []),
+                initial_paid=initial_paid,
             )
             running_paid[payment_key] = paid_after
             admission_amount = allocation["inscription"]

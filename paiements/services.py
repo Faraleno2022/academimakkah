@@ -11,7 +11,7 @@ from eleves.models import GrilleTarifaire
 
 from .allocation import (
     ALLOCATION_COMPONENTS,
-    allocate_amount_sequentially,
+    allocate_cash_with_discounts,
     allocate_discounts,
     registration_kind_for_type,
 )
@@ -122,23 +122,20 @@ def _synchroniser_couverture(echeancier, *, conserver_saisie_manuelle=True):
     )
     encaissement = max(total_valide, total_saisi) if conserver_saisie_manuelle else total_valide
 
-    allocation, nouveaux_payes, credit = allocate_amount_sequentially(
+    remises = list(PaiementRemise.objects.filter(
+        paiement__eleve_id=echeancier.eleve_id,
+        paiement__annee_scolaire=echeancier.annee_scolaire,
+        paiement__statut="VALIDE",
+    ).select_related("paiement").order_by("paiement__date_paiement", "paiement_id", "pk"))
+    allocation, nouveaux_payes, credit = allocate_cash_with_discounts(
         echeancier,
         encaissement,
+        remises,
         initial_paid={key: Decimal("0") for key, _, _ in ALLOCATION_COMPONENTS},
     )
     for key, _due_field, paid_field in ALLOCATION_COMPONENTS:
         setattr(echeancier, paid_field, nouveaux_payes[key])
 
-    remises = (
-        PaiementRemise.objects.filter(
-            paiement__eleve_id=echeancier.eleve_id,
-            paiement__annee_scolaire=echeancier.annee_scolaire,
-            paiement__statut="VALIDE",
-        )
-        .select_related("paiement")
-        .order_by("paiement__date_paiement", "paiement_id", "pk")
-    )
     soldes_apres_encaissement = {
         key: max(
             Decimal("0"),

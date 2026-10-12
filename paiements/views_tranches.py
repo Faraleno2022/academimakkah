@@ -9,7 +9,7 @@ from eleves.utils_annee import get_annee_active
 from paiements.models import EcheancierPaiement, Paiement, PaiementRemise
 from paiements.allocation import (
     ALLOCATION_COMPONENTS,
-    allocate_amount_sequentially,
+    allocate_cash_with_discounts,
     registration_kind_for_type,
 )
 from utilisateurs.utils import user_is_admin, user_is_superadmin, user_school
@@ -180,8 +180,9 @@ def _tranche_export_rows(classe, annee_scolaire):
     for item in discounts.select_related('paiement', 'remise').order_by('pk'):
         detail = discounts_by_student.setdefault(
             item.paiement.eleve_id,
-            {'amount': Decimal('0'), 'rates': []},
+            {'amount': Decimal('0'), 'rates': [], 'lines': []},
         )
+        detail['lines'].append(item)
         detail['amount'] += Decimal(str(item.montant_remise or 0))
         if item.remise.type_remise == 'POURCENTAGE':
             taux = Decimal(str(item.remise.valeur or 0))
@@ -212,9 +213,10 @@ def _tranche_export_rows(classe, annee_scolaire):
                     Decimal('0'),
                 )
                 cash_to_allocate = max(recorded_cash, validated_total)
-                _cash_allocation, cash_paid, _unapplied = allocate_amount_sequentially(
+                _cash_allocation, cash_paid, _unapplied = allocate_cash_with_discounts(
                     schedule,
                     cash_to_allocate,
+                    discounts_by_student.get(eleve.pk, {}).get('lines', []),
                     initial_paid={
                         key: Decimal('0')
                         for key, _due_field, _paid_field in ALLOCATION_COMPONENTS
