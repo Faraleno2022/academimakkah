@@ -63,6 +63,9 @@ class EcoleAdmin(admin.ModelAdmin):
             "fields": ("code_prefixe",),
             "description": "Préfixe d'école pour les matricules (ex: AL-FUR/). Laissez vide pour ne pas utiliser de préfixe explicite."
         }),
+        ("Remises de scolarité", {
+            "fields": ("autoriser_remise_inscription",),
+        }),
         ("Coordonnées", {
             "fields": ("adresse", "telephone", "telephone2", "telephone3", "email")
         }),

@@ -14,7 +14,7 @@ class PaiementRemiseForm(forms.Form):
 
     BASE_CALCUL_CHOICES = [
         ('paiement_echeance', "Paiement à l'échéance"),
-        ('tranches_dues', 'Montant des tranches sélectionnées'),
+        ('tranches_dues', 'Montant des postes sélectionnés'),
     ]
 
     remises = forms.ModelMultipleChoiceField(
@@ -51,7 +51,13 @@ class PaiementRemiseForm(forms.Form):
         label="Remise scolarité (%)"
     )
 
-    # Tranches concernées par la remise (jamais l'inscription/réinscription)
+    inclure_inscription = forms.BooleanField(
+        required=False,
+        label="Inclure les frais d'inscription / réinscription",
+        widget=forms.CheckboxInput(attrs={'class': 'form-check-input tranche-checkbox'}),
+    )
+
+    # Tranches concernées, auxquelles l'école peut autoriser l'ajout de l'admission.
     tranches = forms.MultipleChoiceField(
         choices=TRANCHE_CHOICES,
         required=False,
@@ -81,6 +87,10 @@ class PaiementRemiseForm(forms.Form):
         super().__init__(*args, **kwargs)
 
         if paiement:
+            self.remise_inscription_autorisee = paiement.eleve.classe.ecole.autoriser_remise_inscription
+            self.fields['inclure_inscription'].initial = any(
+                (ligne.regle_calcul or {}).get('inclure_inscription') for ligne in paiement.remises.all()
+            )
             self.fields['montant_original'].initial = paiement.montant
             self.fields['deduire_du_montant'].initial = any(
                 'montant_avant_remise' in (ligne.regle_calcul or {})
@@ -93,6 +103,8 @@ class PaiementRemiseForm(forms.Form):
                 date_debut__lte=today,
                 date_fin__gte=today
             )
+        else:
+            self.remise_inscription_autorisee = False
 
     def clean(self):
         cleaned_data = super().clean()
@@ -100,13 +112,16 @@ class PaiementRemiseForm(forms.Form):
         pct_str = cleaned_data.get('pourcentage_scolarite') or ''
         motif = cleaned_data.get('motif') or ''
         tranches = cleaned_data.get('tranches') or []
+        inclure_inscription = cleaned_data.get('inclure_inscription', False)
+        if inclure_inscription and not self.remise_inscription_autorisee:
+            self.add_error('inclure_inscription', "Cette école n'autorise pas les remises sur l'inscription et la réinscription.")
         pct_value = int(pct_str) if pct_str else {
             'NE_PAIE_RIEN': 100, 'MOITIE': 50,
         }.get(motif, 0)
         applying_remise = bool(remises) or pct_value > 0
         if applying_remise:
-            if not tranches:
-                self.add_error('tranches', "Sélectionnez au moins une tranche concernée par la remise.")
+            if not tranches and not inclure_inscription:
+                self.add_error('tranches', "Sélectionnez au moins une tranche ou les frais d'inscription / réinscription.")
             if not motif:
                 self.add_error('motif', "Le motif de la remise est obligatoire.")
         # Le pourcentage réutilise une remise du catalogue : une sélection

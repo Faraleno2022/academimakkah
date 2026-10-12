@@ -1,6 +1,6 @@
 """Règles communes d'affectation des paiements sur un échéancier."""
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 import re
 import unicodedata
 
@@ -232,6 +232,11 @@ def get_payment_allocation(paiement, echeancier=None):
 
     running_paid = {key: Decimal("0") for key, _due, _paid in ALLOCATION_COMPONENTS}
     target_allocation = None
+    from .models import PaiementRemise
+    discounts = list(PaiementRemise.objects.filter(
+        paiement__eleve=paiement.eleve, paiement__annee_scolaire=paiement.annee_scolaire,
+        paiement__statut='VALIDE',
+    ).order_by('paiement__date_paiement', 'paiement_id', 'pk'))
     validated = (
         Paiement.objects
         .filter(
@@ -243,9 +248,10 @@ def get_payment_allocation(paiement, echeancier=None):
     )
 
     for current in validated.iterator():
-        allocation, running_paid, unapplied = allocate_amount_sequentially(
+        allocation, running_paid, unapplied = allocate_cash_with_discounts(
             echeancier,
             current.montant,
+            discounts,
             initial_paid=running_paid,
         )
         allocation["non_affecte"] = unapplied
@@ -255,12 +261,44 @@ def get_payment_allocation(paiement, echeancier=None):
     return target_allocation
 
 
+def repartir_remise_par_poste(montant, bases):
+    """Répartition proportionnelle en GNF ; la somme est exactement la remise."""
+    bases = {key: max(Decimal('0'), _decimal(value)) for key, value in bases.items()}
+    total = sum(bases.values(), Decimal('0'))
+    montant = max(Decimal('0'), min(_decimal(montant), total))
+    if not total:
+        return {key: Decimal('0') for key in bases}
+    exacts = {key: montant * value / total for key, value in bases.items()}
+    parts = {key: value.quantize(Decimal('1'), rounding=ROUND_DOWN) for key, value in exacts.items()}
+    reste = int(montant - sum(parts.values(), Decimal('0')))
+    for key in sorted(parts, key=lambda key: exacts[key] - parts[key], reverse=True)[:reste]:
+        parts[key] += 1
+    return parts
+
+
+def allocate_cash_with_discounts(echeancier, amount, discounts, initial_paid=None):
+    """Réserve les nouvelles remises d'admission avant de ventiler le cash.
+
+    Les champs *_paye restent des encaissements. Les règles historiques sans
+    inscription conservent leur affectation existante.
+    """
+    dus = {key: max(Decimal('0'), _decimal(getattr(echeancier, champ, 0)))
+           for key, champ, _ in ALLOCATION_COMPONENTS}
+    remises_admission = [d for d in discounts if (getattr(d, 'regle_calcul', None) or {}).get('inclure_inscription')]
+    reserve, _ = allocate_discounts(echeancier, remises_admission, balances=dus)
+    cash = initial_paid if initial_paid is not None else {
+        key: _decimal(getattr(echeancier, champ, 0)) for key, _, champ in ALLOCATION_COMPONENTS
+    }
+    couvert = {key: _decimal(cash.get(key, 0)) + reserve[key] for key in dus}
+    allocation, nouveaux, reste = allocate_amount_sequentially(echeancier, amount, initial_paid=couvert)
+    return allocation, {key: nouveaux[key] - reserve[key] for key in dus}, reste
+
+
 def allocate_discounts(echeancier, discounts, balances=None):
     """Ventile les remises validées sur les tranches réellement concernées.
 
-    Les remises ne couvrent jamais l'inscription/réinscription. Les anciennes
-    remises sans information de tranche sont appliquées à T1, T2 puis T3 afin
-    de rester compatibles avec les données antérieures.
+    Les nouvelles remises d'admission portent leur répartition explicite.
+    Les anciennes sans information de tranche restent appliquées à T1, T2, T3.
     """
     current_balances = dict(balances or {
         key: max(
@@ -275,6 +313,20 @@ def allocate_discounts(echeancier, discounts, balances=None):
     }
 
     for discount in discounts:
+        regle = getattr(discount, 'regle_calcul', None) or {}
+        if regle.get('inclure_inscription'):
+            bases = {key: _decimal(getattr(echeancier, champ, 0))
+                     for key, champ, _ in ALLOCATION_COMPONENTS
+                     if key == 'inscription' or key in {f'tranche_{n}' for n in regle.get('tranches', [])}}
+            repartition = regle.get('repartition')
+            if not isinstance(repartition, dict):
+                repartition = repartir_remise_par_poste(getattr(discount, 'montant_remise', 0), bases)
+            for key in bases:
+                take = min(max(Decimal('0'), _decimal(repartition.get(key, 0))),
+                           max(Decimal('0'), _decimal(current_balances.get(key, 0))))
+                allocation[key] += take
+                current_balances[key] -= take
+            continue
         selected = [
             f"tranche_{number}"
             for number in getattr(discount, 'tranches_concernees_liste', [])

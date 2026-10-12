@@ -11,11 +11,22 @@ from decimal import Decimal
 from datetime import datetime, timedelta
 import logging
 
-from .models import EcheancierPaiement, Relance, ConfigurationPaiement
+from .allocation import ALLOCATION_COMPONENTS, allocate_discounts
+from .models import EcheancierPaiement, PaiementRemise, Relance, ConfigurationPaiement
 from eleves.models import Eleve
 from utilisateurs.utils import filter_by_user_school
 
 logger = logging.getLogger(__name__)
+
+
+def _soldes_echeancier(echeancier):
+    remises = PaiementRemise.objects.filter(
+        paiement__eleve_id=echeancier.eleve_id,
+        paiement__annee_scolaire=echeancier.annee_scolaire,
+        paiement__statut='VALIDE',
+    ).order_by('paiement__date_paiement', 'paiement_id', 'pk')
+    return allocate_discounts(echeancier, remises)[1]
+
 
 class GestionnaireRappels:
     """Gestionnaire principal pour les rappels de paiement"""
@@ -166,7 +177,27 @@ Contactez-nous IMMÉDIATEMENT pour éviter toute interruption de la scolarité.
         
         if utilisateur is not None:
             echeanciers_retard = filter_by_user_school(echeanciers_retard, utilisateur, 'eleve__classe__ecole')
-        return echeanciers_retard
+        # Le filtre SQL sélectionne les candidats. Vérifier les postes nets
+        # évite de relancer une admission couverte par une remise alors que
+        # seules des tranches futures restent dues. Charger les remises en lot.
+        remises_par_eleve = {}
+        remises = PaiementRemise.objects.filter(
+            paiement__eleve_id__in=echeanciers_retard.values('eleve_id'),
+            paiement__annee_scolaire__in=echeanciers_retard.values('annee_scolaire'),
+            paiement__statut='VALIDE',
+        ).select_related('paiement').order_by('paiement__date_paiement', 'paiement_id', 'pk')
+        for remise in remises:
+            key = (remise.paiement.eleve_id, remise.paiement.annee_scolaire)
+            remises_par_eleve.setdefault(key, []).append(remise)
+        ids_en_retard = []
+        for echeancier in echeanciers_retard:
+            key = (echeancier.eleve_id, echeancier.annee_scolaire)
+            _, soldes = allocate_discounts(echeancier, remises_par_eleve.get(key, []))
+            if any(soldes[poste] > 0 and getattr(echeancier, f'date_echeance_{poste}')
+                   and getattr(echeancier, f'date_echeance_{poste}') < date_limite
+                   for poste, _, _ in ALLOCATION_COMPONENTS):
+                ids_en_retard.append(echeancier.pk)
+        return echeanciers_retard.filter(pk__in=ids_en_retard)
     
     def calculer_niveau_rappel(self, eleve_id):
         """
@@ -193,26 +224,14 @@ Contactez-nous IMMÉDIATEMENT pour éviter toute interruption de la scolarité.
     def calculer_jours_retard(self, echeancier):
         """Calcule le nombre de jours de retard maximum"""
         aujourd_hui = timezone.now().date()
-        jours_retard = 0
-        
-        # Vérifier chaque échéance
-        if (echeancier.frais_inscription_paye < echeancier.frais_inscription_du and 
-            echeancier.date_echeance_inscription < aujourd_hui):
-            jours_retard = max(jours_retard, (aujourd_hui - echeancier.date_echeance_inscription).days)
-        
-        if (echeancier.tranche_1_payee < echeancier.tranche_1_due and 
-            echeancier.date_echeance_tranche_1 < aujourd_hui):
-            jours_retard = max(jours_retard, (aujourd_hui - echeancier.date_echeance_tranche_1).days)
-        
-        if (echeancier.tranche_2_payee < echeancier.tranche_2_due and 
-            echeancier.date_echeance_tranche_2 < aujourd_hui):
-            jours_retard = max(jours_retard, (aujourd_hui - echeancier.date_echeance_tranche_2).days)
-        
-        if (echeancier.tranche_3_payee < echeancier.tranche_3_due and 
-            echeancier.date_echeance_tranche_3 < aujourd_hui):
-            jours_retard = max(jours_retard, (aujourd_hui - echeancier.date_echeance_tranche_3).days)
-        
-        return jours_retard
+        soldes = _soldes_echeancier(echeancier)
+        return max((
+            (aujourd_hui - echeance).days
+            for poste, _, _ in ALLOCATION_COMPONENTS
+            if soldes[poste] > 0
+            and (echeance := getattr(echeancier, f'date_echeance_{poste}'))
+            and echeance < aujourd_hui
+        ), default=0)
     
     def generer_message_rappel(self, eleve, echeancier, canal='SMS', niveau_rappel='PREMIER_RAPPEL'):
         """
@@ -233,16 +252,13 @@ Contactez-nous IMMÉDIATEMENT pour éviter toute interruption de la scolarité.
         
         # Trouver la date d'échéance la plus ancienne dépassée
         aujourd_hui = timezone.now().date()
-        date_echeance = None
-        
-        if (echeancier.frais_inscription_paye < echeancier.frais_inscription_du and 
-            echeancier.date_echeance_inscription < aujourd_hui):
-            date_echeance = echeancier.date_echeance_inscription
-        
-        if (echeancier.tranche_1_payee < echeancier.tranche_1_due and 
-            echeancier.date_echeance_tranche_1 < aujourd_hui):
-            if not date_echeance or echeancier.date_echeance_tranche_1 < date_echeance:
-                date_echeance = echeancier.date_echeance_tranche_1
+        soldes = _soldes_echeancier(echeancier)
+        date_echeance = min((
+            echeance for poste, _, _ in ALLOCATION_COMPONENTS
+            if soldes[poste] > 0
+            and (echeance := getattr(echeancier, f'date_echeance_{poste}'))
+            and echeance < aujourd_hui
+        ), default=None)
         
         # Données pour le template
         context = {

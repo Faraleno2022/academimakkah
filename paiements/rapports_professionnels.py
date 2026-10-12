@@ -23,7 +23,7 @@ from utilisateurs.utils import filter_by_user_school, user_school
 
 from .allocation import (
     ALLOCATION_COMPONENTS,
-    allocate_amount_sequentially,
+    allocate_cash_with_discounts,
     allocate_discounts,
     registration_kind_for_type,
 )
@@ -276,6 +276,14 @@ def _validated_payment_allocations(scope, selected_payments):
     if scope['school_year']:
         history = history.filter(annee_scolaire=scope['school_year'])
 
+    admission_discounts = PaiementRemise.objects.filter(
+        paiement__in=history,
+        regle_calcul__inclure_inscription=True,
+    ).select_related('paiement')
+    discounts_by_key = defaultdict(list)
+    for discount in admission_discounts:
+        discounts_by_key[(discount.paiement.eleve_id, discount.paiement.annee_scolaire)].append(discount)
+
     running_paid = {}
     results = {}
     for payment in history:
@@ -292,8 +300,8 @@ def _validated_payment_allocations(scope, selected_payments):
                     for component, _due_field, _paid_field in ALLOCATION_COMPONENTS
                 },
             )
-            raw_allocation, paid_after, unapplied = allocate_amount_sequentially(
-                schedule, payment.montant, initial_paid=initial_paid,
+            raw_allocation, paid_after, unapplied = allocate_cash_with_discounts(
+                schedule, payment.montant, discounts_by_key[key], initial_paid=initial_paid,
             )
             running_paid[key] = paid_after
             registration_kind = registration_kind_for_type(payment.type_paiement)
@@ -733,9 +741,10 @@ def collect_recovery_data(request):
             if data['cutoff'] >= timezone.localdate()
             else payment_cash
         )
-        _cash_allocation, cash_paid, _unallocated = allocate_amount_sequentially(
+        _cash_allocation, cash_paid, _unallocated = allocate_cash_with_discounts(
             schedule,
             cash_source,
+            discounts,
             initial_paid={
                 key: ZERO for key, _due_field, _paid_field in ALLOCATION_COMPONENTS
             },

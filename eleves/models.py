@@ -43,6 +43,11 @@ class Ecole(SyncTrackedModel):
         default=False,
         verbose_name="Activer le bonus de suivi",
         help_text="Si activé, les notes de suivi (cours, oral, écrit, devoirs, participation) ajoutent un bonus plafonné à la note mensuelle.")
+    autoriser_remise_inscription = models.BooleanField(
+        default=False,
+        verbose_name="Autoriser les remises sur l'inscription et la réinscription",
+        help_text="Permet de sélectionner les frais d'inscription ou de réinscription lors de l'application d'une remise.",
+    )
     logo = models.ImageField(upload_to='ecoles/logos/', blank=True, null=True)
     image = models.ImageField(upload_to='ecoles/images/', blank=True, null=True,
                               verbose_name="Photo de l'ecole",

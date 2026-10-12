@@ -29,6 +29,7 @@ from .forms import (
     RechercheEleveForm,
     ClasseForm,
     CouleursCartesEcoleForm,
+    RemisesScolariteEcoleForm,
     EcoleForm,
     GrilleTarifaireForm,
 )
@@ -622,14 +623,33 @@ def configurer_ecole(request, ecole_id: int):
         or configuration_anonyme
     )
     can_manage_notes_branding = can_manage_card_colors
+    can_manage_remises = bool(
+        request.user.is_authenticated
+        and (user_is_superadmin(request.user) or est_createur or est_principal
+             or (meme_ecole and user_can_manage_school_structure(request.user, 'peut_gerer_grilles_tarifaires'))
+             or (meme_ecole and user_is_admin(request.user)))
+    )
     can_edit = (
         can_manage_classes or can_manage_grilles
-        or can_manage_card_colors or can_manage_notes_branding
+        or can_manage_card_colors or can_manage_notes_branding or can_manage_remises
     )
 
     if request.method == 'POST' and can_edit:
         action = request.POST.get('action')
         try:
+            if action == 'update_remises_scolarite':
+                if not can_manage_remises:
+                    return render(request, 'utilisateurs/permission_denied.html', {
+                        'error_message': "Vous n'êtes pas autorisé à modifier les règles de remise de cette école.",
+                    }, status=403)
+                remises_form = RemisesScolariteEcoleForm(request.POST, instance=ecole)
+                if remises_form.is_valid():
+                    remises_form.save()
+                    messages.success(request, "Les règles de remise de l'école ont été enregistrées.")
+                else:
+                    messages.error(request, "Veuillez vérifier les règles de remise.")
+                return redirect('eleves:configurer_ecole', ecole_id=ecole.id)
+
             if action == 'update_card_colors':
                 if not can_manage_card_colors:
                     messages.error(request, "Vous n'êtes pas autorisé à modifier les couleurs des cartes.")
@@ -786,6 +806,8 @@ def configurer_ecole(request, ecole_id: int):
         'can_manage_grilles': can_manage_grilles,
         'can_manage_card_colors': can_manage_card_colors,
         'can_manage_notes_branding': can_manage_notes_branding,
+        'can_manage_remises': can_manage_remises,
+        'remises_form': RemisesScolariteEcoleForm(instance=ecole),
         'can_submit_validation': can_submit_validation,
         'couleurs_form': couleurs_form,
         'charte_notes_form': charte_notes_form,

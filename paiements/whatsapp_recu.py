@@ -234,11 +234,12 @@ class WhatsAppNoteRappelSender:
         ]
         montant_total = sum((du or Decimal('0')) for _libelle, du, _paye, _date in postes)
         montant_paye = sum((paye or Decimal('0')) for _libelle, _du, paye, _date in postes)
-        remises_total = PaiementRemise.objects.filter(
+        remises = list(PaiementRemise.objects.filter(
             paiement__eleve=eleve,
             paiement__annee_scolaire=echeancier.annee_scolaire,
             paiement__statut='VALIDE'
-        ).aggregate(total=Sum('montant_remise'))['total'] or Decimal('0')
+        ).order_by('paiement__date_paiement', 'paiement_id', 'pk'))
+        remises_total = sum((ligne.montant_remise for ligne in remises), Decimal('0'))
 
         montant_couvert = min(montant_total, montant_paye + remises_total)
         reste_a_payer = max(montant_total - montant_couvert, Decimal('0'))
@@ -251,6 +252,12 @@ class WhatsAppNoteRappelSender:
         # réduit le solde global mais qu'aucune tranche prise isolément ne reflète.
         from .allocation import reste_par_tranche_avec_couverture
         restes_par_poste = reste_par_tranche_avec_couverture(echeancier, montant_paye + remises_total)
+        if any((ligne.regle_calcul or {}).get('inclure_inscription') for ligne in remises):
+            from .allocation import allocate_discounts
+            _, restes_par_poste = allocate_discounts(echeancier, remises)
+            retard_reel = sum(restes_par_poste[key] for key, poste in zip(
+                ('inscription', 'tranche_1', 'tranche_2', 'tranche_3'), postes,
+            ) if poste[3] and poste[3] <= today)
         cles_postes = ['inscription', 'tranche_1', 'tranche_2', 'tranche_3']
 
         prochains = []
