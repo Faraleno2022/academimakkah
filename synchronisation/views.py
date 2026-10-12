@@ -16,6 +16,7 @@ from django.utils import timezone
 from django.utils.crypto import constant_time_compare
 from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
+from django.views.decorators.cache import never_cache
 
 from eleves.models import Ecole
 from utilisateurs.utils import user_is_admin, user_school
@@ -113,7 +114,8 @@ def _device_from_headers(request):
     device = SyncDevice.objects.select_related('ecole').filter(device_id=device_id, actif=True).first()
     if not device or not device.verifier_token(token):
         return None, JsonResponse({'ok': False, 'error': 'Appareil non autorise.'}, status=403)
-    device.marquer_connexion()
+    if device.derniere_connexion is None or (timezone.now() - device.derniere_connexion).total_seconds() >= 30:
+        device.marquer_connexion()
     return device, None
 
 
@@ -134,6 +136,18 @@ def health(request):
         'version': 1,
         'server_time': timezone.now().isoformat(),
     })
+
+
+@login_required
+@require_GET
+@never_cache
+def revision(request):
+    """Révision visible dans le navigateur, sans données personnelles ni jeton."""
+    from .realtime import revision_pour_requete
+    valeur = revision_pour_requete(request)
+    if not valeur:
+        return JsonResponse({'ok': False, 'error': 'Aucune école autorisée.'}, status=403)
+    return JsonResponse({'ok': True, 'revision': valeur})
 
 
 def _script_ou_rien(server_url, code):
@@ -365,17 +379,40 @@ def push(request):
         if object_uuid and 'sync_uuid' not in payload:
             payload = {**payload, 'sync_uuid': str(object_uuid)}
 
+        event_id = None
+        if change.get('event_id') is not None:
+            try:
+                event_id = UUID(str(change['event_id']))
+            except ValueError:
+                rejected.append({'index': index, 'error': 'Identifiant de changement invalide.'})
+                continue
+
         try:
             with transaction.atomic():
-                sync_change = SyncChange.objects.create(
-                    ecole=device.ecole,
-                    device=device,
-                    model_label=model_label[:120],
-                    object_uuid=object_uuid,
-                    operation=operation,
-                    payload=payload,
-                )
-                apply_sync_change(sync_change)
+                sync_change = None
+                if event_id is not None:
+                    # Deux requêtes du même poste ne doivent pas appliquer le
+                    # même événement simultanément. Le verrou finit avec cette donnée.
+                    SyncDevice.objects.select_for_update().only('pk').get(pk=device.pk)
+                    precedent = SyncChange.objects.filter(
+                        device=device, source_event_id=event_id, statut=SyncChange.STATUT_APPLIED,
+                    ).first()
+                    if precedent is not None:
+                        if (precedent.ecole_id, precedent.model_label, precedent.object_uuid, precedent.operation, precedent.payload) != (
+                                device.ecole_id, model_label, object_uuid, operation, payload):
+                            raise ValueError('Identifiant de changement réutilisé avec des données différentes.')
+                        sync_change = precedent
+                if sync_change is None:
+                    sync_change = SyncChange.objects.create(
+                        ecole=device.ecole,
+                        device=device,
+                        source_event_id=event_id,
+                        model_label=model_label[:120],
+                        object_uuid=object_uuid,
+                        operation=operation,
+                        payload=payload,
+                    )
+                    apply_sync_change(sync_change)
             accepted.append({'index': index, 'change_id': sync_change.id})
         except Exception as exc:
             # Le rollback de la donnée est terminé avant d'écrire son erreur.
@@ -486,7 +523,6 @@ def pull(request):
         SyncChange.objects
         .filter(ecole=device.ecole, sequence__isnull=False)
         .filter(Q(statut=SyncChange.STATUT_APPLIED) | Q(device__isnull=True, statut=SyncChange.STATUT_PENDING))
-        .exclude(device=device)
         .select_related('device')
     )
     if exclus or modeles:

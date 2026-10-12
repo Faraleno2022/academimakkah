@@ -71,6 +71,7 @@ def _reveiller_sync():
     """Reveille immediatement le worker de synchronisation automatique, s'il tourne."""
     try:
         from .autosync import notifier_changement
-        notifier_changement()
+        from django.db import transaction
+        transaction.on_commit(notifier_changement)
     except Exception:
         pass

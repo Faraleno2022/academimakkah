@@ -14,6 +14,7 @@ OPTIMISATIONS v3.0 - ULTRA PERFORMANCE:
 from decimal import Decimal
 from typing import Dict, List, Optional
 from django.core.cache import cache
+from synchronisation.realtime import revision_ecole
 from django.db.models import Prefetch, Q
 from .calculs_intelligent import calculer_rang_intelligent
 import logging
@@ -46,7 +47,9 @@ def calculer_rangs_classe_periode(classe_note, periode: str, use_cache: bool = T
         Dictionnaire {eleve_id: {'rang': '10ème', 'rang_num': 10, 'moyenne': Decimal('15.5')}}
     """
     # Vérifier le cache (priorité au cache Django)
-    cache_key = f"rangs_classe_s{RANGS_CACHE_SCHEMA_VERSION}_{classe_note.id}_periode_{periode}"
+    revision = revision_ecole(classe_note.ecole_id) if use_cache else ''
+    version = cache.get(f"moy_version_classe_{classe_note.id}", 0)
+    cache_key = f"rangs_classe_s{RANGS_CACHE_SCHEMA_VERSION}_{classe_note.id}_periode_{periode}_v{version}_{revision}"
     if use_cache:
         rangs_cached = cache.get(cache_key)
         if rangs_cached is not None:

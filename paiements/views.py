@@ -1,4 +1,5 @@
 from django.shortcuts import render, get_object_or_404, redirect
+from synchronisation.realtime import revision_pour_requete
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.views.decorators.cache import cache_page
 from django.views.decorators.vary import vary_on_cookie
@@ -1809,7 +1810,7 @@ def liste_paiements(request):
     page = request.GET.get('page') or 1
 
     # Cache de l'école utilisateur
-    user_school_cache_key = f'user_school_{request.user.id}'
+    user_school_cache_key = f'user_school_{request.user.id}_{revision_pour_requete(request)}'
     user_school_obj = cache.get(user_school_cache_key)
     if user_school_obj is None and not user_is_superadmin(request.user):
         from utilisateurs.utils import user_school

@@ -198,7 +198,7 @@ class FichierConfigPosteTests(TestCase):
     def test_fichier_genere_est_lu_par_le_poste(self):
         import tempfile
         from pathlib import Path
-        from .autosync import _pret, charger_config
+        from .autosync import INTERVALLE_DEFAUT, _pret, charger_config
 
         response = self.client.post(reverse('synchronisation:device_setup'), {
             'ecole_id': self.ecole.pk, 'nom': 'Poste Secretariat',
@@ -217,7 +217,7 @@ class FichierConfigPosteTests(TestCase):
             lu = charger_config(dossier)
         self.assertTrue(_pret(lu))
         self.assertEqual(lu['token'], config['MYSCHOOL_SYNC_TOKEN'])
-        self.assertEqual(lu['interval'], 4)
+        self.assertEqual(lu['interval'], INTERVALLE_DEFAUT)
 
     def test_admin_ecole_ne_genere_pas_pour_une_autre_ecole(self):
         response = self.client.post(reverse('synchronisation:device_setup'), {

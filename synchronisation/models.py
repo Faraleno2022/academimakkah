@@ -120,6 +120,8 @@ class SyncChange(models.Model):
 
     ecole = models.ForeignKey(Ecole, on_delete=models.CASCADE, related_name='sync_changes')
     device = models.ForeignKey(SyncDevice, on_delete=models.SET_NULL, null=True, blank=True, related_name='changes')
+    # Identité du changement sur son poste, pour acquitter sans rejouer un envoi.
+    source_event_id = models.UUIDField(null=True, blank=True)
     model_label = models.CharField(max_length=120)
     object_uuid = models.UUIDField(null=True, blank=True, db_index=True)
     operation = models.CharField(max_length=10, choices=OPERATION_CHOICES)
@@ -137,8 +139,12 @@ class SyncChange(models.Model):
     class Meta:
         verbose_name = 'Changement synchronise'
         verbose_name_plural = 'Changements synchronises'
+        constraints = [
+            models.UniqueConstraint(fields=['device', 'source_event_id'], name='sync_device_source_event_unique'),
+        ]
         indexes = [
             models.Index(fields=['ecole', 'statut', 'date_creation']),
+            models.Index(fields=['ecole', 'statut', 'date_application'], name='sync_school_applied_date'),
             models.Index(fields=['model_label', 'object_uuid']),
         ]
 

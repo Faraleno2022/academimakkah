@@ -10,6 +10,7 @@ import json
 import logging
 import threading
 from datetime import timedelta
+from uuid import NAMESPACE_URL, uuid5
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -29,8 +30,7 @@ CONNECT_TIMEOUT = 5
 
 logger = logging.getLogger(__name__)
 
-_session = None
-_session_lock = threading.Lock()
+_sessions = threading.local()
 
 
 class SyncTransportError(Exception):
@@ -38,16 +38,16 @@ class SyncTransportError(Exception):
 
 
 def _get_session():
-    global _session
-    if _session is None:
-        with _session_lock:
-            if _session is None:
-                session = requests.Session()
-                adapter = HTTPAdapter(pool_connections=4, pool_maxsize=8, max_retries=0)
-                session.mount('http://', adapter)
-                session.mount('https://', adapter)
-                _session = session
-    return _session
+    # requests.Session porte des cookies et un état mutable : chaque tâche
+    # garde sa connexion persistante sans partager cet état avec l'autre.
+    session = getattr(_sessions, 'http', None)
+    if session is None:
+        session = requests.Session()
+        adapter = HTTPAdapter(pool_connections=4, pool_maxsize=8, max_retries=0)
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
+        _sessions.http = session
+    return session
 
 
 def _headers(device_id, token, gzip_body=False):
@@ -121,6 +121,9 @@ def push_pending(server_url, device_id, token, ecole, batch_size=PUSH_BATCH_SIZE
             {
                 'changes': [
                     {
+                        # Stable même après un redémarrage ou une réponse perdue.
+                        'event_id': str(uuid5(NAMESPACE_URL,
+                            f'myschool-sync:{str(device_id).lower()}:{change.pk}:{change.date_creation.isoformat()}')),
                         'model': change.model_label,
                         'object_uuid': str(change.object_uuid) if change.object_uuid else None,
                         'operation': change.operation,
