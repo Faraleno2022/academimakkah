@@ -6,9 +6,12 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.http import HttpResponse, JsonResponse
-from django.db.models import Q, Sum, Count
+from django.core.paginator import Paginator
+from django.db.models import Q, Sum, Count, F, DecimalField, ExpressionWrapper
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 from datetime import timedelta
+from decimal import Decimal
 import io
 
 from eleves.models import Eleve
@@ -26,17 +29,25 @@ from utilisateurs.permissions import can_delete_subscriptions
 from ecole_moderne.security_decorators import require_school_object
 from ecole_moderne.recherche import filtrer_termes
 from .export_listes import exporter_liste
-from .periodicites import resumes_periodicites_cantine
+from .periodicites import resumes_periodicites_cantine, totaux_cantine
 
 
 def _abonnements_cantine_tries(qs, avec_remise=False):
     """Conserve seulement les abonnements bénéficiant d'une remise réelle."""
     if avec_remise:
-        qs = qs.filter(type_remise__in=('POURCENTAGE', 'MONTANT'), valeur_remise__gt=0)
-    abonnements = list(qs.order_by('-date_expiration', 'eleve__nom'))
-    if avec_remise:
-        abonnements = [abo for abo in abonnements if abo.montant_remise > 0]
-    return abonnements
+        brut = Coalesce('montant_tarif', 'montant', output_field=DecimalField(max_digits=10, decimal_places=0))
+        qs = qs.alias(
+            _remise_produit=ExpressionWrapper(
+                brut * F('valeur_remise'),
+                output_field=DecimalField(max_digits=20, decimal_places=2),
+            ),
+        ).filter(
+            Q(montant_tarif__gt=0) | Q(montant_tarif__isnull=True, montant__gt=0),
+        ).filter(
+            Q(type_remise='MONTANT', valeur_remise__gte=Decimal('0.5'))
+            | Q(type_remise='POURCENTAGE', _remise_produit__gte=Decimal('50')),
+        )
+    return qs.order_by('-date_expiration', 'eleve__nom', '-pk')
 
 
 @login_required
@@ -89,7 +100,7 @@ def tableau_bord_cantine(request):
         for code, label in AbonnementCantine.TypeRepas.choices
     ]
     
-    montants = list(qs.select_related(None).only('montant', 'montant_tarif', 'type_remise', 'valeur_remise'))
+    montants = totaux_cantine(qs)
     
     context = {
         'titre_page': 'Gestion Cantine Scolaire',
@@ -97,17 +108,17 @@ def tableau_bord_cantine(request):
         'actifs': actifs,
         'expires': expires,
         'suspendus': suspendus,
-        'abonnements_expires': abonnements_expires,
-        'abonnements_proche_expiration': abonnements_proche_expiration,
-        'abonnements_critiques': abonnements_critiques,
-        'nb_expires': len(abonnements_expires),
-        'nb_proche_expiration': len(abonnements_proche_expiration),
-        'nb_critiques': len(abonnements_critiques),
+        'abonnements_expires': abonnements_expires[:10],
+        'abonnements_proche_expiration': abonnements_proche_expiration[:10],
+        'abonnements_critiques': abonnements_critiques[:10],
+        'nb_expires': abonnements_expires.count(),
+        'nb_proche_expiration': abonnements_proche_expiration.count(),
+        'nb_critiques': abonnements_critiques.count(),
         'stats_type_repas': stats_type_repas,
         'stats_type_repas_rows': stats_type_repas_rows,
-        'montant_abonnements': sum((a.montant_du for a in montants), 0),
-        'deja_paye': sum((a.deja_paye for a in montants), 0),
-        'reste_a_payer': sum((a.reste_a_payer for a in montants), 0),
+        'montant_abonnements': montants['du'],
+        'deja_paye': montants['paye'],
+        'reste_a_payer': montants['reste'],
         'recettes': recettes_par_periode(qs, CHAMP_DATE_CANTINE),
     }
     return render(request, 'bus/cantine/tableau_bord.html', context)
@@ -121,9 +132,7 @@ def liste_abonnements_cantine(request):
     if not user_is_superadmin(request.user):
         qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
 
-    periodicite_rows = resumes_periodicites_cantine(qs.select_related(None).only(
-        'periodicite', 'montant', 'montant_tarif', 'type_remise', 'valeur_remise',
-    ))
+    periodicite_rows = resumes_periodicites_cantine(qs)
     periodicite = (request.GET.get('periodicite') or '').strip()
     if periodicite not in dict(AbonnementCantine.Periodicite.choices):
         periodicite = ''
@@ -173,10 +182,18 @@ def liste_abonnements_cantine(request):
         qs = qs.filter(eleve__classe_id=classe_id)
     
     avec_remise = request.GET.get('remise') == 'oui'
-    abonnements = _abonnements_cantine_tries(qs, avec_remise)
+    filtres = _abonnements_cantine_tries(qs, avec_remise)
+    montants = totaux_cantine(filtres)
+    page_obj = Paginator(filtres, 100).get_page(request.GET.get('page'))
+    abonnements = page_obj.object_list
+    page_params = request.GET.copy()
+    page_params.pop('page', None)
     context = {
         'titre_page': 'Élèves abonnés à la cantine avec remise' if avec_remise else 'Liste des Abonnements Cantine',
         'abonnements': abonnements,
+        'page_obj': page_obj,
+        'page_query': page_params.urlencode(),
+        'total_count': page_obj.paginator.count,
         'avec_remise': avec_remise,
         'periodicite': periodicite,
         'periodicite_libelle': dict(AbonnementCantine.Periodicite.choices).get(periodicite, ''),
@@ -188,11 +205,11 @@ def liste_abonnements_cantine(request):
         'periode': periode,
         'periode_libelle': LIBELLES_PERIODES.get(periode, ''),
         'recettes': recettes,
-        'total_filtre': sum((a.montant or 0 for a in abonnements), 0),
-        'total_tarif': sum((a.montant_brut for a in abonnements), 0),
-        'total_remise': sum((a.montant_remise for a in abonnements), 0),
-        'total_du': sum((a.montant_du for a in abonnements), 0),
-        'total_reste': sum((a.reste_a_payer for a in abonnements), 0),
+        'total_filtre': montants['paye'],
+        'total_tarif': montants['brut'],
+        'total_remise': montants['remise'],
+        'total_du': montants['du'],
+        'total_reste': montants['reste'],
     }
     return render(request, 'bus/cantine/liste.html', context)
 

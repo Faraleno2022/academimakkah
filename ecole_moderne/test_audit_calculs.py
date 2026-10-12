@@ -209,10 +209,13 @@ class AuditSalairesCalculs(TestCase):
     def test_dernier_jour_rapport_inclus_sans_anciens_salaires(self):
         self.etat.valide = True
         self.etat.date_validation = timezone.make_aware(datetime(2026, 7, 31, 18))
+        self.etat.paye = True
+        self.etat.date_paiement = timezone.make_aware(datetime(2026, 7, 31, 18))
         self.etat.save()
         ancienne = PeriodeSalaire.objects.create(ecole=self.ecole, mois=6, annee=2026, cree_par=self.user)
         EtatSalaire.objects.create(enseignant=self.enseignant, periode=ancienne,
             salaire_base=800000, salaire_net=800000, valide=True, calcule_par=self.user,
+            paye=True, date_paiement=timezone.make_aware(datetime(2026, 6, 30, 12)),
             date_validation=timezone.make_aware(datetime(2026, 6, 30, 12)))
         data = collecter_donnees_periode(date(2026, 7, 1), date(2026, 7, 31), 'MENSUEL', self.user)
         self.assertEqual(data['ecoles'][self.ecole.pk]['salaires']['montant_total'], 1000000)

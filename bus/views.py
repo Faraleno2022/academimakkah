@@ -6,6 +6,7 @@ from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.http import HttpResponse
 from django.http import JsonResponse
+from django.core.paginator import Paginator
 from django.db.models import Q, Sum, Count
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -54,7 +55,9 @@ def tableau_bord(request):
     # Optimisation : éviter de charger tous les objets en mémoire
     exp = qs.filter(date_expiration__lt=today).count()
     proche = 0
-    for date_exp, alerte_jours in qs.values_list('date_expiration', 'alerte_avant_jours'):
+    for date_exp, alerte_jours in qs.order_by().values_list(
+        'date_expiration', 'alerte_avant_jours',
+    ).iterator(chunk_size=2000):
         if date_exp and date_exp >= today:
             delta = (date_exp - today).days
             if 0 <= delta <= (alerte_jours or 7):
@@ -114,7 +117,9 @@ def _filtrer_abonnements(request, qs):
     elif filtre == 'proches':
         # Sélectionner par logique métier est_proche_expiration (fenêtre d'alerte)
         ids_proches = []
-        for a_id, date_exp, alerte_jours in qs.values_list('id', 'date_expiration', 'alerte_avant_jours'):
+        for a_id, date_exp, alerte_jours in qs.order_by().values_list(
+            'id', 'date_expiration', 'alerte_avant_jours',
+        ).iterator(chunk_size=2000):
             if date_exp:
                 if date_exp >= today:
                     delta = (date_exp - today).days
@@ -127,27 +132,40 @@ def _filtrer_abonnements(request, qs):
     return qs, q, filtre, periode
 
 
-def _abonnements_avec_situation(user, qs):
-    """Charge chaque versement visible avec le cumul payé de sa grille."""
-    abonnements = list(qs.order_by('-updated_at'))
-    paires = {(a.eleve_id, a.grille_id) for a in abonnements if a.grille_id}
-    totaux = {}
-    if paires:
-        for row in _abonnements_visibles(user).filter(
-            eleve_id__in={e for e, _ in paires}, grille_id__in={g for _, g in paires},
-        ).values('eleve_id', 'grille_id', 'periodicite').annotate(total=Sum('montant')):
-            cle = (row['eleve_id'], row['grille_id'])
-            if cle in paires:
-                totaux.setdefault(cle, {})[row['periodicite']] = row['total'] or 0
-    remises = remises_par_eleve_grille(paires)
+def _situations_pour_paires(user, paires):
+    """Calcule les soldes annuels par lots, sans charger tous les reçus."""
+    paires = list({(eleve, grille) for eleve, grille in paires if grille})
     situations = {}
+    for debut in range(0, len(paires), 400):
+        lot = set(paires[debut:debut + 400])
+        totaux = {}
+        for row in _abonnements_visibles(user).filter(
+            eleve_id__in={e for e, _ in lot}, grille_id__in={g for _, g in lot},
+        ).order_by().values('eleve_id', 'grille_id', 'periodicite').annotate(
+            total=Sum('montant'),
+        ).iterator(chunk_size=2000):
+            cle = (row['eleve_id'], row['grille_id'])
+            if cle in lot:
+                totaux.setdefault(cle, {})[row['periodicite']] = row['total'] or 0
+        remises = remises_par_eleve_grille(lot)
+        grilles = GrilleTarifaireBus.objects.in_bulk({g for _, g in lot})
+        for cle in lot:
+            situations[cle] = grilles[cle[1]].situation_depuis_totaux(
+                totaux.get(cle, {}), remises.get(cle),
+            )['ANNUEL']
+    return situations
+
+
+def _abonnements_avec_situation(user, qs, situations=None):
+    """Associe les soldes annuels aux reçus affichés ou exportés."""
+    abonnements = list(qs.order_by('-updated_at') if hasattr(qs, 'order_by') else qs)
+    if situations is None:
+        situations = _situations_pour_paires(
+            user, ((a.eleve_id, a.grille_id) for a in abonnements),
+        )
     for abo in abonnements:
         if abo.grille_id:
             cle = (abo.eleve_id, abo.grille_id)
-            if cle not in situations:
-                situations[cle] = abo.grille.situation_depuis_totaux(
-                    totaux.get(cle, {}), remises.get(cle),
-                )['ANNUEL']
             abo.situation_financiere = situations[cle]
             abo.deja_paye = situations[cle]['paye']
         else:
@@ -155,38 +173,43 @@ def _abonnements_avec_situation(user, qs):
     return abonnements, situations
 
 
+def _resumes_periodicites_bus(user, qs):
+    """Résume les reçus par périodicité à partir de groupes SQL."""
+    libelles = dict(AbonnementBus.Periodicite.choices)
+    resumes = {}
+    for groupe in qs.order_by().values('eleve_id', 'grille_id', 'periodicite').annotate(
+        nb=Count('id'), montant=Sum('montant'),
+    ).iterator(chunk_size=2000):
+        code = groupe['periodicite']
+        row = resumes.setdefault(code, {
+            'code': code, 'label': libelles.get(code, code or 'Non renseignée'),
+            'nb': 0, 'montant': 0, 'du': 0, 'remise': 0, 'paye': 0, 'reste': 0,
+            'paires': set(),
+        })
+        row['nb'] += groupe['nb']
+        row['montant'] += groupe['montant'] or 0
+        if groupe['grille_id']:
+            row['paires'].add((groupe['eleve_id'], groupe['grille_id']))
+    toutes_paires = set().union(*(row['paires'] for row in resumes.values())) if resumes else set()
+    situations = _situations_pour_paires(user, toutes_paires)
+    for row in resumes.values():
+        for cle in row.pop('paires'):
+            situation = situations[cle]
+            for champ in ('du', 'remise', 'paye', 'reste'):
+                row[champ] += situation[champ]
+    return sorted(resumes.values(), key=lambda row: (
+        list(libelles).index(row['code']) if row['code'] in libelles else len(libelles),
+        row['label'],
+    ))
+
+
 @login_required
 def liste_abonnements(request):
     qs = _abonnements_visibles(request.user)
 
     # Le récapitulatif couvre tous les abonnements visibles de l'école.
-    tous_abonnements, toutes_situations = _abonnements_avec_situation(request.user, qs)
+    periodicite_rows = _resumes_periodicites_bus(request.user, qs)
     libelles_periodicites = dict(AbonnementBus.Periodicite.choices)
-    resumes = {}
-    for abo in tous_abonnements:
-        code = abo.periodicite
-        resume = resumes.setdefault(code, {
-            'code': code, 'label': libelles_periodicites.get(code, code or 'Non renseignée'),
-            'nb': 0, 'montant': 0, 'du': 0, 'remise': 0, 'paye': 0, 'reste': 0,
-            'paires': set(),
-        })
-        resume['nb'] += 1
-        resume['montant'] += abo.montant or 0
-        paire = (abo.eleve_id, abo.grille_id)
-        if abo.grille_id and paire not in resume['paires']:
-            situation = toutes_situations[paire]
-            resume['du'] += situation['du']
-            resume['remise'] += situation['remise']
-            resume['paye'] += situation['paye']
-            resume['reste'] += situation['reste']
-            resume['paires'].add(paire)
-    periodicite_rows = list(resumes.values())
-    periodicite_rows.sort(key=lambda row: (
-        list(libelles_periodicites).index(row['code'])
-        if row['code'] in libelles_periodicites else len(libelles_periodicites), row['label'],
-    ))
-    for row in periodicite_rows:
-        del row['paires']
     periodicite = (request.GET.get('periodicite') or '').strip()
     if periodicite not in libelles_periodicites:
         periodicite = ''
@@ -212,7 +235,9 @@ def liste_abonnements(request):
     # Counts for expiration proximity using only necessary fields
     nb_expiration_proche = 0
     nb_expiration_depassee = 0
-    for date_exp, alerte_jours in qs.values_list('date_expiration', 'alerte_avant_jours'):
+    for date_exp, alerte_jours in qs.order_by().values_list(
+        'date_expiration', 'alerte_avant_jours',
+    ).iterator(chunk_size=2000):
         if date_exp:
             if date_exp < today:
                 nb_expiration_depassee += 1
@@ -230,11 +255,20 @@ def liste_abonnements(request):
             'montant': row['montant'] or 0,
         })
 
-    abonnements, situations = _abonnements_avec_situation(request.user, qs)
+    paires = qs.order_by().filter(grille__isnull=False).values_list(
+        'eleve_id', 'grille_id',
+    ).distinct().iterator(chunk_size=2000)
+    situations = _situations_pour_paires(request.user, paires)
+    page_obj = Paginator(qs.order_by('-updated_at', '-pk'), 100).get_page(request.GET.get('page'))
+    abonnements, _ = _abonnements_avec_situation(request.user, list(page_obj.object_list), situations)
+    page_params = request.GET.copy()
+    page_params.pop('page', None)
 
     context = {
         'titre_page': 'Abonnements Bus - Liste',
         'abonnements': abonnements,
+        'page_obj': page_obj,
+        'page_query': page_params.urlencode(),
         'q': q,
         'filtre': filtre,
         'periode': periode,

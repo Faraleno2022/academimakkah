@@ -1289,7 +1289,7 @@ def tableau_bord_paiements(request):
         .order_by('-date_paiement', '-date_creation')
     )
     paiements_recents_qs = filter_by_user_school(paiements_recents_qs, request.user, 'eleve__classe__ecole')
-    if paiements_recents_qs.count() == 0:
+    if not paiements_recents_qs.exists():
         paiements_recents_qs = (
             Paiement.objects
             .select_related('eleve', 'type_paiement', 'mode_paiement')
@@ -1413,7 +1413,7 @@ def tableau_bord_paiements(request):
             ),
         ]
 
-    for echeancier in echeanciers_direction_qs:
+    for echeancier in echeanciers_direction_qs.iterator(chunk_size=2000):
         remises = int(getattr(echeancier, 'remises_valides', 0) or 0)
         components = _component_values(echeancier)
         total_du = sum(due for due, _paye, _echeance in components)
