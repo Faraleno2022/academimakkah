@@ -1,0 +1,43 @@
+{
+  "source": "Spot_MySchool_Notes.mp4",
+  "source_octets": 45428848,
+  "source_sha256": "e923328874b69379d6306798d6abe40349e60b7afed50e74924e1a4ca8b48fd6",
+  "duree": 132.433333,
+  "profils": {
+    "360p": {
+      "segments": 67,
+      "duree": 132.416667,
+      "octets": 4187919,
+      "debit_moyen": 252932,
+      "debit_maximum": 393550,
+      "segment_max_octets": 81236,
+      "largeur": 640,
+      "hauteur": 360,
+      "codecs": "avc1.4d401f,mp4a.40.2"
+    },
+    "480p": {
+      "segments": 67,
+      "duree": 132.416667,
+      "octets": 6590764,
+      "debit_moyen": 398101,
+      "debit_maximum": 666737,
+      "segment_max_octets": 132622,
+      "largeur": 854,
+      "hauteur": 480,
+      "codecs": "avc1.4d401f,mp4a.40.2"
+    },
+    "720p": {
+      "segments": 67,
+      "duree": 132.416667,
+      "octets": 11893094,
+      "debit_moyen": 718443,
+      "debit_maximum": 1299957,
+      "segment_max_octets": 230049,
+      "largeur": 1280,
+      "hauteur": 720,
+      "codecs": "avc1.4d401f,mp4a.40.2"
+    }
+  },
+  "economique_octets": 4206893,
+  "reduction_pourcentage": 90.7
+}

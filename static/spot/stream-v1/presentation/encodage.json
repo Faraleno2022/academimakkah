@@ -1,0 +1,43 @@
+{
+  "source": "Spot_MySchool.mp4",
+  "source_octets": 44344193,
+  "source_sha256": "4b3e8a8a2f3653debbbb5053182ba46fb2eb8007b8df073bec6d4971cd96ad1a",
+  "duree": 119.566667,
+  "profils": {
+    "360p": {
+      "segments": 60,
+      "duree": 119.583333,
+      "octets": 3945011,
+      "debit_moyen": 263826,
+      "debit_maximum": 355938,
+      "segment_max_octets": 80895,
+      "largeur": 640,
+      "hauteur": 360,
+      "codecs": "avc1.4d401f,mp4a.40.2"
+    },
+    "480p": {
+      "segments": 60,
+      "duree": 119.583333,
+      "octets": 6556363,
+      "debit_moyen": 438523,
+      "debit_maximum": 646308,
+      "segment_max_octets": 146888,
+      "largeur": 854,
+      "hauteur": 480,
+      "codecs": "avc1.4d401f,mp4a.40.2"
+    },
+    "720p": {
+      "segments": 60,
+      "duree": 119.583333,
+      "octets": 11775364,
+      "debit_moyen": 787669,
+      "debit_maximum": 1245948,
+      "segment_max_octets": 283170,
+      "largeur": 1280,
+      "hauteur": 720,
+      "codecs": "avc1.4d401f,mp4a.40.2"
+    }
+  },
+  "economique_octets": 3962553,
+  "reduction_pourcentage": 91.1
+}

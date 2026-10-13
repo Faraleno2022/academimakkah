@@ -2,44 +2,80 @@
 <section id="videos" class="mb-5" aria-labelledby="videos-title" style="scroll-margin-top: 100px;">
   <div class="mb-4">
     <h2 id="videos-title" class="h3 text-primary fw-bold">Découvrez MySchoolGN en vidéo</h2>
-    <p class="text-muted mb-0">Explorez la gestion de votre école et découvrez le suivi des notes en images.</p>
+    <p class="text-muted mb-0">Explorez la gestion de votre école. La qualité de lecture s'adapte à votre connexion.</p>
   </div>
   <div class="row g-4">
-    <article class="col-lg-6" aria-labelledby="video-presentation-title">
+    <article class="col-lg-6" aria-labelledby="video-presentation-title" data-video-card>
       <div class="card h-100 border-0 shadow-sm overflow-hidden">
         <div class="ratio ratio-16x9 bg-dark">
           <video controls playsinline preload="none" width="1920" height="1080"
+                 data-adaptive-video data-hls-url="{% static 'spot/stream-v1/presentation/master.m3u8' %}"
+                 data-fallback-url="{% static 'spot/stream-v1/presentation/economique.mp4' %}"
                  poster="{% static 'spot/Spot_MySchool_poster.jpg' %}"
                  aria-labelledby="video-presentation-title" style="object-fit: contain;">
-            <source src="{% static 'spot/Spot_MySchool.mp4' %}" type="video/mp4">
+            <source src="{% static 'spot/stream-v1/presentation/economique.mp4' %}" type="video/mp4">
             Votre navigateur ne permet pas de lire cette vidéo.
-            <a href="{% static 'spot/Spot_MySchool.mp4' %}">Ouvrir la présentation de MySchoolGN</a>.
+            <a href="{% static 'spot/stream-v1/presentation/economique.mp4' %}">Ouvrir la présentation de MySchoolGN</a>.
           </video>
+          <button type="button" class="btn border-0 p-0" data-video-start hidden
+                  aria-label="Lire la présentation de MySchoolGN" style="background: rgba(0, 0, 0, .12);">
+            <span class="bg-primary text-white rounded-pill px-4 py-3 shadow">
+              <i class="fas fa-play me-2" aria-hidden="true"></i><span data-video-start-label>Lire la vidéo</span>
+            </span>
+          </button>
         </div>
         <div class="card-body p-4">
           <p class="small text-muted mb-2">Présentation · 2 min</p>
           <h3 id="video-presentation-title" class="h5 fw-bold">Votre école, une gestion simplifiée</h3>
           <p class="text-muted mb-0">Découvrez MySchoolGN et ses outils pour accompagner votre établissement au quotidien.</p>
+          <div class="mt-3" data-video-selector hidden>
+            <label for="qualite-presentation" class="form-label small">Qualité de lecture</label>
+            <select id="qualite-presentation" class="form-select form-select-sm" data-video-quality>
+              <option value="auto">Automatique</option>
+              <option value="eco">Économie de données</option>
+              <option value="hd">Haute qualité</option>
+            </select>
+          </div>
+          <p class="small text-muted mt-2 mb-0" data-video-status role="status" aria-live="polite">Lecture optimisée pour les connexions lentes.</p>
         </div>
       </div>
     </article>
-    <article class="col-lg-6" aria-labelledby="video-notes-title">
+    <article class="col-lg-6" aria-labelledby="video-notes-title" data-video-card>
       <div class="card h-100 border-0 shadow-sm overflow-hidden">
         <div class="ratio ratio-16x9 bg-dark">
           <video controls playsinline preload="none" width="1920" height="1080"
+                 data-adaptive-video data-hls-url="{% static 'spot/stream-v1/notes/master.m3u8' %}"
+                 data-fallback-url="{% static 'spot/stream-v1/notes/economique.mp4' %}"
                  poster="{% static 'spot/Spot_MySchool_Notes_poster.jpg' %}"
                  aria-labelledby="video-notes-title" style="object-fit: contain;">
-            <source src="{% static 'spot/Spot_MySchool_Notes.mp4' %}" type="video/mp4">
+            <source src="{% static 'spot/stream-v1/notes/economique.mp4' %}" type="video/mp4">
             Votre navigateur ne permet pas de lire cette vidéo.
-            <a href="{% static 'spot/Spot_MySchool_Notes.mp4' %}">Ouvrir la vidéo sur la gestion des notes</a>.
+            <a href="{% static 'spot/stream-v1/notes/economique.mp4' %}">Ouvrir la vidéo sur la gestion des notes</a>.
           </video>
+          <button type="button" class="btn border-0 p-0" data-video-start hidden
+                  aria-label="Lire la vidéo sur les notes" style="background: rgba(0, 0, 0, .12);">
+            <span class="bg-primary text-white rounded-pill px-4 py-3 shadow">
+              <i class="fas fa-play me-2" aria-hidden="true"></i><span data-video-start-label>Lire la vidéo</span>
+            </span>
+          </button>
         </div>
         <div class="card-body p-4">
           <p class="small text-muted mb-2">Gestion des notes · 2 min 12 s</p>
           <h3 id="video-notes-title" class="h5 fw-bold">Les notes et le suivi scolaire en images</h3>
           <p class="text-muted mb-0">Découvrez la gestion des notes dans MySchoolGN et le suivi des résultats de vos élèves.</p>
+          <div class="mt-3" data-video-selector hidden>
+            <label for="qualite-notes" class="form-label small">Qualité de lecture</label>
+            <select id="qualite-notes" class="form-select form-select-sm" data-video-quality>
+              <option value="auto">Automatique</option>
+              <option value="eco">Économie de données</option>
+              <option value="hd">Haute qualité</option>
+            </select>
+          </div>
+          <p class="small text-muted mt-2 mb-0" data-video-status role="status" aria-live="polite">Lecture optimisée pour les connexions lentes.</p>
         </div>
       </div>
     </article>
   </div>
 </section>
+<script src="{% static 'js/public-videos.js' %}?v=1" defer
+        data-hls-library="{% static 'vendor/hls/hls-1.7.3.light.min.js' %}"></script>
