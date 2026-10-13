@@ -33,6 +33,7 @@
 *.zip binary
 *.tar binary
 *.gz binary
+*.mp4 binary
 
 # Stratégie de merge: garder la version locale
 media/eleves/photos/* merge=ours

@@ -315,6 +315,9 @@
       Paiements, bulletins, parents, offline et pilotage directeur.
     </p>
     <div class="hero-actions" aria-label="Actions principales">
+      <a href="#videos" class="btn btn-light btn-lg">
+        <i class="fas fa-play-circle" aria-hidden="true"></i>Voir les vidéos
+      </a>
       <a href="{% url 'contact' %}" class="btn btn-light btn-lg">
         <i class="fas fa-calendar-check"></i>Demander une démonstration
       </a>
@@ -335,6 +338,8 @@
 
 <!-- Section de contenu -->
 <div class="container content-section py-5" id="content-section">
+  {% include 'public/_videos.html' %}
+
   <div class="strategy-strip shadow-sm mb-4">
     <div class="row g-3">
       <div class="col-lg-4">
