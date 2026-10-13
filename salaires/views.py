@@ -1706,7 +1706,7 @@ def gestion_periodes(request):
     statut = request.GET.get('statut', '')  # 'cloture' | 'ouvert' | ''
     
     # Construction de la requête
-    periodes = PeriodeSalaire.objects.select_related('ecole').prefetch_related('etats_salaire')
+    periodes = PeriodeSalaire.objects.select_related('ecole')
 
     # Restriction par école pour les non-admins
     ecole_user = _ecole_utilisateur(request)
@@ -1741,15 +1741,16 @@ def gestion_periodes(request):
         periodes = (
             PeriodeSalaire.objects
             .select_related('ecole')
-            .prefetch_related('etats_salaire')
             .filter(id__in=fallback_ids)
             .order_by('-annee', '-mois')
         )
     
-    # Ajout des statistiques pour chaque période
-    for periode in periodes:
-        periode.etats_valides = periode.etats_salaire.filter(valide=True).count()
-        periode.etats_payes = periode.etats_salaire.filter(paye=True).count()
+    # Les compteurs sont calculés en SQL ; seule la page demandée est chargée.
+    periodes = periodes.annotate(
+        etats_total=Count('etats_salaire'),
+        etats_valides=Count('etats_salaire', filter=Q(etats_salaire__valide=True)),
+        etats_payes=Count('etats_salaire', filter=Q(etats_salaire__paye=True)),
+    )
     
     # Pagination
     paginator = Paginator(periodes, 15)
@@ -1763,7 +1764,6 @@ def gestion_periodes(request):
     annees_disponibles = PeriodeSalaire.objects.values_list('annee', flat=True).distinct().order_by('-annee')
     
     # Statistiques
-    from django.db.models import Count
     # Utiliser une requête de base non-slicée pour les stats globales si besoin
     base_stats_qs = PeriodeSalaire.objects.all()
     if restreindre and ecole_user:

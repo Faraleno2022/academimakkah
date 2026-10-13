@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-12",
+  "base": "SQLite temporaire en mémoire",
+  "reseau": false,
+  "requetes": {
+    "delta_200_eleves": {
+      "avant": 406,
+      "apres": 7
+    },
+    "instantane_200_eleves": {
+      "avant": 203,
+      "apres": 5
+    },
+    "page_15_periodes_sur_60": {
+      "avant": 128,
+      "apres": 8
+    }
+  },
+  "volume": {
+    "eleves": 10000,
+    "evenements": 100000,
+    "delta_500_requetes": 7,
+    "delta_500_ms": 148.8,
+    "instantane_pages": 21,
+    "instantane_10000_ms": 2436.0
+  },
+  "tests_cibles": {
+    "nombre": 83,
+    "resultat": "OK",
+    "secondes": 54.646
+  },
+  "tests_javascript": {
+    "nombre": 7,
+    "resultat": "OK"
+  },
+  "schema": "OK, migration 0008 appliquée sur base temporaire",
+  "suite_complete": {
+    "nombre": 866,
+    "resultat": "OK",
+    "secondes": 187.16,
+    "journal": "tmp\\audit_performance_suite_validee_20261012.log"
+  },
+  "volume_validation_complete": {
+    "eleves": 10000,
+    "evenements": 100000,
+    "delta_500_requetes": 7,
+    "delta_500_ms": 119.8,
+    "instantane_pages": 21,
+    "instantane_10000_ms": 2277.7
+  }
+}

@@ -147,13 +147,15 @@ def _cycle(base_dir, direction=None):
                 nb_pousses += nombre
             else:
                 nb_recus += nombre
-            logger.info('[Sync] %s : %s changement(s), %.2f s', sens, nombre, time.monotonic() - debut)
+            journaliser = logger.info if nombre else logger.debug
+            journaliser('[Sync] %s : %s changement(s), %.2f s', sens, nombre, time.monotonic() - debut)
         except Exception:
             logger.exception('[Sync] Échec %s après %.2f s ; poursuite du cycle', sens, time.monotonic() - debut)
     return config, nb_pousses, nb_recus
 
 
 _modeles_ajoutes_emis = False
+_modeles_ajoutes_progression = {}
 
 
 def _emettre_modeles_ajoutes():
@@ -164,10 +166,11 @@ def _emettre_modeles_ajoutes():
         return
     from .engine import emettre_existants
     from .registry import MODELES_PAR_VERSION
-    nb = emettre_existants([label for labels in MODELES_PAR_VERSION.values() for label in labels])
+    nb = emettre_existants([label for labels in MODELES_PAR_VERSION.values() for label in labels],
+                          limite=50, progression=_modeles_ajoutes_progression)
     if nb:
         print(f"[Sync] {nb} ligne(s) existante(s) mise(s) en file pour envoi.")
-    _modeles_ajoutes_emis = True
+    _modeles_ajoutes_emis = bool(_modeles_ajoutes_progression.get('complete'))
 
 
 def _boucle(base_dir, delai_demarrage, direction=None):

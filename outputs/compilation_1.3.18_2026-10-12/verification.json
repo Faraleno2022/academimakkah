@@ -1,0 +1,50 @@
+{
+  "version": "1.3.18",
+  "source_commit": "82608e953275ca23b6a297d0ded643cfc2e9539e",
+  "modules_compiles_verifies": [
+    "app_version",
+    "desktop_updater",
+    "eleves.models",
+    "eleves.forms",
+    "eleves.views",
+    "paiements.allocation",
+    "paiements.recalcul_remises",
+    "paiements.remise_forms",
+    "paiements.services",
+    "paiements.views",
+    "paiements.views_tranches",
+    "paiements.rapports_professionnels",
+    "paiements.dashboard_metrics",
+    "paiements.rappels",
+    "paiements.whatsapp_recu",
+    "synchronisation.autosync",
+    "synchronisation.engine",
+    "synchronisation.client",
+    "salaires.models",
+    "bus.views"
+  ],
+  "ressources_conformes_aux_sources": [
+    "eleves/migrations/0022_ecole_autoriser_remise_inscription.py",
+    "templates/eleves/configurer_ecole.html",
+    "templates/paiements/appliquer_remise.html",
+    "templates/paiements/echeancier_eleve.html",
+    "static/js/sync-refresh.js"
+  ],
+  "integrite": true,
+  "donnees_client_exclues": true,
+  "base_locale_inchangee": true,
+  "executable_sha256": "4a01063a1fed494d3570b15e9603fd3daa94497cedf6a44c4b0df144b7562134",
+  "taille_executable_octets": 30151294,
+  "ajustements_version": [
+    "app_version.py",
+    "installer_myschool.iss"
+  ],
+  "installateur": "C:\\Users\\LENO\\Desktop\\GS_hadja_kanfing_dian--main\\Output\\MySchoolGN_Setup_v1.3.18.exe",
+  "installateur_octets": 78209978,
+  "installateur_sha256": "4a3ca45c5e4f3bfe676e3862b2d98c070417e02dba70e20d14aca4d16acb13f4",
+  "controle_demarrage": {
+    "code_sortie": 0,
+    "duree_secondes": 2.81,
+    "aucune_base_creee": true
+  }
+}

@@ -309,7 +309,7 @@ class DiffusionOrdonneeTests(TestCase):
         classe = self.classe('CE1')
         SyncChange.objects.create(
             ecole=self.ecole, model_label='eleves.Classe', object_uuid=classe.sync_uuid,
-            operation='UPDATE', payload={'server_change_id': 41}, statut=SyncChange.STATUT_APPLIED,
+            operation='UPDATE', payload={'server_change_id': 41}, server_change_id=41, statut=SyncChange.STATUT_APPLIED,
         )
         device_id = str(uuid4())
         SyncCheckpoint.objects.create(device_id=device_id, initial_complete=True, last_change_id=40)
