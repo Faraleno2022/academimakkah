@@ -46,7 +46,7 @@ def _compteur_verrouille():
     return compteur
 
 
-def attribuer_sequences():
+def attribuer_sequences(max_lots=None):
     """Numérote les changements validés qui n'ont pas encore de numéro.
 
     À appeler avant de lire les changements à diffuser, hors de toute
@@ -54,7 +54,8 @@ def attribuer_sequences():
     Retourne le nombre de changements numérotés.
     """
     total = 0
-    while SyncChange.objects.filter(sequence__isnull=True).exists():
+    lots = 0
+    while (max_lots is None or lots < max_lots) and SyncChange.objects.filter(sequence__isnull=True).exists():
         with transaction.atomic():
             compteur = _compteur_verrouille()
             # Lue après le verrou : aucune autre attribution n'est en cours.
@@ -66,6 +67,7 @@ def attribuer_sequences():
                 break
             _numeroter(changements, compteur)
         total += len(changements)
+        lots += 1
     return total
 
 

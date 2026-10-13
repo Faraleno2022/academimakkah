@@ -2,6 +2,7 @@ import gzip
 import json
 import logging
 import secrets
+from collections import defaultdict
 from uuid import UUID
 
 from django.conf import settings
@@ -26,6 +27,8 @@ import threading
 from .engine import (
     apply_sync_change, dependances_pour_poste, emettre_existants, snapshot_changes_for_ecole,
     snapshot_page_for_ecole, get_model, model_label_for, queryset_for_ecole, serialize_instance,
+    precharger_relations_pour_poste,
+    InvalidSnapshotCursor,
 )
 from .autosync import INTERVALLE_DEFAUT
 from .liaison import NOM_FICHIER_SCRIPT, message_poste, script_connexion_poste, utiliser_code
@@ -42,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 _rattrapage_verrou = threading.Lock()
 _rattrapage_fait = False
+_rattrapage_progression = {}
 
 
 def _rattraper_modeles_ajoutes():
@@ -50,16 +54,23 @@ def _rattraper_modeles_ajoutes():
     global _rattrapage_fait
     if _rattrapage_fait:
         return
-    with _rattrapage_verrou:
+    # Un autre poste peut lire les changements déjà disponibles pendant le
+    # rattrapage ; sa requête n'attend pas les écritures du premier poste.
+    if not _rattrapage_verrou.acquire(blocking=False):
+        return
+    try:
         if _rattrapage_fait:
             return
         try:
-            emettre_existants([label for labels in MODELES_PAR_VERSION.values() for label in labels])
+            emettre_existants([label for labels in MODELES_PAR_VERSION.values() for label in labels],
+                             limite=50, progression=_rattrapage_progression)
         except Exception:
             # Ne bloque jamais la réception : nouvel essai à la prochaine requête.
             logger.exception('[Sync] Rattrapage des modèles ajoutés impossible.')
             return
-        _rattrapage_fait = True
+        _rattrapage_fait = bool(_rattrapage_progression.get('complete'))
+    finally:
+        _rattrapage_verrou.release()
 
 
 def _json_body(request):
@@ -453,6 +464,7 @@ def push(request):
     })
 
 
+@transaction.non_atomic_requests
 @csrf_exempt
 @require_http_methods(['GET', 'POST'])
 def pull(request):
@@ -497,6 +509,8 @@ def pull(request):
                 serialized_changes, next_cursor, watermark = snapshot_page_for_ecole(
                     device.ecole, cursor, labels=set(autorises),
                 )
+            except InvalidSnapshotCursor as exc:
+                return JsonResponse({'ok': False, 'error': str(exc), 'snapshot_restart_required': True}, status=409)
             except (ValueError, TypeError) as exc:
                 return JsonResponse({'ok': False, 'error': str(exc)}, status=400)
         else:
@@ -518,12 +532,12 @@ def pull(request):
 
     # Le curseur des postes porte sur le numéro de diffusion, attribué après
     # validation : un lot validé en retard ne peut plus être sauté.
-    attribuer_sequences()
+    attribuer_sequences(max_lots=1)
     changes = (
         SyncChange.objects
         .filter(ecole=device.ecole, sequence__isnull=False)
         .filter(Q(statut=SyncChange.STATUT_APPLIED) | Q(device__isnull=True, statut=SyncChange.STATUT_PENDING))
-        .select_related('device')
+        .select_related('device').defer('payload', 'erreur')
     )
     if exclus or modeles:
         changes = changes.filter(model_label__in=autorises)
@@ -542,15 +556,25 @@ def pull(request):
 
     changes = changes.order_by('sequence')[:PULL_PAGE_SIZE]
     changes = list(changes)
+    demandes = defaultdict(set)
+    for change in changes:
+        if change.operation != 'DELETE' and change.model_label in SYNC_MODEL_SET:
+            demandes[change.model_label].add(change.object_uuid)
+    courants = {}
+    for label, uuids in demandes.items():
+        model = get_model(label)
+        if model is not None:
+            courants.update({(label, obj.sync_uuid): obj for obj in
+                queryset_for_ecole(model, device.ecole).filter(sync_uuid__in=uuids)})
+    objets = precharger_relations_pour_poste(courants.values(), device.ecole)
     serialized_changes = []
     deja_vus = set()
     for change in changes:
         model = get_model(change.model_label)
         if model is None:
             continue
-        payload = change.payload
         if change.operation != 'DELETE':
-            obj = queryset_for_ecole(model, device.ecole).filter(sync_uuid=change.object_uuid).first()
+            obj = courants.get((change.model_label, change.object_uuid))
             if obj is None:
                 continue
             payload = serialize_instance(obj)
@@ -558,7 +582,7 @@ def pull(request):
             # quand même appliquer ce changement au lieu de bloquer dessus.
             deja_vus.add((model_label_for(model), obj.pk))
             serialized_changes.extend(
-                ligne for ligne in dependances_pour_poste(obj, device.ecole, deja_vus)
+                ligne for ligne in dependances_pour_poste(obj, device.ecole, deja_vus, objets=objets)
                 if ligne['model_label'] not in exclus
             )
         else:

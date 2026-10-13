@@ -37,6 +37,10 @@ class SyncTransportError(Exception):
     pass
 
 
+class SnapshotRestartRequired(SyncTransportError):
+    pass
+
+
 def _get_session():
     # requests.Session porte des cookies et un état mutable : chaque tâche
     # garde sa connexion persistante sans partager cet état avec l'autre.
@@ -94,6 +98,8 @@ def _parse_response(response):
     if not isinstance(data, dict):
         raise SyncTransportError(f"Reponse serveur invalide (HTTP {response.status_code}).")
     if response.status_code >= 400:
+        if response.status_code == 409 and data.get('snapshot_restart_required') is True:
+            raise SnapshotRestartRequired(data.get('error') or 'Instantané expiré.')
         raise SyncTransportError(data.get('error') or f"Erreur serveur {response.status_code}")
     return data
 
@@ -233,13 +239,20 @@ def rejouer_refuses(ecole):
 
 def _garder_pour_nouvel_essai(ecole, item, payload, exc):
     from django.utils import timezone
-    SyncChange.objects.create(
-        ecole=ecole, model_label=item['model_label'],
+    valeurs = dict(
+        model_label=item['model_label'],
         object_uuid=item.get('object_uuid') or None,
         operation=item['operation'], payload={**payload, MARQUEUR_RECU: True},
         statut=SyncChange.STATUT_FAILED, erreur=str(exc)[:2000],
         date_application=timezone.now(),
     )
+    server_id = item.get('id')
+    precedent = (SyncChange.objects.filter(ecole=ecole, server_change_id=server_id,
+        statut=SyncChange.STATUT_FAILED).order_by('-pk').first() if server_id else None)
+    if precedent is None:
+        SyncChange.objects.create(ecole=ecole, server_change_id=server_id, **valeurs)
+    else:
+        SyncChange.objects.filter(pk=precedent.pk).update(**valeurs)
     logger.warning(
         '[Sync] Changement recu non applique, nouvel essai au prochain cycle : %s %s (%s) -> %s',
         item.get('operation'), item.get('model_label'), item.get('object_uuid'), exc,
@@ -263,7 +276,7 @@ def reessayer_recus_en_echec(ecole, apply_change=None, limite=REESSAIS_PAR_CYCLE
     )
     for change in en_echec:
         if change.object_uuid and SyncChange.objects.filter(
-            ecole=ecole, statut=SyncChange.STATUT_APPLIED, model_label=change.model_label,
+            ecole=ecole, statut__in=[SyncChange.STATUT_APPLIED, SyncChange.STATUT_PENDING], model_label=change.model_label,
             object_uuid=change.object_uuid, id__gt=change.id,
         ).exists():
             change.delete()
@@ -290,9 +303,9 @@ def _appliquer_lot(items, ecole, apply_change):
     ids_serveur = [item.get('id') for item in items if item.get('id')]
     deja_appliques = set(
         SyncChange.objects.filter(
-            statut=SyncChange.STATUT_APPLIED,
-            payload__server_change_id__in=ids_serveur,
-        ).values_list('payload__server_change_id', flat=True)
+            ecole=ecole, statut=SyncChange.STATUT_APPLIED,
+            server_change_id__in=ids_serveur,
+        ).values_list('server_change_id', flat=True)
     ) if ids_serveur else set()
     applied = 0
     for item in items:
@@ -306,6 +319,7 @@ def _appliquer_lot(items, ecole, apply_change):
             with transaction.atomic():
                 change = SyncChange.objects.create(
                     ecole=ecole, model_label=item['model_label'],
+                    server_change_id=server_change_id,
                     object_uuid=item.get('object_uuid') or None,
                     operation=item['operation'], payload=payload,
                 )
@@ -314,6 +328,8 @@ def _appliquer_lot(items, ecole, apply_change):
             _garder_pour_nouvel_essai(ecole, item, payload, exc)
             continue
         applied += 1
+        if server_change_id:
+            deja_appliques.add(server_change_id)
     return applied
 
 
@@ -345,8 +361,8 @@ def rattraper_modeles_ajoutes(server_url, device_id, token, ecole, apply_change=
         items = response.get('changes', [])
         if not isinstance(items, list):
             raise SyncTransportError('Lot de synchronisation invalide.')
+        total += _appliquer_lot(items, ecole, apply_change)
         with transaction.atomic():
-            total += _appliquer_lot(items, ecole, apply_change)
             checkpoint.rattrapage_id = int(response.get('latest_change_id') or checkpoint.rattrapage_id)
             fini = not response.get('has_more', len(items) >= PULL_PAGE_SIZE)
             if fini:
@@ -386,7 +402,15 @@ def pull_changes(server_url, device_id, token, ecole, since_id=None, initial=Fal
             params.update(initial='1', snapshot_version='2')
             if checkpoint.snapshot_cursor:
                 params['snapshot_cursor'] = checkpoint.snapshot_cursor
-        response = _get_json(f'{server_url}/api/v1/sync/pull/', device_id, token, params=params)
+        try:
+            response = _get_json(f'{server_url}/api/v1/sync/pull/', device_id, token, params=params)
+        except SnapshotRestartRequired:
+            if not bootstrapping or not checkpoint.snapshot_cursor:
+                raise
+            checkpoint.snapshot_cursor = ''
+            checkpoint.save(update_fields=['snapshot_cursor'])
+            logger.warning('[Sync] Curseur initial expiré : reprise automatique sans effacer les données locales.')
+            continue
         if not response.get('ok'):
             raise SyncTransportError(response.get('error') or 'Pull refusé.')
         items = response.get('changes', [])
@@ -394,16 +418,19 @@ def pull_changes(server_url, device_id, token, ecole, since_id=None, initial=Fal
             raise SyncTransportError('Lot de synchronisation invalide.')
         applied = 0
         try:
+            # Chaque donnée est durable avant la suivante. Une page de 500
+            # éléments ne garde plus le verrou d'écriture SQLite pendant tout
+            # le rattrapage. Le curseur ne progresse qu'après la page entière.
+            if ecole is None:
+                premier = items[0] if items else None
+                if not premier or premier.get('model_label') != 'eleves.Ecole':
+                    raise SyncTransportError("École absente du premier lot reçu.")
+                ecole = build_change_instance(
+                    'eleves.Ecole', premier.get('object_uuid'), premier.get('payload') or {},
+                    trusted=True,
+                )
+            applied = _appliquer_lot(items, ecole, apply_change)
             with transaction.atomic():
-                if ecole is None:
-                    premier = items[0] if items else None
-                    if not premier or premier.get('model_label') != 'eleves.Ecole':
-                        raise SyncTransportError("École absente du premier lot reçu.")
-                    ecole = build_change_instance(
-                        'eleves.Ecole', premier.get('object_uuid'), premier.get('payload') or {},
-                        trusted=True,
-                    )
-                applied = _appliquer_lot(items, ecole, apply_change)
                 if bootstrapping:
                     next_cursor = response.get('next_snapshot_cursor') or ''
                     if next_cursor and next_cursor == checkpoint.snapshot_cursor:
@@ -418,7 +445,7 @@ def pull_changes(server_url, device_id, token, ecole, since_id=None, initial=Fal
                     checkpoint.last_change_id = int(response.get('latest_change_id') or checkpoint.last_change_id)
                 checkpoint.save()
         except Exception as exc:
-            raise SyncTransportError(f"Lot non appliqué, reprise conservée : {exc}") from exc
+            raise SyncTransportError(f"Lot interrompu, données validées conservées et reprise au même curseur : {exc}") from exc
         total += applied
         if bootstrapping:
             # Once the snapshot is complete, read changes made while it was being downloaded.

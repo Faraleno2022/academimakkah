@@ -1,3 +1,4 @@
+from collections import defaultdict
 from decimal import Decimal
 from uuid import UUID
 
@@ -20,6 +21,10 @@ SYNC_FIELD_NAMES = {
     'sync_version',
     'is_synced',
 }
+
+
+class InvalidSnapshotCursor(ValueError):
+    """L'instantané doit être repris depuis le début, sans effacer les données."""
 
 
 def model_label_for(instance_or_model):
@@ -55,6 +60,11 @@ def serialize_instance(instance):
     payload = {}
     for field in instance._meta.concrete_fields:
         if field.name == 'id' or field.name in SYNC_FIELD_NAMES:
+            continue
+        # Les identités utilisateur ne sont jamais échangées. Lire la relation
+        # avant ce contrôle provoquait pourtant une requête par auteur.
+        if isinstance(field, models.ForeignKey) and field.remote_field.model == get_user_model():
+            payload[field.name] = None
             continue
         value = getattr(instance, field.name)
         if isinstance(field, models.ForeignKey) or isinstance(field, models.OneToOneField):
@@ -248,6 +258,51 @@ def queryset_for_ecole(model, ecole):
     return scoped_queryset(model, ecole)
 
 
+def precharger_relations_pour_poste(objects, ecole):
+    """Charge les parents par modèle, une seule fois pour toute la page.
+
+    Le cache vit le temps de la réponse et chaque lecture reste limitée à
+    l'école autorisée. Les relations profondes et cycliques sont parcourues
+    sans requête par élève, paiement ou note.
+    """
+    objets = {(model_label_for(obj), obj.pk): obj for obj in objects}
+    visites = set()
+    frontiere = list(objets.values())
+    while frontiere:
+        demandes = defaultdict(set)
+        relations = []
+        for obj in frontiere:
+            cle_obj = (model_label_for(obj), obj.pk)
+            if cle_obj in visites:
+                continue
+            visites.add(cle_obj)
+            for field in obj._meta.concrete_fields:
+                if not isinstance(field, models.ForeignKey):
+                    continue
+                model = field.remote_field.model
+                pk = getattr(obj, field.attname, None)
+                label = model_label_for(model)
+                if not pk or label not in SYNC_MODEL_SET:
+                    continue
+                cle = (label, pk)
+                relations.append((obj, field, cle))
+                if cle not in objets:
+                    demandes[model].add(pk)
+        for model, pks in demandes.items():
+            label = model_label_for(model)
+            trouves = queryset_for_ecole(model, ecole).in_bulk(pks)
+            for pk in pks:
+                objets[(label, pk)] = trouves.get(pk)
+        frontiere = []
+        for obj, field, cle in relations:
+            parent = objets[cle]
+            if parent is not None:
+                field.set_cached_value(obj, parent)
+                if cle not in visites:
+                    frontiere.append(parent)
+    return objets
+
+
 def ligne_etat_courant(label, obj, origine='Snapshot initial'):
     """Changement UPDATE portant l'état actuel d'un objet, sans id serveur."""
     return {
@@ -259,7 +314,7 @@ def ligne_etat_courant(label, obj, origine='Snapshot initial'):
     }
 
 
-def dependances_pour_poste(obj, ecole, deja_vus):
+def dependances_pour_poste(obj, ecole, deja_vus, objets=None):
     """Objets référencés par ``obj`` (parents d'abord), à livrer avant lui.
 
     Un poste qui a manqué la création d'un parent (élève, classe…) ne peut
@@ -282,10 +337,11 @@ def dependances_pour_poste(obj, ecole, deja_vus):
         if cle in deja_vus:
             continue
         deja_vus.add(cle)
-        parent = queryset_for_ecole(related_model, ecole).filter(pk=related_pk).first()
+        parent = (objets.get(cle) if objets is not None else
+                  queryset_for_ecole(related_model, ecole).filter(pk=related_pk).first())
         if parent is None:
             continue
-        lignes.extend(dependances_pour_poste(parent, ecole, deja_vus))
+        lignes.extend(dependances_pour_poste(parent, ecole, deja_vus, objets=objets))
         lignes.append(ligne_etat_courant(label, parent, origine='Dependance'))
     return lignes
 
@@ -298,8 +354,15 @@ def snapshot_changes_for_ecole(ecole, labels=None):
         model = get_model(label)
         if not model:
             continue
-        for obj in queryset_for_ecole(model, ecole).order_by('pk').iterator():
-            snapshot.append(ligne_etat_courant(label, obj))
+        qs = queryset_for_ecole(model, ecole).order_by('pk')
+        last_pk = 0
+        while True:
+            objects = list(qs.filter(pk__gt=last_pk)[:500])
+            if not objects:
+                break
+            precharger_relations_pour_poste(objects, ecole)
+            snapshot.extend(ligne_etat_courant(label, obj) for obj in objects)
+            last_pk = objects[-1].pk
     return snapshot
 
 
@@ -315,19 +378,26 @@ def snapshot_page_for_ecole(ecole, cursor=None, page_size=500, labels=None):
         try:
             state = signing.loads(cursor, salt='sync-snapshot-v2', max_age=86400)
             if state['school'] != str(ecole.sync_uuid):
+                # Une liaison à une autre école reste un refus explicite,
+                # distinct d'un curseur expiré à reprendre automatiquement.
                 raise ValueError('École du curseur invalide.')
             index, last_pk, watermark = state['model'], state['pk'], state['watermark']
             if not isinstance(index, int) or not 0 <= index < len(SYNC_MODEL_LABELS) or not isinstance(last_pk, int) or last_pk < 0:
-                raise ValueError('Curseur invalide.')
+                raise InvalidSnapshotCursor('Curseur invalide.')
         except (signing.BadSignature, KeyError, TypeError) as exc:
-            raise ValueError('Curseur de synchronisation invalide ou expiré.') from exc
+            raise InvalidSnapshotCursor('Curseur de synchronisation invalide ou expiré.') from exc
     else:
         from .sequence import attribuer_sequences
         index, last_pk = 0, 0
         # Point de reprise exprimé en numéro de diffusion, comme le curseur du pull.
-        attribuer_sequences()
+        attribuer_sequences(max_lots=1)
         watermark = SyncChange.objects.filter(ecole=ecole).filter(Q(statut=SyncChange.STATUT_APPLIED) | Q(device__isnull=True, statut=SyncChange.STATUT_PENDING)).aggregate(n=Max('sequence'))['n'] or 0
-    rows = []
+    objects_page = []
+
+    def serialiser_page():
+        precharger_relations_pour_poste([obj for _, obj in objects_page], ecole)
+        return [ligne_etat_courant(label, obj) for label, obj in objects_page]
+
     while index < len(SYNC_MODEL_LABELS):
         label = SYNC_MODEL_LABELS[index]
         if labels is not None and label not in labels:
@@ -335,48 +405,65 @@ def snapshot_page_for_ecole(ecole, cursor=None, page_size=500, labels=None):
             last_pk = 0
             continue
         model = get_model(label)
-        objects = list(queryset_for_ecole(model, ecole).filter(pk__gt=last_pk).order_by('pk')[:page_size-len(rows)]) if model else []
+        objects = list(queryset_for_ecole(model, ecole).filter(pk__gt=last_pk).order_by('pk')[:page_size-len(objects_page)]) if model else []
         for obj in objects:
-            rows.append(ligne_etat_courant(label, obj))
+            objects_page.append((label, obj))
             last_pk = obj.pk
-        if len(rows) == page_size:
+        if len(objects_page) == page_size:
             next_cursor = signing.dumps({
                 'school': str(ecole.sync_uuid), 'model': index, 'pk': last_pk,
                 'watermark': watermark,
             }, salt='sync-snapshot-v2')
-            return rows, next_cursor, watermark
+            return serialiser_page(), next_cursor, watermark
         index += 1
         last_pk = 0
-    return rows, None, watermark
+    return serialiser_page(), None, watermark
 
 
-def emettre_existants(labels):
+def emettre_existants(labels, *, limite=None, progression=None):
     """Diffuse les objets jamais synchronisés des modèles ``labels``.
 
     Un modèle ajouté au registre après coup a déjà des lignes, créées sans
     changement de synchronisation : sans ce rattrapage, elles resteraient sur
     la machine où elles ont été saisies. Une ligne déjà diffusée ou reçue a une
     école propriétaire (SyncOwnership) : l'appel est donc sans effet la
-    seconde fois. Retourne le nombre de changements émis.
+    seconde fois. ``limite`` borne aussi les lignes sans école ; ``progression``
+    conserve leur position pour ne pas bloquer les suivantes. Retourne le
+    nombre de changements émis.
     """
     from .models import SyncChange, SyncOwnership
+    labels = list(labels)
+    progression = progression if progression is not None else {}
+    inspectes = 0
     total = 0
-    for label in labels:
+    for index in range(progression.get('model', 0), len(labels)):
+        label = labels[index]
         model = get_model(label)
         if model is None or label not in SYNC_MODEL_SET:
             continue
         deja_diffuses = SyncOwnership.objects.filter(model_label=label).values('object_uuid')
-        for obj in model.objects.exclude(sync_uuid__in=deja_diffuses).order_by('pk').iterator():
+        qs = model.objects.exclude(sync_uuid__in=deja_diffuses).filter(
+            pk__gt=progression.get('pk', 0),
+        ).order_by('pk')
+        if limite is not None:
+            qs = qs[:max(0, limite - inspectes)]
+        for obj in qs.iterator():
+            inspectes += 1
             ecole = ecole_for_instance(obj)
-            if ecole is None:
-                continue
-            with transaction.atomic():
-                SyncOwnership.objects.get_or_create(
-                    model_label=label, object_uuid=obj.sync_uuid, defaults={'ecole': ecole},
-                )
-                SyncChange.objects.create(
-                    ecole=ecole, model_label=label, object_uuid=obj.sync_uuid,
-                    operation=SyncChange.OPERATION_UPDATE, payload=serialize_instance(obj),
-                )
-            total += 1
+            if ecole is not None:
+                with transaction.atomic():
+                    _, created = SyncOwnership.objects.get_or_create(
+                        model_label=label, object_uuid=obj.sync_uuid, defaults={'ecole': ecole},
+                    )
+                    if created:
+                        SyncChange.objects.create(
+                            ecole=ecole, model_label=label, object_uuid=obj.sync_uuid,
+                            operation=SyncChange.OPERATION_UPDATE, payload=serialize_instance(obj),
+                        )
+                        total += 1
+            progression.update(model=index, pk=obj.pk)
+            if limite is not None and inspectes >= limite:
+                return total
+        progression.update(model=index + 1, pk=0)
+    progression['complete'] = True
     return total

@@ -122,6 +122,8 @@ class SyncChange(models.Model):
     device = models.ForeignKey(SyncDevice, on_delete=models.SET_NULL, null=True, blank=True, related_name='changes')
     # Identité du changement sur son poste, pour acquitter sans rejouer un envoi.
     source_event_id = models.UUIDField(null=True, blank=True)
+    # Identifiant de réception local indexable, sans recherche dans tout le JSON.
+    server_change_id = models.PositiveBigIntegerField(null=True, blank=True)
     model_label = models.CharField(max_length=120)
     object_uuid = models.UUIDField(null=True, blank=True, db_index=True)
     operation = models.CharField(max_length=10, choices=OPERATION_CHOICES)
@@ -146,6 +148,9 @@ class SyncChange(models.Model):
             models.Index(fields=['ecole', 'statut', 'date_creation']),
             models.Index(fields=['ecole', 'statut', 'date_application'], name='sync_school_applied_date'),
             models.Index(fields=['model_label', 'object_uuid']),
+            models.Index(fields=['ecole', 'server_change_id', 'statut'], name='sync_school_server_status'),
+            models.Index(fields=['ecole', 'sequence'], name='sync_school_sequence'),
+            models.Index(fields=['ecole', 'statut', 'id'], name='sync_school_status_id'),
         ]
 
     def __str__(self):
