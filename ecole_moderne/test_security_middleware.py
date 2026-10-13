@@ -1,7 +1,19 @@
 from django.core.cache import cache
 from django.test import RequestFactory, SimpleTestCase
+from django.http import HttpResponse
 
-from .security_middleware import SecurityMiddleware
+from .security_middleware import CSPMiddleware, SecurityMiddleware
+
+
+class PublicVideoSecurityTests(SimpleTestCase):
+    def test_media_source_local_est_permis_sans_autoriser_des_medias_distants(self):
+        response = CSPMiddleware(lambda request: HttpResponse()).process_response(
+            RequestFactory().get('/demo/'), HttpResponse(),
+        )
+        directives = response['Content-Security-Policy'].split('; ')
+        self.assertIn("media-src 'self' blob:", directives)
+        self.assertIn("connect-src 'self'", directives)
+        self.assertIn("frame-ancestors 'none'", directives)
 
 
 class PathTraversalDetectionTests(SimpleTestCase):

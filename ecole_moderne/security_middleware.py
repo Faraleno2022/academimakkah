@@ -531,6 +531,7 @@ class CSPMiddleware(MiddlewareMixin):
                 f"img-src {' '.join(img_src)}",
                 f"font-src {' '.join(font_src)}",
                 "connect-src 'self'",
+                "media-src 'self' blob:",
                 "frame-ancestors 'none'",
                 "base-uri 'self'",
                 "form-action 'self'",

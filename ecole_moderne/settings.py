@@ -370,6 +370,11 @@ STORAGES = {
 # incomplet, WhiteNoise peut encore retrouver les fichiers versionnés dans
 # STATICFILES_DIRS. collectstatic reste exécuté au build et au démarrage.
 WHITENOISE_USE_FINDERS = bool(RENDER_EXTERNAL_HOSTNAME)
+WHITENOISE_MIMETYPES = {'.m3u8': 'application/vnd.apple.mpegurl', '.m4s': 'video/iso.segment'}
+# Les segments H.264/AAC sont déjà compressés : ne pas les recompresser en
+# gzip/Brotli pendant collectstatic. Les scripts et playlists restent compressés.
+from whitenoise.compress import Compressor as _StaticCompressor
+WHITENOISE_SKIP_COMPRESS_EXTENSIONS = (*_StaticCompressor.SKIP_COMPRESS_EXTENSIONS, 'm4s')
 
 # =================== Logging ===================
 LOGS_DIR = BASE_DIR / 'logs'
