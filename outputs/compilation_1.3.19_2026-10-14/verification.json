@@ -1,0 +1,73 @@
+{
+  "version": "1.3.19",
+  "source_commit": "81a62d894e26158253bb4a24f36a2aed57b8b3f5",
+  "ajustements_version": [
+    "app_version.py",
+    "installer_myschool.iss"
+  ],
+  "modules_compiles_conformes_aux_sources": [
+    "app_version",
+    "desktop_updater",
+    "eleves.models",
+    "paiements.recalcul_remises",
+    "paiements.services",
+    "salaires.views",
+    "bus.models",
+    "bus.views",
+    "ecole_moderne.settings",
+    "ecole_moderne.security_middleware",
+    "synchronisation.autosync",
+    "synchronisation.client",
+    "synchronisation.engine",
+    "synchronisation.models",
+    "synchronisation.media",
+    "synchronisation.media_client",
+    "synchronisation.media_views",
+    "synchronisation.urls",
+    "synchronisation.views",
+    "synchronisation.views_poste",
+    "synchronisation.scope",
+    "synchronisation.signals",
+    "synchronisation.sequence",
+    "synchronisation.realtime"
+  ],
+  "ressources_conformes_aux_sources": [
+    "synchronisation/migrations/0008_syncchange_reception_indexes.py",
+    "synchronisation/migrations/0009_syncmediatransfer.py",
+    "eleves/migrations/0022_ecole_autoriser_remise_inscription.py",
+    "templates/synchronisation/connexion_serveur.html",
+    "templates/public/_videos.html",
+    "templates/home.html",
+    "templates/base.html",
+    "static/js/sync-refresh.js",
+    "static/js/public-videos.js",
+    "static/vendor/hls/hls-1.7.3.light.min.js",
+    "static/vendor/hls/LICENSE.txt",
+    "static/spot/Spot_MySchool.mp4",
+    "static/spot/Spot_MySchool_Notes.mp4",
+    "static/spot/Spot_MySchool_poster.jpg",
+    "static/spot/Spot_MySchool_Notes_poster.jpg"
+  ],
+  "fichiers_video_adaptatifs_verifies": 399,
+  "integrite": true,
+  "donnees_client_exclues": true,
+  "base_locale_inchangee": true,
+  "fichiers_prives_locaux_inchanges": true,
+  "executable_sha256": "39352a3c0337a06914470a9b9758517e9aaa17bf0ea18229cf0be945fe0d34b5",
+  "taille_executable_octets": 30213034,
+  "controle_demarrage": {
+    "code_sortie": 0,
+    "duree_secondes": 1.66,
+    "aucune_base_creee": true
+  },
+  "tests_mise_a_jour_reussis": 7,
+  "installateur": "C:\\Users\\LENO\\Desktop\\GS_hadja_kanfing_dian--main\\Output\\MySchoolGN_Setup_v1.3.19.exe",
+  "installateur_octets": 476683256,
+  "installateur_sha256": "7e72da15011bc441f04004ab0ae86d5d88dd6a823de597a49bf8a84d8cf9351d",
+  "construction_pyinstaller": true,
+  "construction_inno_setup": true,
+  "source_tests_avant_compilation": {
+    "suite_complete": 885,
+    "validation_ciblee_finale": 60
+  }
+}

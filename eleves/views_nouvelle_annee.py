@@ -857,6 +857,18 @@ def nouvelle_annee_creer(request):
         messages.error(request, "Paramètres manquants.")
         return redirect('eleves:nouvelle_annee_apercu')
 
+    # Une année identique (ou mal formée) laisserait chaque élève dans la
+    # sélection des "restants" et ferait tourner les lots indéfiniment.
+    if (not re.fullmatch(r'[1-9]\d{3}-[1-9]\d{3}', annee_courante)
+            or not re.fullmatch(r'[1-9]\d{3}-[1-9]\d{3}', annee_nouvelle)
+            or int(annee_courante[-4:]) != int(annee_courante[:4]) + 1
+            or annee_nouvelle != _annee_suivante(annee_courante)):
+        messages.error(request, "Choisissez deux années scolaires consécutives au format 2025-2026.")
+        return redirect('eleves:nouvelle_annee_apercu')
+    if not Classe.objects.filter(ecole=ecole, annee_scolaire=annee_courante).exists():
+        messages.error(request, "L'année de départ n'existe pas pour cet établissement.")
+        return redirect('eleves:nouvelle_annee_apercu')
+
     cle = _cle_session_passage(ecole, annee_nouvelle)
     etat = request.session.get(cle)
 
@@ -918,9 +930,12 @@ def nouvelle_annee_creer(request):
         lot = list(restants.select_related('classe').order_by('pk')[:TAILLE_LOT_PASSAGE])
 
         for eleve in lot:
+            compteurs_avant = resultats.copy()
             try:
                 with transaction.atomic():
                     _passer_eleve(request, eleve, ctx, resultats)
+                    if eleve.statut == 'ACTIF' and eleve.classe.annee_scolaire != annee_nouvelle:
+                        raise ValueError("Aucune classe de destination trouvée dans la nouvelle année.")
                     if (eleve.statut == 'ACTIF'
                             and eleve.classe.annee_scolaire == annee_nouvelle
                             and _creer_echeancier(request, eleve, ecole, annee_nouvelle)):
@@ -929,10 +944,13 @@ def nouvelle_annee_creer(request):
                 # Un élève en erreur ne bloque ni son lot ni les suivants.
                 logger.error(f"Passage nouvelle année impossible pour l'élève {eleve.pk}: {exc}",
                              exc_info=True)
+                resultats.clear()
+                resultats.update(compteurs_avant)
                 etat['echecs'].append(eleve.pk)
 
         request.session[cle] = etat
-        reste = restants.count()
+        # Le QuerySet initial a figé la liste d'exclusion avant les erreurs du lot.
+        reste = restants.exclude(pk__in=etat['echecs']).count()
         if reste:
             total = etat['total'] or 1
             return render(request, 'eleves/nouvelle_annee_progression.html', {
@@ -961,6 +979,7 @@ def nouvelle_annee_creer(request):
 
     echecs = etat['echecs']
     request.session.pop(cle, None)
+    request.session[SESSION_ANNEE_ACTIVE] = annee_nouvelle
     messages.success(request, _message_final(annee_nouvelle, resultats))
     if echecs:
         noms = ', '.join(

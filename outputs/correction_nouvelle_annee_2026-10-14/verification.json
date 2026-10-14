@@ -1,0 +1,31 @@
+{
+  "date": "2026-10-14",
+  "cause_reproduite": {
+    "bouton_desactive_avant_soumission": true,
+    "indicateur_actif_sans_post": true,
+    "post_observes_avant_correction": 0
+  },
+  "tests_django": {
+    "labels": ["eleves.test_nouvelle_annee", "paiements", "synchronisation.test_realtime"],
+    "reussis": 255,
+    "echecs": 0,
+    "duree_secondes": 81.055
+  },
+  "parcours_navigateur_local": {
+    "navigateur": "Edge isolé",
+    "confirmation_annulee_sans_creation": true,
+    "clic_reel_envoie_formulaire": true,
+    "lots_automatiques": 3,
+    "rechargements_interrompant_creation": 0,
+    "classes_creees": 2,
+    "eleves_passes": 3,
+    "echeanciers_crees": 3,
+    "annee_active_apres_creation": "2026-2027",
+    "erreurs_javascript": [],
+    "duree_parcours_ms": 2161
+  },
+  "base_client_utilisee": false,
+  "migration_necessaire": false,
+  "correction_deployee": false,
+  "installateur_precedent_1_3_19_contient_correction": false
+}
