@@ -69,6 +69,10 @@
                         {% if etat.initial_termine %}terminée{% else %}en cours{% endif %}</li>
                     <li><strong>Changements en attente d'envoi :</strong> {{ etat.en_attente }}</li>
                     {% if etat.en_echec %}<li class="text-danger"><strong>En échec :</strong> {{ etat.en_echec }}</li>{% endif %}
+                    <li><strong>Images et fichiers en attente :</strong> {{ etat.fichiers_en_attente }}</li>
+                    {% if etat.fichiers_a_reessayer %}
+                    <li class="text-warning"><strong>Fichiers à réessayer :</strong> {{ etat.fichiers_a_reessayer }} — nouvel essai automatique.</li>
+                    {% endif %}
                 </ul>
                 {% else %}
                 <p class="mb-0"><span class="badge bg-secondary">Non configurée</span></p>

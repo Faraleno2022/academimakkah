@@ -1,13 +1,14 @@
 """Synchronisation automatique en tache de fond (poste offline <-> serveur).
 
 Meme principe que le worker de sauvegarde (ecole_moderne/sauvegarde.py) :
-deux tâches démon, démarrées une fois au lancement de l'application.
+trois tâches démon, démarrées une fois au lancement de l'application.
 
 Vitesse :
 - Push declenche immediatement des qu'un changement local est enregistre
   (evenement, pas d'attente de l'intervalle) grace a `notifier_changement()`,
   appele par les signaux post_save/pre_delete de `synchronisation.signals`.
 - Envoi et réception utilisent deux tâches indépendantes.
+- Les fichiers utilisent une troisième tâche et une file durable séparée.
 - Pull effectue a intervalle court (configurable, quelques secondes) car le
   serveur ne peut pas pousser vers le poste (pas de canal push serveur->client).
 - Transport mutualise (connexions persistantes + gzip) via `synchronisation.client`.
@@ -33,6 +34,11 @@ _verrou = threading.Lock()
 _worker_demarre = False
 _reveil = threading.Event()
 _reveil_reception = threading.Event()
+_reveil_medias = threading.Event()
+
+
+def notifier_medias():
+    _reveil_medias.set()
 
 
 def notifier_changement():
@@ -92,6 +98,10 @@ def _cycle(base_dir, direction=None):
     # a l'amorçage) ne correspond pas forcement a config['ecole_id'] (celui
     # du serveur). On prend l'ecole unique deja presente, quel que soit son id.
     ecole = Ecole.objects.first()
+    if direction == 'media':
+        from .media_client import sync_media
+        sent, received = sync_media(config, ecole) if ecole else (0, 0)
+        return config, sent, received
     if not ecole:
         if direction == 'push':
             return config, 0, 0
@@ -175,7 +185,7 @@ def _emettre_modeles_ajoutes():
 
 def _boucle(base_dir, delai_demarrage, direction=None):
     time.sleep(max(0, delai_demarrage))
-    reveil = _reveil_reception if direction == 'pull' else _reveil
+    reveil = {'pull': _reveil_reception, 'media': _reveil_medias}.get(direction, _reveil)
     while True:
         # Effacer avant le travail : un enregistrement pendant le cycle garde
         # son réveil, y compris s'il arrive juste après la sélection du lot.
@@ -207,7 +217,7 @@ def demarrer_worker(base_dir, delai_demarrage=DELAI_DEMARRAGE_DEFAUT):
         if _worker_demarre:
             return False
         _worker_demarre = True
-    for direction in ('push', 'pull'):
+    for direction in ('push', 'pull', 'media'):
         threading.Thread(
             target=_boucle, args=(base_dir, delai_demarrage, direction),
             name=f'sync-auto-{direction}', daemon=True,

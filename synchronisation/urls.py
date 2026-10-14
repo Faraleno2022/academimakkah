@@ -1,6 +1,7 @@
 from django.urls import path
 
 from . import views
+from .media_views import media_file
 
 
 app_name = 'synchronisation'
@@ -13,4 +14,5 @@ urlpatterns = [
     path('devices/liaison/', views.liaison, name='liaison'),
     path('push/', views.push, name='push'),
     path('pull/', views.pull, name='pull'),
+    path('media/', media_file, name='media'),
 ]

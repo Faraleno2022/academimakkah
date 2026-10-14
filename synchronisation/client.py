@@ -167,7 +167,12 @@ def push_pending(server_url, device_id, token, ecole, batch_size=PUSH_BATCH_SIZE
         now = timezone.now()
         applied_ids = [c.id for i, c in enumerate(pending) if i in accepted_indexes]
         if applied_ids:
-            SyncChange.objects.filter(id__in=applied_ids).update(statut=SyncChange.STATUT_APPLIED, date_application=now, erreur='')
+            from django.db import transaction
+            from .media import queue_sent
+            # La file binaire est durable avant l'acquittement des données.
+            with transaction.atomic():
+                queue_sent(ecole, [c for i, c in enumerate(pending) if i in accepted_indexes])
+                SyncChange.objects.filter(id__in=applied_ids).update(statut=SyncChange.STATUT_APPLIED, date_application=now, erreur='')
             total += len(applied_ids)
 
         # Un changement refuse sort de la file d'attente avec son motif : laisse
