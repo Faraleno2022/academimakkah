@@ -19,6 +19,7 @@ from utilisateurs.utils import filter_by_user_school, user_is_superadmin, user_s
 from .forms import RemiseBusForm
 from .models import GrilleTarifaireBus, RemiseBus
 from .remises import lignes_remises, totaux_remises
+from .annees import filtrer_annee_abonnements
 
 ENTETES_EXCEL = [
     'N°', 'Élève', 'Matricule', 'Classe', 'Grille / zone', 'Année', 'Remise', 'Motif',
@@ -45,7 +46,7 @@ def _grilles_visibles(user):
 
 
 def _filtrer(request):
-    remises = _remises_visibles(request.user)
+    remises, annees = filtrer_annee_abonnements(request, _remises_visibles(request.user), 'grille__annee_scolaire')
     q = (request.GET.get('q') or '').strip()
     grille_id = request.GET.get('grille') or ''
     if q:
@@ -55,16 +56,17 @@ def _filtrer(request):
         )
     if grille_id.isdigit():
         remises = remises.filter(grille_id=int(grille_id))
-    return remises, q, grille_id
+    return remises, q, grille_id, annees
 
 
 @login_required
 def liste_remises(request):
-    remises, q, grille_id = _filtrer(request)
+    remises, q, grille_id, annees = _filtrer(request)
     lignes = lignes_remises(remises)
     if request.GET.get('export') == 'excel':
         return _export_excel(lignes)
     return render(request, 'bus/remises/liste.html', {
+        **annees,
         'titre_page': "Élèves avec remise — bus",
         'lignes': lignes,
         'totaux': totaux_remises(lignes),

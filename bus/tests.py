@@ -212,7 +212,7 @@ class GrilleEtPaiementBusTests(TestCase):
             tuple(int(lignes['T1'][key]) for key in ('montant', 'du', 'paye', 'reste')),
             (125000, 400000, 225000, 175000),
         )
-        self.assertContains(liste, f'{url}?periodicite=T1#abonnements')
+        self.assertContains(liste, f'{url}?annee=2026-2027&amp;periodicite=T1#abonnements')
         filtree = self.client.get(url, {'periodicite': 'T1'})
         self.assertEqual(len(filtree.context['abonnements']), 2)
         self.assertEqual(int(filtree.context['total_du_bus']), 400000)

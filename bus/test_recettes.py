@@ -202,7 +202,7 @@ class RecettesAbonnementsTests(TestCase):
             tuple(int(lignes['TRIMESTRIEL'][key]) for key in ('brut', 'remise', 'du', 'paye', 'reste')),
             (500000, 30000, 470000, 350000, 120000),
         )
-        self.assertContains(liste, f'{url}?periodicite=TRIMESTRIEL#liste-abonnements')
+        self.assertContains(liste, f'{url}?annee=2026-2027&amp;periodicite=TRIMESTRIEL#liste-abonnements')
         filtree = self.client.get(url, {'periodicite': 'TRIMESTRIEL'})
         self.assertEqual({a.pk for a in filtree.context['abonnements']}, {trimestre.pk, second.pk})
         self.assertEqual(int(filtree.context['total_reste']), 120000)
@@ -235,7 +235,7 @@ class RecettesAbonnementsTests(TestCase):
         url = reverse('bus:liste_abonnements_cantine')
         liste = self.client.get(url)
         self.assertContains(liste, 'Élèves avec remise')
-        self.assertContains(liste, f'{url}?remise=oui')
+        self.assertContains(liste, f'{url}?annee=2026-2027&amp;remise=oui')
         remises = self.client.get(url, {'remise': 'oui'})
         self.assertEqual([abo.eleve_id for abo in remises.context['abonnements']], [self.eleve.pk])
         self.assertEqual(int(remises.context['total_remise']), 20000)

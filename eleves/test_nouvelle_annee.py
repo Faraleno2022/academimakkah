@@ -7,7 +7,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from eleves.models import Classe, Ecole, Eleve, Responsable
+from eleves.models import Classe, Ecole, Eleve, GrilleTarifaire, Responsable
 from notes.models import ClasseNote, Classement, MatiereNote, NoteMensuelle
 from paiements.models import EcheancierPaiement
 
@@ -31,6 +31,13 @@ class CreationNouvelleAnneeTest(TestCase):
         Classe.objects.create(
             ecole=self.ecole, nom='2ÈME ANNÉE A', niveau='PRIMAIRE_2', annee_scolaire='2025-2026',
         )
+        for annee in ('2025-2026', '2026-2027'):
+            for niveau in ('PRIMAIRE_1', 'PRIMAIRE_2'):
+                GrilleTarifaire.objects.create(
+                    ecole=self.ecole, niveau=niveau, annee_scolaire=annee,
+                    frais_inscription=200000, frais_reinscription=80000,
+                    tranche_1=300000, tranche_2=250000, tranche_3=150000,
+                )
         responsable = Responsable.objects.create(
             prenom='Parent', nom='Passage', relation='PERE', telephone='+224620555002', adresse='Conakry',
         )
@@ -194,3 +201,135 @@ class CreationNouvelleAnneeTest(TestCase):
         response = self.client.get(reverse('eleves:nouvelle_annee_apercu'))
         self.assertContains(response, 'onsubmit="return lancerAnnee(this)" data-no-fast-submit data-sync-preserve')
         self.assertNotContains(response, 'onclick="return lancerAnnee(this)"')
+
+    def _creer_annee(self, **options):
+        return self.client.post(reverse('eleves:nouvelle_annee_creer'), {
+            'annee_courante': '2025-2026', 'annee_nouvelle': '2026-2027',
+            'faire_passer_eleves': '1', **options,
+        })
+
+    def test_nouvel_echeancier_est_reinscription_au_tarif_du_nouveau_niveau(self):
+        from paiements.services import _nature_frais
+        self._creer_annee()
+        nouveau = EcheancierPaiement.objects.get(eleve=self.eleve, annee_scolaire='2026-2027')
+        self.assertTrue(nouveau.est_reinscription)
+        self.assertEqual(nouveau.frais_inscription_du, 80000)
+        self.assertEqual(nouveau.total_du, 780000)
+        self.assertEqual(nouveau.total_paye, 0)
+        self.assertEqual(_nature_frais(self.eleve, '2026-2027', nouvelle_annee=True,
+                                      echeancier=nouveau), EcheancierPaiement.NATURE_REINSCRIPTION)
+
+    def test_tarif_absent_bloque_l_eleve_et_permet_de_reprendre_apres_configuration(self):
+        GrilleTarifaire.objects.filter(annee_scolaire='2026-2027').delete()
+        response = self._creer_annee()
+        self.eleve.refresh_from_db()
+        self.assertEqual(self.eleve.classe_id, self.classe_1.pk)
+        self.assertFalse(EcheancierPaiement.objects.filter(annee_scolaire='2026-2027').exists())
+        self.assertTrue(any('Tarif manquant' in str(m) for m in response.wsgi_request._messages))
+        self.assertIn('annee_courante=2025-2026', response.url)
+        apercu = self.client.get(response.url)
+        self.assertEqual(apercu.context['annee_courante'], '2025-2026')
+        gestion = self.client.get(reverse('eleves:gestion_annees'))
+        self.assertContains(gestion, 'Compléter le passage')
+        self.assertEqual(self.client.session['annee_scolaire_active'], '2025-2026')
+        self._creer_annee(dupliquer_grilles='1')
+        self.eleve.refresh_from_db()
+        self.assertEqual(self.eleve.classe.annee_scolaire, '2026-2027')
+        self.assertEqual(EcheancierPaiement.objects.get(eleve=self.eleve,
+            annee_scolaire='2026-2027').total_du, 780000)
+
+    def test_copie_grilles_scolarite_et_bus_decale_les_echeances(self):
+        from bus.models import GrilleTarifaireBus
+        GrilleTarifaire.objects.filter(annee_scolaire='2026-2027').delete()
+        source = GrilleTarifaire.objects.get(ecole=self.ecole, niveau='PRIMAIRE_2', annee_scolaire='2025-2026')
+        source.date_echeance_inscription_defaut = date(2025, 9, 15)
+        source.date_echeance_tranche_1_defaut = date(2025, 11, 30)
+        source.date_echeance_tranche_2_defaut = date(2026, 2, 20)
+        source.date_echeance_tranche_3_defaut = date(2026, 5, 10)
+        source.save()
+        GrilleTarifaireBus.objects.create(ecole=self.ecole, zone='Kipé', annee_scolaire='2025-2026',
+            tranche_1=100000, tranche_2=90000, tranche_3=80000,
+            date_echeance_tranche_1=date(2025, 12, 1), date_echeance_tranche_2=date(2026, 3, 1),
+            date_echeance_tranche_3=date(2026, 6, 1))
+        self._creer_annee(dupliquer_grilles='1')
+        nouveau = EcheancierPaiement.objects.get(eleve=self.eleve, annee_scolaire='2026-2027')
+        self.assertEqual(nouveau.date_echeance_inscription, date(2026, 9, 15))
+        self.assertEqual(nouveau.date_echeance_tranche_1, date(2026, 11, 30))
+        self.assertEqual(nouveau.date_echeance_tranche_2, date(2027, 2, 20))
+        self.assertEqual(nouveau.date_echeance_tranche_3, date(2027, 5, 10))
+        grille_bus = GrilleTarifaireBus.objects.get(ecole=self.ecole, zone='Kipé', annee_scolaire='2026-2027')
+        self.assertEqual(grille_bus.montant_annuel, 270000)
+        self.assertEqual(grille_bus.date_echeance_tranche_1, date(2026, 12, 1))
+
+    def test_grilles_deja_personnalisees_ne_sont_pas_ecrasees(self):
+        from bus.models import GrilleTarifaireBus
+        grille = GrilleTarifaire.objects.get(ecole=self.ecole, niveau='PRIMAIRE_2', annee_scolaire='2026-2027')
+        grille.tranche_1 = 450000
+        grille.save()
+        for annee, prix in [('2025-2026', 100000), ('2026-2027', 200000)]:
+            GrilleTarifaireBus.objects.create(ecole=self.ecole, zone='Kipé', annee_scolaire=annee,
+                tranche_1=prix, tranche_2=prix, tranche_3=prix)
+        self._creer_annee(dupliquer_grilles='1')
+        self.assertEqual(EcheancierPaiement.objects.get(eleve=self.eleve,
+            annee_scolaire='2026-2027').tranche_1_due, 450000)
+        self.assertEqual(GrilleTarifaireBus.objects.get(ecole=self.ecole, zone='Kipé',
+            annee_scolaire='2026-2027').montant_annuel, 600000)
+
+    def test_passage_ne_duplique_pas_les_encaissements_et_conserve_la_dette_ancienne(self):
+        from bus.models import AbonnementBus, AbonnementCantine
+        from paiements.models import ModePaiement, Paiement, TypePaiement
+        paiement = Paiement.objects.create(eleve=self.eleve, numero_recu='ANCIEN-1', montant=40000,
+            annee_scolaire='2025-2026', date_paiement=date(2025, 10, 1), statut='VALIDE',
+            mode_paiement=ModePaiement.objects.create(nom='ESPECES'),
+            type_paiement=TypePaiement.objects.create(nom='Scolarité'))
+        self.ancien_echeancier.refresh_from_db()
+        avant = (self.ancien_echeancier.total_du, self.ancien_echeancier.total_paye,
+                 self.ancien_echeancier.solde_restant)
+        bus = AbonnementBus.objects.create(eleve=self.eleve, montant=20000,
+            date_debut=date(2025, 10, 1), date_expiration=date(2026, 6, 30))
+        cantine = AbonnementCantine.objects.create(eleve=self.eleve, montant=40000,
+            montant_tarif=60000, type_remise='POURCENTAGE', valeur_remise=10,
+            date_debut=date(2025, 10, 1), date_expiration=date(2026, 6, 30))
+        self._creer_annee()
+        self.ancien_echeancier.refresh_from_db()
+        self.assertEqual((self.ancien_echeancier.total_du, self.ancien_echeancier.total_paye,
+                          self.ancien_echeancier.solde_restant), avant)
+        paiement.refresh_from_db()
+        bus.refresh_from_db()
+        cantine.refresh_from_db()
+        self.assertEqual(Paiement.objects.count(), 1)
+        self.assertEqual(paiement.annee_scolaire, '2025-2026')
+        self.assertEqual(AbonnementBus.objects.count(), 1)
+        self.assertEqual(AbonnementCantine.objects.count(), 1)
+        self.assertEqual(bus.annee_scolaire, '2025-2026')
+        self.assertEqual(cantine.annee_scolaire, '2025-2026')
+        self.assertEqual(cantine.reste_a_payer, 14000)
+        self.assertEqual(EcheancierPaiement.objects.get(eleve=self.eleve,
+            annee_scolaire='2026-2027').total_paye, 0)
+
+    def test_inscription_directe_dans_nouvelle_annee_garde_son_tarif_d_inscription(self):
+        from eleves.views_nouvelle_annee import _creer_echeancier
+        from types import SimpleNamespace
+        classe = Classe.objects.create(ecole=self.ecole, nom='1ÈRE ANNÉE A', niveau='PRIMAIRE_1',
+            annee_scolaire='2026-2027')
+        nouvel_eleve = Eleve.objects.create(matricule='NOUVEAU-1', prenom='Nouveau', nom='Camara', classe=classe)
+        _creer_echeancier(SimpleNamespace(user=self.admin), nouvel_eleve, self.ecole,
+                          '2026-2027', reinscription=False)
+        echeancier = EcheancierPaiement.objects.get(eleve=nouvel_eleve, annee_scolaire='2026-2027')
+        self.assertEqual(echeancier.nature_frais, EcheancierPaiement.NATURE_INSCRIPTION)
+        self.assertEqual(echeancier.frais_inscription_du, 200000)
+
+    def test_versement_anticipe_de_la_nouvelle_annee_est_pris_en_compte(self):
+        from paiements.models import ModePaiement, Paiement, TypePaiement
+        mode = ModePaiement.objects.create(nom='ESPECES')
+        type_paiement = TypePaiement.objects.create(nom='Scolarité')
+        # Simulation d'un import/sync arrivé avant la création de l'échéancier.
+        Paiement.objects.bulk_create([Paiement(eleve=self.eleve, numero_recu='ANTICIPE-1',
+            montant=100000, annee_scolaire='2026-2027', date_paiement=date(2026, 8, 10),
+            statut='VALIDE', mode_paiement=mode, type_paiement=type_paiement)])
+        self._creer_annee()
+        nouveau = EcheancierPaiement.objects.get(eleve=self.eleve, annee_scolaire='2026-2027')
+        self.assertEqual(nouveau.total_paye, 100000)
+        self.assertEqual(nouveau.solde_restant, 680000)
+        self.assertTrue(nouveau.est_reinscription)
+        self.assertEqual(Paiement.objects.count(), 1)

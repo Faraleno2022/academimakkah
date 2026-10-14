@@ -296,6 +296,10 @@ class AbonnementBusForm(forms.ModelForm):
 
 
 class AbonnementCantineForm(forms.ModelForm):
+    annee_scolaire = forms.CharField(
+        required=False, label="Année scolaire",
+        widget=forms.Select(attrs={'class': 'form-select'}),
+    )
     classe = ClasseAbonnementChoiceField(
         queryset=Classe.objects.none(),
         required=False,
@@ -311,7 +315,7 @@ class AbonnementCantineForm(forms.ModelForm):
     class Meta:
         model = AbonnementCantine
         fields = [
-            'classe', 'eleve', 'montant_tarif', 'type_remise', 'valeur_remise', 'montant',
+            'classe', 'eleve', 'annee_scolaire', 'montant_tarif', 'type_remise', 'valeur_remise', 'montant',
             'periodicite', 'type_repas', 'date_debut',
             'statut', 'alerte_avant_jours', 'regime_alimentaire', 'allergies', 
             'contact_parent', 'reference_externe', 'observations'
@@ -340,6 +344,13 @@ class AbonnementCantineForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.ecole_autorisee = ecole
         _configurer_selection_eleve(self, ecole)
+        classes = Classe.objects.filter(ecole=ecole) if ecole else Classe.objects.all()
+        self.annees_autorisees = set(classes.values_list('annee_scolaire', flat=True).distinct())
+        if self.instance.pk and self.instance.annee_scolaire:
+            self.annees_autorisees.add(self.instance.annee_scolaire)
+        self.fields['annee_scolaire'].widget.choices = [('', "Année de l'élève")] + [
+            (annee, annee) for annee in sorted(self.annees_autorisees, reverse=True)
+        ]
         self.fields['montant_tarif'].required = False
         self.fields['valeur_remise'].required = False
         if self.instance.pk and self.instance.montant_tarif is None:
@@ -349,6 +360,12 @@ class AbonnementCantineForm(forms.ModelForm):
         cleaned = super().clean()
         classe = cleaned.get('classe')
         eleve = cleaned.get('eleve')
+        annee = cleaned.get('annee_scolaire')
+        if not annee:
+            annee = self.instance.annee_scolaire or getattr(getattr(eleve, 'classe', None), 'annee_scolaire', '')
+            cleaned['annee_scolaire'] = annee
+        if annee not in self.annees_autorisees:
+            self.add_error('annee_scolaire', "Choisissez une année scolaire de cet établissement.")
         if classe and eleve and eleve.classe_id != classe.pk:
             self.add_error('eleve', "L'élève sélectionné n'appartient pas à cette classe.")
         if self.ecole_autorisee and eleve:

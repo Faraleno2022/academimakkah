@@ -93,6 +93,9 @@
                             {% endif %}
                         </td>
                         <td class="text-center align-middle">
+                            {% if a.passage_a_completer %}
+                                <a class="btn btn-outline-primary btn-sm mb-1" href="{% url 'eleves:nouvelle_annee_apercu' %}?annee_courante={{ a.annee|urlencode }}">Compléter le passage</a>
+                            {% endif %}
                             {% if a.est_active %}
                                 <span class="text-muted small">— année courante —</span>
                             {% else %}

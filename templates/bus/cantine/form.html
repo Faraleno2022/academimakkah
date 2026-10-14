@@ -24,6 +24,11 @@
             <div class="card">
                 <div class="card-body">
                     <form method="post">
+                        <div class="mb-3">
+                            <label class="form-label" for="{{ form.annee_scolaire.id_for_label }}">Année scolaire de l'abonnement</label>
+                            {{ form.annee_scolaire }}
+                            {% if form.annee_scolaire.errors %}<div class="text-danger">{{ form.annee_scolaire.errors }}</div>{% endif %}
+                        </div>
                         {% csrf_token %}
                         
                         <!-- Informations Élève -->
@@ -282,10 +287,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const dateDebutInput = document.getElementById('id_date_debut');
     const dateExpirationInput = document.getElementById('id_date_expiration');
     const periodiciteSelect = document.getElementById('id_periodicite');
-    const champsRepris = ['type_repas', 'periodicite', 'montant', 'date_debut', 'date_expiration',
+    const champsRepris = ['annee_scolaire', 'type_repas', 'periodicite', 'montant_tarif', 'type_remise', 'valeur_remise', 'montant', 'date_debut', 'date_expiration',
         'alerte_avant_jours', 'regime_alimentaire', 'allergies', 'contact_parent'];
     let expirationSaisieManuelle = false;
-    let repriseAppliquee = false;
+    let repriseAppliquee = modeCreation && Boolean(eleveSelect && eleveSelect.value);
 
     function formatDateFr(iso) {
         if (!iso) return '';
@@ -311,12 +316,16 @@ document.addEventListener('DOMContentLoaded', function() {
     function appliquerReprise(data) {
         if (!modeCreation) return;
         const r = data.reprise_cantine;
+        if (!r && data.annee_scolaire) {
+            document.getElementById('id_annee_scolaire').value = data.annee_scolaire;
+        }
         champsRepris.forEach(nom => {
             const champ = document.getElementById('id_' + nom);
             if (!champ) return;
             if (r && r[nom] !== undefined && r[nom] !== null) {
                 champ.value = r[nom];
-            } else if (repriseAppliquee && ['regime_alimentaire', 'allergies'].includes(nom)) {
+            } else if (repriseAppliquee && ['regime_alimentaire', 'allergies', 'contact_parent',
+                    'montant_tarif', 'montant', 'type_remise', 'valeur_remise'].includes(nom)) {
                 champ.value = '';  // ne pas garder les infos d'un autre enfant
             }
         });
@@ -379,6 +388,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (classeSelect) {
         classeSelect.addEventListener('change', function() {
             filtrerEleves(false);
+            appliquerReprise({reprise_cantine: null});
             eleveInfoDiv.style.display = 'none';
             if (contactParentInput) contactParentInput.value = '';
         });
@@ -397,6 +407,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (eleveId) {
                 loadEleveInfo(eleveId, true);
             } else {
+                appliquerReprise({reprise_cantine: null});
                 // Réinitialiser si aucun élève sélectionné
                 eleveInfoDiv.style.display = 'none';
                 if (repriseInfo) repriseInfo.style.setProperty('display', 'none', 'important');
@@ -424,6 +435,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 return response.json();
             })
             .then(data => {
+                if (String(eleveSelect.value) !== String(eleveId)) return;
                 if (data.success) {
                     // Debug: afficher les données reçues
                     console.log('Données élève reçues:', data);

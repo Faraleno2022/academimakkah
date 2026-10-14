@@ -67,9 +67,11 @@ with tempfile.TemporaryDirectory(prefix='myschool-annee-') as scratch, ExitStack
     from django.core.wsgi import get_wsgi_application
     from django.test import Client
     from django.test.runner import DiscoverRunner
-    from eleves.models import Classe, Ecole, Eleve
+    from eleves.models import Classe, Ecole, Eleve, GrilleTarifaire
     from eleves.utils_annee import SESSION_ANNEE_ACTIVE
     from paiements.models import EcheancierPaiement
+    from bus.models import AbonnementBus, AbonnementCantine, GrilleTarifaireBus
+    from datetime import date
     runner = DiscoverRunner(verbosity=0, interactive=False)
     databases = runner.setup_databases()
     try:
@@ -77,8 +79,24 @@ with tempfile.TemporaryDirectory(prefix='myschool-annee-') as scratch, ExitStack
             telephone='600000000', directeur='Direction', etat='VALIDE')
         first = Classe.objects.create(ecole=ecole, nom='1ÈRE ANNÉE', niveau='PRIMAIRE_1', annee_scolaire='2025-2026')
         Classe.objects.create(ecole=ecole, nom='2ÈME ANNÉE', niveau='PRIMAIRE_2', annee_scolaire='2025-2026')
+        for niveau in ('PRIMAIRE_1', 'PRIMAIRE_2'):
+            GrilleTarifaire.objects.create(ecole=ecole, niveau=niveau, annee_scolaire='2025-2026',
+                frais_inscription=100000, frais_reinscription=50000,
+                tranche_1=300000, tranche_2=200000, tranche_3=100000)
         for index in range(3):
             Eleve.objects.create(classe=first, matricule=f'NAV-{index}', nom=f'Élève {index}', prenom='Test')
+        eleve_test = Eleve.objects.filter(classe=first).order_by('pk').first()
+        for annee, debut, fin, suffixe in (
+            ('2025-2026', date(2025, 10, 1), date(2026, 6, 30), 'ANCIEN'),
+            ('2026-2027', date(2026, 10, 1), date(2027, 6, 30), 'NOUVEAU'),
+        ):
+            grille_bus = GrilleTarifaireBus.objects.create(ecole=ecole, zone='Kipé', annee_scolaire=annee,
+                tranche_1=100000, tranche_2=90000, tranche_3=80000)
+            AbonnementBus.objects.create(eleve=eleve_test, grille=grille_bus, montant=50000,
+                periodicite='T1', date_debut=debut, date_expiration=fin, numero_recu=f'BUS-{suffixe}')
+            AbonnementCantine.objects.create(eleve=eleve_test, montant=90000, montant_tarif=120000,
+                type_remise='POURCENTAGE', valeur_remise=10, date_debut=debut,
+                date_expiration=fin, reference_externe=f'CANTINE-{suffixe}')
         admin = get_user_model().objects.create_superuser('annee-navigateur', '', 'test')
         profil = admin.profil
         profil.ecole, profil.role, profil.telephone = ecole, 'ADMIN', ''
@@ -95,6 +113,8 @@ with tempfile.TemporaryDirectory(prefix='myschool-annee-') as scratch, ExitStack
             thread.start()
             setup = Path(scratch, 'navigateur.json')
             setup.write_text(json.dumps({'url': f'http://127.0.0.1:{server.server_port}',
+                'eleve_id': eleve_test.pk,
+                'eleve_sans_abonnement': Eleve.objects.filter(classe=first).exclude(pk=eleve_test.pk).first().pk,
                 'cookie_name': settings.SESSION_COOKIE_NAME, 'cookie_value': client.cookies[settings.SESSION_COOKIE_NAME].value}), encoding='utf-8')
             try:
                 subprocess.run(['node', str(ROOT / 'scripts/test_nouvelle_annee_navigateur.cjs'), str(setup)], check=True, timeout=90, cwd=ROOT)

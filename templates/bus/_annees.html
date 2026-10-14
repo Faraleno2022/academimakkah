@@ -1,0 +1,11 @@
+<form method="get" class="d-flex flex-wrap align-items-center gap-2 mb-3">
+  {% for cle, valeur in request.GET.items %}
+    {% if cle != 'annee' and cle != 'page' and cle != 'page_bus' %}<input type="hidden" name="{{ cle }}" value="{{ valeur }}">{% endif %}
+  {% endfor %}
+  <label for="annee-abonnements" class="form-label mb-0">Année scolaire</label>
+  <select id="annee-abonnements" name="annee" class="form-select w-auto">
+    {% for annee in annees_abonnements %}<option value="{{ annee }}" {% if annee == annee_abonnements %}selected{% endif %}>{{ annee }}</option>{% endfor %}
+    <option value="toutes" {% if annee_abonnements == 'toutes' %}selected{% endif %}>Toutes les années — historique</option>
+  </select>
+  <button type="submit" class="btn btn-outline-primary">Afficher</button>
+</form>

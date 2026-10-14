@@ -6537,12 +6537,6 @@ def sauvegarder_notes(request):
             try:
                 from .utils_rangs import invalider_cache_rangs
                 invalider_cache_rangs(matiere.classe, periode)
-                # Invalider aussi le cache calculer_moyennes_classe_optimise
-                # (pattern: moy_classe_<id>_<periode>_<system_type>_*)
-                # Django locmem cache ne supporte pas delete_pattern,
-                # on vide tout le préfixe via une clé sentinelle incrémentale
-                _version_key = f"moy_version_classe_{matiere.classe.id}"
-                cache.set(_version_key, cache.get(_version_key, 0) + 1, 86400)
                 logger.info(f"Cache invalidé pour classe {matiere.classe.id}, période {periode}")
             except Exception as e:
                 logger.warning(f"Erreur invalidation cache: {e}")
@@ -8269,14 +8263,9 @@ def sauvegarder_notes_guineen(request):
         
         # Invalider le cache des rangs
         try:
-            # Essayer d'invalider le cache avec pattern
-            cache_key = f"rangs_classe_{matiere.classe.id}_*"
-            if hasattr(cache, 'delete_pattern'):
-                cache.delete_pattern(cache_key)
-            else:
-                # Sinon, invalider les clés connues
-                for periode in ['OCTOBRE', 'NOVEMBRE', 'DECEMBRE', 'JANVIER', 'FEVRIER', 'MARS', 'AVRIL', 'MAI', 'JUIN']:
-                    cache.delete(f"rangs_classe_{matiere.classe.id}_periode_{periode}")
+            if saved_count or updated_count:
+                from .utils_rangs import invalider_cache_rangs
+                invalider_cache_rangs(matiere.classe)
         except Exception:
             pass
         
