@@ -135,3 +135,62 @@ class CreationNouvelleAnneeTest(TestCase):
         })
         self.assertRedirects(response, reverse('eleves:nouvelle_annee_apercu'),
                              fetch_redirect_response=False)
+
+    def test_creation_active_et_affiche_la_nouvelle_annee(self):
+        from eleves.utils_annee import SESSION_ANNEE_ACTIVE
+        session = self.client.session
+        session[SESSION_ANNEE_ACTIVE] = '2025-2026'
+        session.save()
+        response = self.client.post(reverse('eleves:nouvelle_annee_creer'), {
+            'annee_courante': '2025-2026', 'annee_nouvelle': '2026-2027',
+        }, follow=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.client.session[SESSION_ANNEE_ACTIVE], '2026-2027')
+        self.assertEqual(response.context['annee_active'], '2026-2027')
+        self.assertEqual({c.annee_scolaire for c in response.context['classes']}, {'2026-2027'})
+
+    def test_annees_identiques_mal_formees_ou_non_consecutives_refusees(self):
+        for source, target in [('2025-2026', '2025-2026'), ('2025-2026', '2027-2028'),
+                               ('2025/2026', '2025/2026'), ('2025-2028', '2026-2029')]:
+            response = self.client.post(reverse('eleves:nouvelle_annee_creer'), {
+                'annee_courante': source, 'annee_nouvelle': target, 'faire_passer_eleves': '1',
+            })
+            self.assertRedirects(response, reverse('eleves:nouvelle_annee_apercu'), fetch_redirect_response=False)
+        self.assertEqual(Classe.objects.count(), 2)
+        self.eleve.refresh_from_db()
+        self.assertEqual(self.eleve.classe_id, self.classe_1.pk)
+
+    def test_annee_source_absente_de_l_ecole_ne_cree_pas_un_faux_succes(self):
+        response = self.client.post(reverse('eleves:nouvelle_annee_creer'), {
+            'annee_courante': '2023-2024', 'annee_nouvelle': '2024-2025',
+        })
+        self.assertRedirects(response, reverse('eleves:nouvelle_annee_apercu'), fetch_redirect_response=False)
+        self.assertFalse(Classe.objects.filter(annee_scolaire='2024-2025').exists())
+
+    def test_un_eleve_non_deplace_ne_boucle_pas_indefiniment(self):
+        from unittest.mock import patch
+        with patch('eleves.views_nouvelle_annee._passer_eleve'):
+            response = self.client.post(reverse('eleves:nouvelle_annee_creer'), {
+                'annee_courante': '2025-2026', 'annee_nouvelle': '2026-2027', 'faire_passer_eleves': '1',
+            })
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(Classe.objects.filter(annee_scolaire='2026-2027').exists())
+        messages = [str(m) for m in response.wsgi_request._messages]
+        self.assertTrue(any("n'ont pas pu être passés" in message for message in messages))
+
+    def test_echec_echeancier_annule_le_passage_et_ses_compteurs(self):
+        from unittest.mock import patch
+        with patch('eleves.views_nouvelle_annee._creer_echeancier', side_effect=RuntimeError('échéancier indisponible')):
+            response = self.client.post(reverse('eleves:nouvelle_annee_creer'), {
+                'annee_courante': '2025-2026', 'annee_nouvelle': '2026-2027', 'faire_passer_eleves': '1',
+            })
+        self.eleve.refresh_from_db()
+        self.assertEqual(self.eleve.classe_id, self.classe_1.pk)
+        messages = [str(m) for m in response.wsgi_request._messages]
+        self.assertFalse(any('élève(s) passé(s)' in message for message in messages), messages)
+        self.assertTrue(any("n'ont pas pu être passés" in message for message in messages))
+
+    def test_formulaires_protegent_la_creation_contre_le_rechargement_de_sync(self):
+        response = self.client.get(reverse('eleves:nouvelle_annee_apercu'))
+        self.assertContains(response, 'onsubmit="return lancerAnnee(this)" data-no-fast-submit data-sync-preserve')
+        self.assertNotContains(response, 'onclick="return lancerAnnee(this)"')

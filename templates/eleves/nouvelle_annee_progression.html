@@ -12,7 +12,8 @@
                 <div class="progress-bar progress-bar-striped progress-bar-animated"
                      style="width:{{ pourcentage }}%">{{ pourcentage }} %</div>
             </div>
-            <form method="post" action="{% url 'eleves:nouvelle_annee_creer' %}" id="suite-passage">
+            <form method="post" action="{% url 'eleves:nouvelle_annee_creer' %}" id="suite-passage"
+                  data-no-fast-submit data-sync-preserve>
                 {% csrf_token %}
                 <input type="hidden" name="annee_courante" value="{{ annee_courante }}">
                 <input type="hidden" name="annee_nouvelle" value="{{ annee_nouvelle }}">
@@ -25,7 +26,15 @@
     </div>
 </div>
 <script>
-    // Enchaîne le lot suivant ; le bouton reste disponible si le script est bloqué.
-    setTimeout(function () { document.getElementById('suite-passage').submit(); }, 300);
+    // Protéger aussi les reprises contre les doubles envois et l'actualisation de sync.
+    var suitePassage = document.getElementById('suite-passage');
+    suitePassage.addEventListener('submit', function (event) {
+        if (suitePassage.__submitting) { event.preventDefault(); return; }
+        suitePassage.__submitting = true;
+        document.getElementById('btn-suite').disabled = true;
+    });
+    setTimeout(function () {
+        if (!suitePassage.__submitting) suitePassage.requestSubmit();
+    }, 300);
 </script>
 {% endblock %}
