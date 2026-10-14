@@ -13,6 +13,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Tuple, Optional
 from django.core.cache import cache
 from .models import Evaluation, NoteEleve, MatiereNote, NoteMensuelle, CompositionNote
+from .cache_calculs import CACHE_SCHEMA_VERSION, cle_cache_calcul, version_cache_classe
 import hashlib
 import json
 import logging
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Constantes de cache
 CACHE_TIMEOUT_MOYENNES = 600  # 10 minutes
 CACHE_TIMEOUT_CLASSEMENT = 600  # 10 minutes
-CALCUL_CACHE_SCHEMA_VERSION = 3
+CALCUL_CACHE_SCHEMA_VERSION = CACHE_SCHEMA_VERSION
 
 # Règles de calcul utilisées par les bulletins et les classements.
 # Secondaire guinéen: moyenne de période = 40% cours + 60% composition.
@@ -681,12 +682,13 @@ def calculer_moyennes_classe_optimise(eleves, matieres, periode, system_type='me
         return {}
 
     # ── Cache: évite de recalculer si déjà fait dans les 10 dernières minutes ──
-    # La version est incrémentée à chaque sauvegarde de note pour invalider le cache
+    # La génération change à chaque sauvegarde de note pour invalider le cache.
     from synchronisation.realtime import revision_ecole
     revision = revision_ecole(classe.ecole_id) if use_cache else ''
-    _version = cache.get(f"moy_version_classe_{classe.id}", 0)
+    _version = version_cache_classe(classe.id) if use_cache else ''
     selection = _signature_selection(eleves_ids, matieres_ids)
-    _cache_key = f"moy_classe_s{CALCUL_CACHE_SCHEMA_VERSION}_{classe.id}_{periode}_{system_type}_v{_version}_{selection}_{revision}"
+    _cache_key = cle_cache_calcul('moyennes', classe.id, periode=periode,
+        systeme=system_type, version=_version, selection=selection, revision=revision)
     if use_cache:
         _cached = cache.get(_cache_key)
         if _cached is not None:
@@ -1026,14 +1028,12 @@ def calculer_classement_classe(eleves, matieres, periode, system_type='mensuel',
         from synchronisation.realtime import revision_ecole
         revision = revision_ecole(matieres[0].classe.ecole_id) if use_cache else ''
         classe_id = matieres[0].classe_id
-        version = cache.get(f"moy_version_classe_{classe_id}", 0)
+        version = version_cache_classe(classe_id) if use_cache else ''
         selection = _signature_selection(
             [eleve.id for eleve in eleves], [matiere.id for matiere in matieres],
         )
-        cache_key = (
-            f"classement_classe_s{CALCUL_CACHE_SCHEMA_VERSION}_{classe_id}"
-            f"_periode_{periode}_type_{system_type}_v{version}_{selection}_{revision}"
-        )
+        cache_key = cle_cache_calcul('classement', classe_id, periode=periode,
+            systeme=system_type, version=version, selection=selection, revision=revision)
 
     # Vérifier le cache
     if cache_key and use_cache:

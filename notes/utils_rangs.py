@@ -17,6 +17,9 @@ from django.core.cache import cache
 from synchronisation.realtime import revision_ecole
 from django.db.models import Prefetch, Q
 from .calculs_intelligent import calculer_rang_intelligent
+from .cache_calculs import (
+    CACHE_SCHEMA_VERSION, cle_cache_calcul, invalider_calculs_classe, version_cache_classe,
+)
 import logging
 import time
 
@@ -26,7 +29,7 @@ logger = logging.getLogger(__name__)
 _cache_classes = {}
 _cache_matieres = {}
 CACHE_TIMEOUT = 600  # 10 minutes
-RANGS_CACHE_SCHEMA_VERSION = 3
+RANGS_CACHE_SCHEMA_VERSION = CACHE_SCHEMA_VERSION
 
 
 def calculer_rangs_classe_periode(classe_note, periode: str, use_cache: bool = True) -> Dict[int, dict]:
@@ -48,8 +51,9 @@ def calculer_rangs_classe_periode(classe_note, periode: str, use_cache: bool = T
     """
     # Vérifier le cache (priorité au cache Django)
     revision = revision_ecole(classe_note.ecole_id) if use_cache else ''
-    version = cache.get(f"moy_version_classe_{classe_note.id}", 0)
-    cache_key = f"rangs_classe_s{RANGS_CACHE_SCHEMA_VERSION}_{classe_note.id}_periode_{periode}_v{version}_{revision}"
+    version = version_cache_classe(classe_note.id) if use_cache else ''
+    cache_key = cle_cache_calcul('rangs', classe_note.id, periode=periode,
+                                version=version, revision=revision)
     if use_cache:
         rangs_cached = cache.get(cache_key)
         if rangs_cached is not None:
@@ -389,58 +393,14 @@ def invalider_cache_rangs(classe_note, periode: str = None):
         classe_note: Instance de ClasseNote
         periode: Période spécifique ou None pour invalider toutes les périodes
     """
-    periodes_a_invalider = []
-    
-    if periode:
-        periodes_a_invalider = [periode]
-        periodes_dependantes = {
-            'OCTOBRE': ['TRIMESTRE_1', 'SEMESTRE_1', 'ANNUEL_TRIM', 'ANNUEL_SEM'],
-            'NOVEMBRE': ['TRIMESTRE_1', 'SEMESTRE_1', 'ANNUEL_TRIM', 'ANNUEL_SEM'],
-            'DECEMBRE': ['SEMESTRE_1', 'ANNUEL_SEM'],
-            'JANVIER': ['TRIMESTRE_2', 'SEMESTRE_1', 'ANNUEL_TRIM', 'ANNUEL_SEM'],
-            'FEVRIER': ['TRIMESTRE_2', 'ANNUEL_TRIM'],
-            'MARS': ['SEMESTRE_2', 'ANNUEL_SEM'],
-            'AVRIL': ['TRIMESTRE_3', 'SEMESTRE_2', 'ANNUEL_TRIM', 'ANNUEL_SEM'],
-            'MAI': ['TRIMESTRE_3', 'SEMESTRE_2', 'ANNUEL_TRIM', 'ANNUEL_SEM'],
-            'JUIN': ['ANNUEL_TRIM', 'ANNUEL_SEM'],
-            'TRIMESTRE_1': ['ANNUEL_TRIM'],
-            'TRIMESTRE_2': ['ANNUEL_TRIM'],
-            'TRIMESTRE_3': ['ANNUEL_TRIM'],
-            'SEMESTRE_1': ['ANNUEL_SEM'],
-            'SEMESTRE_2': ['ANNUEL_SEM'],
-        }
-        periodes_a_invalider.extend(periodes_dependantes.get(periode, []))
-        periodes_a_invalider = list(dict.fromkeys(periodes_a_invalider))
-    else:
-        # Invalider toutes les périodes possibles
-        periodes_a_invalider = [
-            'OCTOBRE', 'NOVEMBRE', 'DECEMBRE',
-            'JANVIER', 'FEVRIER', 'MARS', 'AVRIL', 'MAI', 'JUIN',
-            'TRIMESTRE_1', 'TRIMESTRE_2', 'TRIMESTRE_3',
-            'SEMESTRE_1', 'SEMESTRE_2', 'ANNUEL', 'ANNUEL_TRIM', 'ANNUEL_SEM',
-            '1er Trimestre', '2ème Trimestre', '3ème Trimestre',
-            '1er Semestre', '2ème Semestre'
-        ]
-    
-    system_types = ['mensuel', 'trimestre', 'trimestriel', 'semestre', 'semestriel']
-    from .calculs_moyennes import CALCUL_CACHE_SCHEMA_VERSION
-    
-    for p in periodes_a_invalider:
-        # Invalider le cache des rangs
-        cache_key_rangs = f"rangs_classe_s{RANGS_CACHE_SCHEMA_VERSION}_{classe_note.id}_periode_{p}"
-        cache.delete(cache_key_rangs)
-        
-        # Invalider le cache des classements (pour chaque type de système)
-        for st in system_types:
-            cache_key_classement = f"classement_classe_s{CALCUL_CACHE_SCHEMA_VERSION}_{classe_note.id}_periode_{p}_type_{st}"
-            cache.delete(cache_key_classement)
+    # Tous les calculs incluent cette génération : une seule écriture invalide
+    # rangs, moyennes et classements, ainsi que les périodes qui en dépendent.
+    # Les anciennes suppressions par préfixe ne correspondaient plus aux clés
+    # versionnées et provoquaient 132 suppressions et 30 avertissements par classe.
+    invalider_calculs_classe(classe_note.id)
+    logger.debug("Cache invalidé pour classe %s, période %s et calculs dépendants",
+                 classe_note.id, periode or 'toutes')
 
-    # Invalider aussi le cache des moyennes de classe utilise par les conseils,
-    # statistiques et decisions. La cle de cache inclut cette version.
-    version_key = f"moy_version_classe_{classe_note.id}"
-    cache.set(version_key, cache.get(version_key, 0) + 1, 86400)
-    
-    logger.debug(f"Cache invalidé pour classe {classe_note.id}, périodes: {periodes_a_invalider}")
 
 
 def calculer_rangs_maternelle(classe_note, periode: str, eleves) -> Dict[int, dict]:

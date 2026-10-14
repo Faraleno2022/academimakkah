@@ -1,0 +1,40 @@
+{
+  "date": "2026-10-14",
+  "journal_fourni": {
+    "lignes": 1462,
+    "avertissements_cache": 690,
+    "lignes_cache_warning_et_source": 1380,
+    "autre_erreur": "OSError : erreur ecriture, sans traceback"
+  },
+  "reproduction_avant_correction": {
+    "resultat": "ECHEC ATTENDU",
+    "avertissements_par_invalidation_complete": 30,
+    "journal": "tmp/reproduction_cache_avertissements_20261014.log"
+  },
+  "invalidation_complete": {
+    "avant_suppressions": 132,
+    "avant_lectures": 1,
+    "avant_ecritures": 1,
+    "apres_suppressions": 0,
+    "apres_lectures": 0,
+    "apres_ecritures": 1
+  },
+  "tests_cibles": {
+    "nombre": 11,
+    "duree_secondes": 0.766,
+    "resultat": "OK",
+    "avertissements_cache": 0,
+    "journal": "tmp/tests_cache_calculs_20261014.log"
+  },
+  "tests_notes_calculs_sync_nouvelle_annee": {
+    "nombre": 141,
+    "duree_secondes": 33.079,
+    "resultat": "OK",
+    "avertissements_cache": 0,
+    "journal": "tmp/tests_notes_cache_journal_20261014.log"
+  },
+  "migration_supplementaire_cache": false,
+  "base_client_utilisee": false,
+  "compilation_realisee": false,
+  "publication_github_realisee": false
+}
