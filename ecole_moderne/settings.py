@@ -158,7 +158,7 @@ INSTALLED_APPS = [
 # =================== Middleware ===================
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',
+    'ecole_moderne.static_middleware.StaticFallbackWhiteNoiseMiddleware',
     'django.middleware.gzip.GZipMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -366,10 +366,11 @@ STORAGES = {
     },
 }
 
-# Filet de sécurité Render : si le dossier STATIC_ROOT d'une instance est
-# incomplet, WhiteNoise peut encore retrouver les fichiers versionnés dans
-# STATICFILES_DIRS. collectstatic reste exécuté au build et au démarrage.
-WHITENOISE_USE_FINDERS = bool(RENDER_EXTERNAL_HOSTNAME)
+# Filet de sécurité (Render et PythonAnywhere) : si STATIC_ROOT est incomplet,
+# par exemple quand collectstatic a été oublié après un déploiement, WhiteNoise
+# retrouve les fichiers versionnés dans STATICFILES_DIRS au redémarrage. Les
+# fichiers collectés (et compressés) restent prioritaires, cf. static_middleware.
+WHITENOISE_USE_FINDERS = True
 WHITENOISE_MIMETYPES = {'.m3u8': 'application/vnd.apple.mpegurl', '.m4s': 'video/iso.segment'}
 # Les segments H.264/AAC sont déjà compressés : ne pas les recompresser en
 # gzip/Brotli pendant collectstatic. Les scripts et playlists restent compressés.
