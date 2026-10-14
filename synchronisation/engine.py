@@ -214,6 +214,9 @@ def build_change_instance(model_label, object_uuid, payload, *, operation='UPDAT
                     continue
                 raw_value = payload[field.name]
                 value = deserialize_field(field, raw_value)
+                if isinstance(field, models.FileField) and value:
+                    from .media import incoming_name, safe_name
+                    value = safe_name(value) if trusted else incoming_name(ecole, obj, field, value)
                 if isinstance(field, models.ForeignKey):
                     if raw_value and value is None:
                         raise ValueError(f"Relation introuvable pour {field.name}.")
@@ -251,6 +254,9 @@ def apply_sync_change(change):
     change.date_application = timezone.now()
     change.erreur = ''
     change.save(update_fields=['statut', 'date_application', 'erreur'])
+    if change.device_id is None and change.operation != 'DELETE':
+        from .media import queue_received
+        queue_received(change.ecole, change.model_label, change.object_uuid, change.payload)
     return obj
 
 

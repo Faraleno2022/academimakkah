@@ -72,6 +72,14 @@ class Command(BaseCommand):
         except SyncTransportError as exc:
             raise CommandError(str(exc)) from exc
 
+        from synchronisation.media_client import sync_media
+        ecole = Ecole.objects.first()
+        if ecole is not None:
+            direction = 'PULL' if options['pull_only'] else 'PUSH' if options['push_only'] else None
+            sent, received = sync_media({'server_url': server_url, 'device_id': device_id, 'token': token},
+                                        ecole, direction=direction)
+            self.stdout.write(self.style.SUCCESS(f'Fichiers : {sent} envoyé(s), {received} reçu(s).'))
+
     def _afficher_etat(self, ecole):
         if ecole is None:
             self.stdout.write("Aucune ecole locale : le poste n'a pas encore ete amorce.")
@@ -79,6 +87,11 @@ class Command(BaseCommand):
         base = SyncChange.objects.filter(ecole=ecole)
         for statut, _libelle in SyncChange.STATUT_CHOICES:
             self.stdout.write(f'{statut}: {base.filter(statut=statut).count()}')
+        from synchronisation.models import SyncMediaTransfer
+        files = SyncMediaTransfer.objects.filter(ecole=ecole, complete=False)
+        self.stdout.write(f'Fichiers en attente : {files.count()}')
+        for media in files.exclude(error='').order_by('-pk')[:10]:
+            self.stdout.write(f'  {media.direction} {media.model_label}.{media.field_name} -> {media.error[:200]}')
         refuses = base.filter(statut=SyncChange.STATUT_FAILED).order_by('-id')[:10]
         if refuses:
             self.stdout.write('

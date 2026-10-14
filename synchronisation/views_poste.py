@@ -21,7 +21,7 @@ def _peut_configurer(user):
 
 def _etat_synchronisation(config):
     from .autosync import _pret
-    from .models import SyncChange, SyncCheckpoint
+    from .models import SyncChange, SyncCheckpoint, SyncMediaTransfer
 
     etat = {'active': _pret(config), 'serveur': config.get('server_url') or ''}
     if etat['active']:
@@ -31,6 +31,8 @@ def _etat_synchronisation(config):
             'initial_termine': bool(point and point.initial_complete),
             'en_attente': SyncChange.objects.filter(statut=SyncChange.STATUT_PENDING).count(),
             'en_echec': SyncChange.objects.filter(statut=SyncChange.STATUT_FAILED).count(),
+            'fichiers_en_attente': SyncMediaTransfer.objects.filter(complete=False).count(),
+            'fichiers_a_reessayer': SyncMediaTransfer.objects.filter(complete=False).exclude(error='').count(),
         })
     return etat
 

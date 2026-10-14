@@ -182,3 +182,25 @@ class SyncCheckpoint(models.Model):
     # des modèles ajoutés depuis, que le serveur ne lui envoyait pas avant.
     registre = models.PositiveSmallIntegerField(default=1)
     rattrapage_id = models.PositiveBigIntegerField(default=0)
+
+
+class SyncMediaTransfer(models.Model):
+    """File durable des fichiers, indépendante des changements métier."""
+    ecole = models.ForeignKey(Ecole, on_delete=models.CASCADE)
+    model_label = models.CharField(max_length=120)
+    object_uuid = models.UUIDField()
+    field_name = models.CharField(max_length=64)
+    direction = models.CharField(max_length=4, choices=[('PUSH', 'Envoi'), ('PULL', 'Réception')])
+    name = models.CharField(max_length=500)
+    sha256 = models.CharField(max_length=64, blank=True)
+    complete = models.BooleanField(default=False)
+    attempts = models.PositiveIntegerField(default=0)
+    retry_at = models.DateTimeField(default=timezone.now)
+    error = models.TextField(blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=['ecole', 'model_label', 'object_uuid', 'field_name', 'direction'],
+            name='sync_media_object_direction',
+        )]
+        indexes = [models.Index(fields=['ecole', 'complete', 'retry_at'], name='sync_media_pending')]

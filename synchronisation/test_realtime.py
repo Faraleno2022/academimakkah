@@ -163,12 +163,12 @@ class RevisionAffichageTests(TestCase):
 
 
 class TachesIndependantesTests(TestCase):
-    def test_demarrage_de_deux_taches_une_seule_fois(self):
+    def test_demarrage_des_taches_donnees_et_medias_une_seule_fois(self):
         with patch.object(autosync, '_worker_demarre', False), patch.object(autosync.threading, 'Thread') as thread:
             self.assertTrue(autosync.demarrer_worker('base', delai_demarrage=0))
             self.assertFalse(autosync.demarrer_worker('base'))
-            self.assertEqual([c.kwargs['args'][2] for c in thread.call_args_list], ['push', 'pull'])
-            self.assertEqual(thread.return_value.start.call_count, 2)
+            self.assertEqual([c.kwargs['args'][2] for c in thread.call_args_list], ['push', 'pull', 'media'])
+            self.assertEqual(thread.return_value.start.call_count, 3)
 
     def test_reception_continue_pendant_un_envoi_bloque(self):
         started, release, received = threading.Event(), threading.Event(), threading.Event()
