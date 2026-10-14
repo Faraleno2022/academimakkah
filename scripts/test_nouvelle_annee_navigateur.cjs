@@ -42,9 +42,40 @@ const fs = require('node:fs');
         assert.equal(getCreate.length, 0, 'L’actualisation de synchronisation ne doit pas interrompre le passage');
         assert.equal(dialogs, 2);
         assert.match(await page.locator('body').innerText(), /2026-2027/);
+        const dureeCreation = Date.now() - started;
+        for (const [path, prefixe] of [['/bus/liste/', 'BUS'], ['/bus/cantine/liste/', 'CANTINE']]) {
+            await page.goto(setup.url + path, {waitUntil: 'domcontentloaded'});
+            assert.equal(await page.locator('#annee-abonnements').inputValue(), '2026-2027');
+            assert.equal(await page.getByText(prefixe + '-NOUVEAU', {exact: true}).count(), 1);
+            assert.equal(await page.getByText(prefixe + '-ANCIEN', {exact: true}).count(), 0);
+            const selecteur = page.locator('#annee-abonnements');
+            await selecteur.selectOption('2025-2026');
+            await Promise.all([
+                page.waitForNavigation({waitUntil: 'domcontentloaded'}),
+                selecteur.locator('..').getByRole('button', {name: 'Afficher', exact: true}).click(),
+            ]);
+            assert.equal(await page.getByText(prefixe + '-ANCIEN', {exact: true}).count(), 1);
+            assert.equal(await page.getByText(prefixe + '-NOUVEAU', {exact: true}).count(), 0);
+        }
+        await page.goto(setup.url + '/bus/cantine/nouveau/?eleve=' + setup.eleve_id,
+            {waitUntil: 'domcontentloaded'});
+        assert.equal(await page.locator('#id_annee_scolaire').inputValue(), '2026-2027');
+        assert.equal(await page.locator('#id_montant_tarif').inputValue(), '120000');
+        assert.equal(await page.locator('#id_type_remise').inputValue(), 'POURCENTAGE');
+        assert.equal(Number(await page.locator('#id_valeur_remise').inputValue()), 10);
+        await Promise.all([
+            page.waitForResponse(response => response.url().includes('/cantine/api/eleve/' + setup.eleve_sans_abonnement + '/')),
+            page.locator('#id_eleve').selectOption(String(setup.eleve_sans_abonnement)),
+        ]);
+        await page.waitForFunction(() => document.getElementById('id_type_remise').value === '');
+        assert.equal(await page.locator('#id_montant_tarif').inputValue(), '');
+        assert.equal(await page.locator('#id_valeur_remise').inputValue(), '');
         assert.deepEqual(errors, [], 'Erreurs JavaScript sur le parcours');
         console.log(JSON.stringify({clic_reel: true, annulation: true, lots_automatiques: posts.length,
             rechargements_interrompant_creation: getCreate.length, nouvelle_annee_affichee: true,
+            duree_creation_ms: dureeCreation, filtres_annee_bus_cantine: true,
+            renouvellement_cantine_tarif_remise: true,
+            changement_eleve_efface_ancienne_remise: true,
             duree_parcours_ms: Date.now() - started, erreurs_js: errors}, null, 2));
     } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

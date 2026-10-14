@@ -353,9 +353,8 @@ class AbonnementBus(SyncTrackedModel):
                 self.zone = self.grille.zone
                 champs_automatiques.add('zone')
         if not self.annee_scolaire and self.eleve_id:
-            self.annee_scolaire = (
-                getattr(getattr(self.eleve, 'classe', None), 'annee_scolaire', '') or ''
-            )
+            from .annees import annee_depuis_date
+            self.annee_scolaire = annee_depuis_date(self.date_debut)
             champs_automatiques.add('annee_scolaire')
 
         if not self.numero_recu:
@@ -551,6 +550,10 @@ class AbonnementCantine(SyncTrackedModel):
         REPAS_10H_14H = 'REPAS_10H_14H', 'Repas de 10 h + 14 h'
     
     eleve = models.ForeignKey(Eleve, on_delete=models.CASCADE, related_name='abonnements_cantine')
+    annee_scolaire = models.CharField(
+        max_length=9, validators=[ANNEE_SCOLAIRE_VALIDATOR], blank=True,
+        db_index=True, verbose_name="Année scolaire",
+    )
     montant = models.DecimalField(max_digits=10, decimal_places=0, verbose_name="Montant encaissé (GNF)")
     montant_tarif = models.DecimalField(max_digits=10, decimal_places=0, null=True, blank=True,
                                        verbose_name="Tarif avant remise (GNF)")
@@ -615,6 +618,14 @@ class AbonnementCantine(SyncTrackedModel):
     
     def __str__(self):
         return f"Cantine: {self.eleve} ({self.get_periodicite_display()})"
+
+    def save(self, *args, **kwargs):
+        if not self.annee_scolaire:
+            from .annees import annee_depuis_date
+            self.annee_scolaire = annee_depuis_date(self.date_debut)
+            if kwargs.get('update_fields') is not None:
+                kwargs['update_fields'] = set(kwargs['update_fields']) | {'annee_scolaire'}
+        return super().save(*args, **kwargs)
 
     @property
     def montant_brut(self):

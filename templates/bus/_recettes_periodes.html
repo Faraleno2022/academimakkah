@@ -1,20 +1,20 @@
 {% load humanize %}
 {% comment %}
   Recettes par période. Variables : recettes (bus.recettes.recettes_par_periode),
-  url_liste (liste filtrable par ?periode=), periode (période active), titre_recettes.
+  url_liste (liste filtrable par ?annee={{ annee_abonnements|urlencode }}&amp;periode=), periode (période active), titre_recettes.
 {% endcomment %}
 <div class="card shadow-sm mb-4">
   <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2 py-2">
     <span class="fw-semibold"><i class="fas fa-coins text-success me-1"></i>{{ titre_recettes|default:"Recettes des abonnements" }}</span>
     {% if periode %}
-    <a class="btn btn-sm btn-outline-secondary" href="{{ url_liste }}"><i class="fas fa-times me-1"></i>Retirer le filtre de période</a>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_liste }}?annee={{ annee_abonnements|urlencode }}"><i class="fas fa-times me-1"></i>Retirer le filtre de période</a>
     {% endif %}
   </div>
   <div class="card-body">
     <div class="row g-3">
       {% for r in recettes %}
       <div class="col-sm-6 col-xl-3">
-        <a href="{{ url_liste }}?periode={{ r.code }}" class="text-decoration-none text-reset" title="Voir les abonnements : {{ r.libelle|lower }}">
+        <a href="{{ url_liste }}?annee={{ annee_abonnements|urlencode }}&amp;periode={{ r.code }}" class="text-decoration-none text-reset" title="Voir les abonnements : {{ r.libelle|lower }}">
           <div class="h-100 rounded-3 border border-{{ r.couleur }} p-3 {% if periode == r.code %}bg-{{ r.couleur }} bg-opacity-10 border-2{% endif %}">
             <div class="d-flex justify-content-between align-items-start">
               <div>

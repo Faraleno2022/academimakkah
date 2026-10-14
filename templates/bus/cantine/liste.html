@@ -5,6 +5,7 @@
 
 {% block content %}
 <div class="container-fluid">
+    {% include 'bus/_annees.html' %}
     <!-- En-tête -->
     <div class="row mb-4">
         <div class="col-12">
@@ -27,11 +28,11 @@
                         <i class="fas fa-calendar-alt"></i> Périodicités cantine
                     </a>
                     {% if avec_remise %}
-                    <a href="{% url 'bus:liste_abonnements_cantine' %}" class="btn btn-outline-info">
+                    <a href="{% url 'bus:liste_abonnements_cantine' %}?annee={{ annee_abonnements|urlencode }}" class="btn btn-outline-info">
                         <i class="fas fa-list"></i> Tous les abonnements
                     </a>
                     {% else %}
-                    <a href="{% url 'bus:liste_abonnements_cantine' %}?remise=oui" class="btn btn-outline-info">
+                    <a href="{% url 'bus:liste_abonnements_cantine' %}?annee={{ annee_abonnements|urlencode }}&amp;remise=oui" class="btn btn-outline-info">
                         <i class="fas fa-percent"></i> Élèves avec remise
                     </a>
                     {% endif %}
@@ -64,7 +65,7 @@
                         <td class="text-end">{{ r.du|intcomma }} GNF</td>
                         <td class="text-end">{{ r.paye|intcomma }} GNF</td>
                         <td class="text-end">{{ r.reste|intcomma }} GNF</td>
-                        <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{% url 'bus:liste_abonnements_cantine' %}?periodicite={{ r.code|urlencode }}#liste-abonnements">Voir la liste</a></td>
+                        <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{% url 'bus:liste_abonnements_cantine' %}?annee={{ annee_abonnements|urlencode }}&amp;periodicite={{ r.code|urlencode }}#liste-abonnements">Voir la liste</a></td>
                     </tr>
                     {% empty %}
                     <tr><td colspan="8" class="text-center text-muted">Aucun abonnement</td></tr>
@@ -78,6 +79,7 @@
     <div class="card mb-4">
         <div class="card-body">
             <form method="get" class="row g-3">
+                <input type="hidden" name="annee" value="{{ annee_abonnements }}">
                 {% if periode %}<input type="hidden" name="periode" value="{{ periode }}">{% endif %}
                 {% if periodicite %}<input type="hidden" name="periodicite" value="{{ periodicite }}">{% endif %}
                 {% if avec_remise %}<input type="hidden" name="remise" value="oui">{% endif %}
@@ -175,7 +177,7 @@
                                 <strong>{{ abo.eleve.nom }} {{ abo.eleve.prenom }}</strong><br>
                                 <small class="text-muted">{{ abo.eleve.matricule|default:"-" }}</small>
                             </td>
-                            <td>{{ abo.eleve.classe.nom|default:"-" }}</td>
+                            <td>{{ abo.eleve.classe.nom|default:"-" }}<br><small class="text-muted">{{ abo.annee_scolaire|default:"—" }}</small></td>
                             <td>
                                 <span class="badge 
                                     {% if abo.type_repas == 'DEJEUNER' %}bg-warning

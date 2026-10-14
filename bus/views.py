@@ -35,6 +35,7 @@ from paiements.twilio_utils import send_message_async
 from ecole_moderne.recherche import filtrer_termes
 from .periodes import fin_abonnement
 from .export_listes import exporter_liste
+from .annees import filtrer_annee_abonnements
 
 
 def _ecole_utilisateur(user):
@@ -43,12 +44,7 @@ def _ecole_utilisateur(user):
 
 @login_required
 def tableau_bord(request):
-    qs = AbonnementBus.objects.select_related(
-        'eleve', 'eleve__classe', 'eleve__classe__ecole', 'grille', 'mode_paiement'
-    )
-    # IMPORTANT: Seul le superuser peut voir toutes les écoles
-    if not user_is_superadmin(request.user):
-        qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
+    qs, annees = filtrer_annee_abonnements(request, _abonnements_visibles(request.user))
 
     today = timezone.localdate()
     total = qs.count()
@@ -64,6 +60,7 @@ def tableau_bord(request):
                 proche += 1
 
     context = {
+        **annees,
         'titre_page': 'Abonnements Bus',
         'total': total,
         'exp': exp,
@@ -90,8 +87,10 @@ def _itineraires_connus(user):
     ))
 
 
-def _filtrer_abonnements(request, qs):
+def _filtrer_abonnements(request, qs, *, annee_appliquee=False):
     """Recherche, période et filtre de statut de la liste (réutilisés par les exports)."""
+    if not annee_appliquee:
+        qs, _ = filtrer_annee_abonnements(request, qs)
     q = (request.GET.get('q') or '').strip()
     filtre = (request.GET.get('filtre') or '').strip().lower()
     periode = request.GET.get('periode') or ''
@@ -205,7 +204,7 @@ def _resumes_periodicites_bus(user, qs):
 
 @login_required
 def liste_abonnements(request):
-    qs = _abonnements_visibles(request.user)
+    qs, annees = filtrer_annee_abonnements(request, _abonnements_visibles(request.user))
 
     # Le récapitulatif couvre tous les abonnements visibles de l'école.
     periodicite_rows = _resumes_periodicites_bus(request.user, qs)
@@ -217,7 +216,7 @@ def liste_abonnements(request):
     # Recettes de l'école sur les périodes, indépendamment de la recherche
     recettes = recettes_par_periode(qs, CHAMP_DATE_BUS)
 
-    qs, q, filtre, periode = _filtrer_abonnements(request, qs)
+    qs, q, filtre, periode = _filtrer_abonnements(request, qs, annee_appliquee=True)
     today = timezone.localdate()
 
     # Aggregates for dashboard (sur le queryset filtré)
@@ -265,6 +264,7 @@ def liste_abonnements(request):
     page_params.pop('page', None)
 
     context = {
+        **annees,
         'titre_page': 'Abonnements Bus - Liste',
         'abonnements': abonnements,
         'page_obj': page_obj,
@@ -315,7 +315,7 @@ def export_abonnements_bus(request, fmt):
     ]
     entetes_pdf = [
         'Élève', 'Matricule', 'Classe', 'Zone', 'Périodicité', 'N° reçu',
-        'Date', 'Fin', 'Encaissé', 'Dû net', 'Remise', 'Déjà payé', 'Reste',
+        'Date', 'Fin', 'Encaissé', 'Dû net', 'Remise', 'Déjà payé', 'Reste', 'Année',
     ]
     lignes_excel, lignes_pdf = [], []
     for abo in abonnements:
@@ -339,7 +339,7 @@ def export_abonnements_bus(request, fmt):
             nom, eleve.matricule or '', classe, zone, abo.get_periodicite_display(),
             abo.numero_recu or '', abo.date_debut, abo.date_expiration,
             abo.montant, situation.get('du'), situation.get('remise'),
-            abo.deja_paye, situation.get('reste'),
+            abo.deja_paye, situation.get('reste'), abo.annee_scolaire,
         ])
     return exporter_liste(
         fmt, 'abonnements_bus', 'Abonnements bus — tous les versements',
@@ -353,8 +353,8 @@ def export_controle_chauffeur(request, fmt):
     """Liste de contrôle du chauffeur (PDF ou Excel) : un élève par ligne, itinéraire en tête."""
     if fmt not in FORMATS_CONTROLE:
         return HttpResponse('Format invalide', status=400)
-    visibles = _abonnements_visibles(request.user)
-    filtres, q, filtre, periode = _filtrer_abonnements(request, visibles)
+    visibles, _ = filtrer_annee_abonnements(request, _abonnements_visibles(request.user))
+    filtres, q, filtre, periode = _filtrer_abonnements(request, visibles, annee_appliquee=True)
     lignes = lignes_controle(visibles, filtres)
     ecole = _ecole_utilisateur(request.user)
     if ecole is None and lignes:
@@ -623,9 +623,11 @@ def relances(request):
     if not user_is_superadmin(request.user):
         qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
 
+    qs, annees = filtrer_annee_abonnements(request, qs)
     a_relancer = [a for a in qs if a.est_expire or a.est_proche_expiration or a.statut != AbonnementBus.Statut.ACTIF]
 
     context = {
+        **annees,
         'titre_page': 'Relances Abonnements Bus',
         'abonnements': a_relancer,
     }
@@ -639,6 +641,7 @@ def export_relances_excel(request):
     if not user_is_superadmin(request.user):
         qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
 
+    qs, _ = filtrer_annee_abonnements(request, qs)
     data = [a for a in qs if a.est_expire or a.est_proche_expiration or a.statut != AbonnementBus.Statut.ACTIF]
 
     wb = Workbook(); ws = wb.active; ws.title = 'Relances Bus'
@@ -998,6 +1001,7 @@ def export_abonnements_breakdown_csv(request, kind: str):
     if not user_is_superadmin(request.user):
         qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
 
+    qs, _ = filtrer_annee_abonnements(request, qs)
     q = (request.GET.get('q') or '').strip()
     if q:
         qs = qs.filter(

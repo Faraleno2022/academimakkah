@@ -30,6 +30,14 @@ from ecole_moderne.security_decorators import require_school_object
 from ecole_moderne.recherche import filtrer_termes
 from .export_listes import exporter_liste
 from .periodicites import resumes_periodicites_cantine, totaux_cantine
+from .annees import filtrer_annee_abonnements
+
+
+def _abonnements_cantine_visibles(request):
+    qs = AbonnementCantine.objects.select_related('eleve', 'eleve__classe', 'eleve__classe__ecole')
+    if not user_is_superadmin(request.user):
+        qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
+    return filtrer_annee_abonnements(request, qs)
 
 
 def _abonnements_cantine_tries(qs, avec_remise=False):
@@ -53,10 +61,7 @@ def _abonnements_cantine_tries(qs, avec_remise=False):
 @login_required
 def tableau_bord_cantine(request):
     """Tableau de bord des abonnements cantine avec alertes"""
-    qs = AbonnementCantine.objects.select_related('eleve', 'eleve__classe', 'eleve__classe__ecole')
-    # IMPORTANT: Seul le superuser peut voir toutes les écoles
-    if not user_is_superadmin(request.user):
-        qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
+    qs, annees = _abonnements_cantine_visibles(request)
     
     # Statistiques générales
     total = qs.count()
@@ -103,6 +108,7 @@ def tableau_bord_cantine(request):
     montants = totaux_cantine(qs)
     
     context = {
+        **annees,
         'titre_page': 'Gestion Cantine Scolaire',
         'total': total,
         'actifs': actifs,
@@ -127,10 +133,7 @@ def tableau_bord_cantine(request):
 @login_required
 def liste_abonnements_cantine(request):
     """Liste des abonnements cantine avec filtres et recherche"""
-    qs = AbonnementCantine.objects.select_related('eleve', 'eleve__classe', 'eleve__classe__ecole')
-    # IMPORTANT: Seul le superuser peut voir toutes les écoles
-    if not user_is_superadmin(request.user):
-        qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
+    qs, annees = _abonnements_cantine_visibles(request)
 
     periodicite_rows = resumes_periodicites_cantine(qs)
     periodicite = (request.GET.get('periodicite') or '').strip()
@@ -189,6 +192,7 @@ def liste_abonnements_cantine(request):
     page_params = request.GET.copy()
     page_params.pop('page', None)
     context = {
+        **annees,
         'titre_page': 'Élèves abonnés à la cantine avec remise' if avec_remise else 'Liste des Abonnements Cantine',
         'abonnements': abonnements,
         'page_obj': page_obj,
@@ -294,9 +298,7 @@ def supprimer_abonnement_cantine(request, pk):
 
 def _export_cantine(request, fmt):
     """Exporte chaque abonnement visible avec les filtres de la liste."""
-    qs = AbonnementCantine.objects.select_related('eleve', 'eleve__classe', 'eleve__classe__ecole')
-    if not user_is_superadmin(request.user):
-        qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
+    qs, _ = _abonnements_cantine_visibles(request)
     periodicite = (request.GET.get('periodicite') or '').strip()
     if periodicite in dict(AbonnementCantine.Periodicite.choices):
         qs = qs.filter(periodicite=periodicite)
@@ -335,11 +337,11 @@ def _export_cantine(request, fmt):
         'Dû net (GNF)', 'Déjà payé (GNF)', 'Reste à payer (GNF)',
         'Date début', 'Date expiration', 'Jours restants', 'Statut',
         'Référence externe', 'Régime alimentaire', 'Allergies', 'Contact parent',
-        'Observations',
+        'Observations', 'Année scolaire',
     ]
     entetes_pdf = [
         'Élève', 'Matricule', 'Classe', 'Repas', 'Périodicité', 'Montant',
-        'Remise', 'Dû net', 'Déjà payé', 'Reste', 'Début', 'Fin', 'Référence',
+        'Remise', 'Dû net', 'Déjà payé', 'Reste', 'Début', 'Fin', 'Référence', 'Année',
     ]
     lignes_excel, lignes_pdf = [], []
     for abo in abonnements:
@@ -355,14 +357,14 @@ def _export_cantine(request, fmt):
             abo.date_debut, abo.date_expiration, abo.jours_restants,
             abo.get_statut_display(), abo.reference_externe or '',
             abo.regime_alimentaire or '', abo.allergies or '',
-            abo.contact_parent or '', abo.observations or '',
+            abo.contact_parent or '', abo.observations or '', abo.annee_scolaire,
         ])
         lignes_pdf.append([
             nom, eleve.matricule or '', classe, abo.get_type_repas_display(),
             abo.get_periodicite_display(), abo.montant_brut,
             abo.montant_remise, abo.montant_du, abo.deja_paye,
             abo.reste_a_payer, abo.date_debut, abo.date_expiration,
-            abo.reference_externe or '',
+            abo.reference_externe or '', abo.annee_scolaire,
         ])
     return exporter_liste(
         fmt, 'abonnements_cantine', 'Abonnements cantine',
@@ -384,10 +386,7 @@ def export_cantine_pdf(request):
 @login_required
 def alertes_cantine_json(request):
     """API JSON pour récupérer les alertes cantine (pour dashboard)"""
-    qs = AbonnementCantine.objects.select_related('eleve', 'eleve__classe')
-    # IMPORTANT: Seul le superuser peut voir toutes les écoles
-    if not user_is_superadmin(request.user):
-        qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
+    qs, _ = _abonnements_cantine_visibles(request)
     
     # Abonnements expirés
     expires = [a for a in qs.filter(statut='ACTIF') if a.est_expire]
@@ -482,6 +481,7 @@ def get_eleve_info_json(request, eleve_id):
             'matricule': eleve.matricule or '',
             'classe': eleve.classe.nom if eleve.classe else '',
             'classe_id': eleve.classe.id if eleve.classe else None,
+            'annee_scolaire': eleve.classe.annee_scolaire if eleve.classe else '',
             'telephone_parent': eleve.responsable_principal.telephone if eleve.responsable_principal else '',
             'email_parent': eleve.responsable_principal.email if eleve.responsable_principal else '',
             'photo_url': photo_url,

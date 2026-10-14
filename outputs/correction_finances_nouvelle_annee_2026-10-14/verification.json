@@ -1,0 +1,36 @@
+{
+  "date": "2026-10-14",
+  "branche": "codex/gestion-financiere-nouvelle-annee-2026-10-14",
+  "tests_finances_bus_cantine_rapports_sync": {
+    "nombre": 387,
+    "duree_secondes": 97.636,
+    "resultat": "OK",
+    "journal": "tmp/tests_finances_annees_final_20261014.log"
+  },
+  "regressions_finales": {
+    "nombre": 35,
+    "duree_secondes": 7.374,
+    "resultat": "OK",
+    "journal": "tmp/tests_regression_annees_final_20261014.log"
+  },
+  "schema": {
+    "resultat": "OK",
+    "migration": "bus.0012_abonnements_annee_scolaire",
+    "base": "SQLite temporaire",
+    "journal": "tmp/schema_nouvelle_annee_finances_20261014.log"
+  },
+  "navigateur": {
+    "resultat": "OK",
+    "lots": 3,
+    "duree_creation_ms": 1589,
+    "duree_parcours_complet_ms": 3786,
+    "erreurs_javascript": [],
+    "filtres_annee_bus_cantine": true,
+    "renouvellement_cantine_tarif_remise": true,
+    "changement_eleve_efface_ancienne_remise": true,
+    "journal": "tmp/navigateur_finances_annees_final_v2_20261014.log"
+  },
+  "base_client_utilisee": false,
+  "compilation_realisee": false,
+  "publication_github_realisee": false
+}

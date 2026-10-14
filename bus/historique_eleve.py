@@ -148,9 +148,13 @@ def reprise_cantine(eleve):
         return {'contact_parent': contact} if contact else {}
     date_debut = date_debut_suivante(dernier)
     return {
+        'annee_scolaire': getattr(getattr(eleve, 'classe', None), 'annee_scolaire', ''),
         'type_repas': dernier.type_repas,
         'periodicite': dernier.periodicite,
         'montant': int(dernier.montant or 0),
+        'montant_tarif': int(dernier.montant_brut),
+        'type_remise': dernier.type_remise,
+        'valeur_remise': str(dernier.valeur_remise),
         'date_debut': date_debut,
         'date_expiration': date_expiration_cantine(date_debut, dernier.periodicite),
         'alerte_avant_jours': dernier.alerte_avant_jours,
@@ -162,9 +166,10 @@ def reprise_cantine(eleve):
 
 
 def _grille_reprise(dernier):
-    """Grille du dernier paiement si elle est encore active, sinon la plus récente de la même zone."""
+    """Grille de la même zone dans l'année actuelle de l'élève."""
     grille = dernier.grille
-    if grille and grille.actif:
+    annee = getattr(getattr(dernier.eleve, 'classe', None), 'annee_scolaire', '')
+    if grille and grille.actif and grille.annee_scolaire == annee:
         return grille
     zone = getattr(grille, 'zone', '') or dernier.zone
     ecole_id = getattr(grille, 'ecole_id', None) or getattr(
@@ -173,7 +178,8 @@ def _grille_reprise(dernier):
     if not zone or not ecole_id:
         return None
     return (
-        GrilleTarifaireBus.objects.filter(ecole_id=ecole_id, zone__iexact=zone, actif=True)
+        GrilleTarifaireBus.objects.filter(ecole_id=ecole_id, zone__iexact=zone, actif=True,
+                                         annee_scolaire=annee)
         .order_by('-annee_scolaire')
         .first()
     )

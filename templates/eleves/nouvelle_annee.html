@@ -117,7 +117,7 @@
                                 <i class="fas fa-money-bill-wave text-warning me-1"></i>
                                 Copier les grilles tarifaires
                             </label>
-                            <div class="text-muted small">Frais de scolarité, tranches de paiement</div>
+                            <div class="text-muted small">Scolarité et bus, avec échéances décalées d'un an. Les tarifs déjà définis pour la nouvelle année sont conservés.</div>
                         </div>
 
                         <div class="form-check form-switch mb-3">
@@ -428,6 +428,12 @@
         {% endif %}
 
         <!-- Bouton de confirmation -->
+        <div class="alert alert-info mt-4">
+            Les paiements, remises, dettes et avances des années précédentes restent dans leur année d'origine.
+            Les nouveaux échéanciers utilisent les frais de réinscription du nouveau niveau et uniquement les paiements de la nouvelle année, y compris les versements anticipés.
+            Aucun reçu bus ou cantine n'est créé sans nouvel encaissement. Les abonnements existants conservent leurs dates et leurs remises.
+            Une grille de scolarité doit exister pour chaque niveau de destination ; un tarif absent bloque le passage de l'élève concerné.
+        </div>
         <div class="card mt-4 border-danger">
             <div class="card-body d-flex align-items-center justify-content-between flex-wrap gap-3">
                 <div>

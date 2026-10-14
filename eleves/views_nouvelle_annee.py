@@ -19,6 +19,7 @@ from django.db.models import Count
 
 from decimal import Decimal
 from datetime import date as _date_type
+from dateutil.relativedelta import relativedelta
 
 from .models import Ecole, Classe, Eleve, HistoriqueEleve
 from utilisateurs.utils import user_school, user_is_admin
@@ -119,6 +120,7 @@ def gestion_annees(request):
                  .order_by('-annee_scolaire'))
 
     annee_active = get_annee_active(request, ecole)
+    annees_connues = {a['annee_scolaire'] for a in annees_qs}
 
     annees = []
     for a in annees_qs:
@@ -128,6 +130,8 @@ def gestion_annees(request):
             'nb_eleves': a['nb_eleves'],
             'est_active': a['annee_scolaire'] == annee_active,
             'est_recente': a == annees_qs[0],
+            'passage_a_completer': (a['nb_eleves'] > 0
+                and _annee_suivante(a['annee_scolaire']) in annees_connues),
         })
 
     context = {
@@ -433,7 +437,8 @@ def nouvelle_annee_apercu(request):
         messages.warning(request, "Aucune classe trouvée pour cet établissement.")
         return redirect('eleves:gestion_classes')
 
-    annee_courante = annees[0]
+    source_demandee = request.GET.get('annee_courante', '').strip()
+    annee_courante = source_demandee if source_demandee in annees else annees[0]
     annee_nouvelle = _annee_suivante(annee_courante)
 
     # Vérifier si la nouvelle année existe déjà
@@ -548,7 +553,7 @@ def nouvelle_annee_apercu(request):
 TAILLE_LOT_PASSAGE = 100
 
 _COMPTEURS = (
-    'classes_creees', 'grilles_creees', 'configs_paiement_creees',
+    'classes_creees', 'grilles_creees', 'grilles_bus_creees', 'configs_paiement_creees',
     'classes_notes_creees', 'matieres_creees', 'eleves_passes',
     'eleves_conserves', 'eleves_diplomes', 'eleves_sortis', 'eleves_cep',
     'eleves_bepc', 'eleves_convention', 'eleves_redoublants', 'echeanciers_crees',
@@ -610,10 +615,43 @@ def _dupliquer_structure(request, ecole, annee_courante, annee_nouvelle, options
                     'periode_1': g.periode_1,
                     'periode_2': g.periode_2,
                     'periode_3': g.periode_3,
+                    **{
+                        champ: (getattr(g, champ) + relativedelta(years=1)
+                                if getattr(g, champ) else None)
+                        for champ in (
+                            'date_echeance_inscription_defaut',
+                            'date_echeance_tranche_1_defaut',
+                            'date_echeance_tranche_2_defaut',
+                            'date_echeance_tranche_3_defaut',
+                        )
+                    },
                 }
             )
             if created:
                 resultats['grilles_creees'] += 1
+
+        from bus.models import GrilleTarifaireBus
+        for grille in GrilleTarifaireBus.objects.filter(ecole=ecole, annee_scolaire=annee_courante):
+            _, created = GrilleTarifaireBus.objects.get_or_create(
+                ecole=ecole, zone=grille.zone, annee_scolaire=annee_nouvelle,
+                defaults={
+                    'tranche_1': grille.tranche_1,
+                    'tranche_2': grille.tranche_2,
+                    'tranche_3': grille.tranche_3,
+                    'actif': grille.actif,
+                    'cree_par': request.user,
+                    **{
+                        champ: (getattr(grille, champ) + relativedelta(years=1)
+                                if getattr(grille, champ) else None)
+                        for champ in (
+                            'date_echeance_tranche_1', 'date_echeance_tranche_2',
+                            'date_echeance_tranche_3',
+                        )
+                    },
+                },
+            )
+            if created:
+                resultats['grilles_bus_creees'] += 1
 
     if options['dupliquer_notes_classes']:
         from notes.models import ClasseNote, MatiereNote
@@ -649,7 +687,7 @@ def _dupliquer_structure(request, ecole, annee_courante, annee_nouvelle, options
                         resultats['matieres_creees'] += 1
 
 
-def _creer_echeancier(request, eleve, ecole, annee_nouvelle):
+def _creer_echeancier(request, eleve, ecole, annee_nouvelle, *, reinscription=True):
     """Crée l'échéancier de la nouvelle année (sans jamais toucher aux anciens)."""
     from paiements.models import EcheancierPaiement
     from .models import GrilleTarifaire
@@ -668,14 +706,23 @@ def _creer_echeancier(request, eleve, ecole, annee_nouvelle):
         grille = GrilleTarifaire.objects.filter(
             ecole=ecole, niveau=niveau, annee_scolaire=annee_nouvelle
         ).first()
-    fi = Decimal(str(grille.frais_reinscription or 0)) if grille else Decimal('0')
-    t1 = Decimal(str(grille.tranche_1 or 0)) if grille else Decimal('0')
-    t2 = Decimal(str(grille.tranche_2 or 0)) if grille else Decimal('0')
-    t3 = Decimal(str(grille.tranche_3 or 0)) if grille else Decimal('0')
+    if grille is None:
+        raise ValueError(
+            f"Tarif manquant pour {eleve.classe.get_niveau_display()} en {annee_nouvelle}. "
+            "Copiez les grilles tarifaires ou configurez les tarifs avant le passage."
+        )
+    from paiements.services import _nature_frais
+    nature = _nature_frais(eleve, annee_nouvelle, nouvelle_annee=reinscription)
+    fi = Decimal(str((grille.frais_reinscription if nature == EcheancierPaiement.NATURE_REINSCRIPTION
+                      else grille.frais_inscription) or 0))
+    t1 = Decimal(str(grille.tranche_1 or 0))
+    t2 = Decimal(str(grille.tranche_2 or 0))
+    t3 = Decimal(str(grille.tranche_3 or 0))
 
     EcheancierPaiement.objects.create(
         eleve=eleve,
         annee_scolaire=annee_nouvelle,
+        nature_frais=nature,
         frais_inscription_du=fi,
         tranche_1_due=t1,
         tranche_2_due=t2,
@@ -684,13 +731,19 @@ def _creer_echeancier(request, eleve, ecole, annee_nouvelle):
         tranche_1_payee=Decimal('0'),
         tranche_2_payee=Decimal('0'),
         tranche_3_payee=Decimal('0'),
-        date_echeance_inscription=_date_type(annee_debut, 10, 1),
-        date_echeance_tranche_1=_date_type(annee_fin, 1, 15),
-        date_echeance_tranche_2=_date_type(annee_fin, 3, 15),
-        date_echeance_tranche_3=_date_type(annee_fin, 5, 15),
+        date_echeance_inscription=grille.date_echeance_inscription_defaut or _date_type(annee_debut, 10, 1),
+        date_echeance_tranche_1=grille.date_echeance_tranche_1_defaut or _date_type(annee_fin, 1, 15),
+        date_echeance_tranche_2=grille.date_echeance_tranche_2_defaut or _date_type(annee_fin, 3, 15),
+        date_echeance_tranche_3=grille.date_echeance_tranche_3_defaut or _date_type(annee_fin, 5, 15),
         statut='A_PAYER',
         cree_par=request.user,
     )
+    # Un versement anticipé peut déjà avoir été saisi/importé pour cette année.
+    # Il compte dans le nouvel échéancier ; ceux des autres années restent exclus.
+    from paiements.models import Paiement
+    if Paiement.objects.filter(eleve=eleve, annee_scolaire=annee_nouvelle).exists():
+        from paiements.services import synchroniser_echeancier_apres_changement_paiement
+        synchroniser_echeancier_apres_changement_paiement(eleve.pk, annee_nouvelle)
     return True
 
 
@@ -743,10 +796,20 @@ def _passer_eleve(request, eleve, ctx, resultats):
     eleve._passage_nouvelle_annee = True
     nouvelle_meme = ctx['map_anciennes_nouvelles'].get(ancienne_classe.pk)
 
+    def affecter(classe):
+        # Contrôle avant Eleve.save() : un tarif absent ne doit déclencher ni
+        # changement de matricule, ni historique, ni synchronisation inutile.
+        if classe.niveau not in ctx['niveaux_tarifes']:
+            raise ValueError(
+                f"Tarif manquant pour {classe.get_niveau_display()} en {annee_nouvelle}. "
+                "Copiez les grilles tarifaires ou configurez les tarifs avant le passage."
+            )
+        eleve.classe = classe
+        eleve.save()
+
     if not admis and not par_convention:
         if nouvelle_meme:
-            eleve.classe = nouvelle_meme
-            eleve.save()
+            affecter(nouvelle_meme)
             moy_txt = f"{moyenne}/{sur}" if moyenne is not None else "non évaluée"
             HistoriqueEleve.objects.create(
                 eleve=eleve,
@@ -763,8 +826,7 @@ def _passer_eleve(request, eleve, ctx, resultats):
 
     sup_cls = _trouver_classe_cible(ancienne_classe.nom, ctx['index_nouvelles'])
     if sup_cls:
-        eleve.classe = sup_cls
-        eleve.save()
+        affecter(sup_cls)
         convention_txt = " (par convention direction/parents)" if par_convention else ""
         moy_txt = f" — moyenne: {moyenne}/{sur}" if moyenne is not None else ""
         HistoriqueEleve.objects.create(
@@ -803,8 +865,7 @@ def _passer_eleve(request, eleve, ctx, resultats):
             )
             resultats['eleves_bepc'] += 1
     elif nouvelle_meme:
-        eleve.classe = nouvelle_meme
-        eleve.save()
+        affecter(nouvelle_meme)
         HistoriqueEleve.objects.create(
             eleve=eleve,
             action='CHANGEMENT_CLASSE',
@@ -823,6 +884,7 @@ def _message_final(annee_nouvelle, resultats):
         ('classes_creees', "{} classe(s) créée(s)"),
         ('configs_paiement_creees', "{} config(s) paiement copiée(s)"),
         ('grilles_creees', "{} grille(s) tarifaire(s) copiée(s)"),
+        ('grilles_bus_creees', "{} grille(s) bus copiée(s)"),
         ('eleves_passes', "{} élève(s) passé(s) en classe supérieure"),
         ('eleves_conserves', "{} élève(s) conservé(s) dans leur classe"),
         ('eleves_cep', "{} élève(s) titulaire(s) du CEP"),
@@ -890,6 +952,7 @@ def nouvelle_annee_creer(request):
             'eleves_convention': request.POST.getlist('eleves_convention'),
             'resultats': {c: 0 for c in _COMPTEURS},
             'echecs': [],
+            'erreurs_tarifs': [],
             'total': Eleve.objects.filter(
                 classe__ecole=ecole, classe__annee_scolaire=annee_courante, statut='ACTIF',
             ).count(),
@@ -906,6 +969,7 @@ def nouvelle_annee_creer(request):
     resultats = etat['resultats']
 
     if etat['faire_passer_eleves']:
+        from .models import GrilleTarifaire
         map_anciennes_nouvelles = {}
         nouvelles_par_nom = {
             c.nom: c for c in Classe.objects.filter(ecole=ecole, annee_scolaire=annee_nouvelle)
@@ -918,6 +982,9 @@ def nouvelle_annee_creer(request):
             'annee_nouvelle': annee_nouvelle,
             'map_anciennes_nouvelles': map_anciennes_nouvelles,
             'index_nouvelles': _construire_index_classes(list(nouvelles_par_nom.values())),
+            'niveaux_tarifes': set(GrilleTarifaire.objects.filter(
+                ecole=ecole, annee_scolaire=annee_nouvelle,
+            ).values_list('niveau', flat=True)),
             'eleves_bac': set(etat['eleves_bac']),
             'eleves_cep': set(etat['eleves_cep']),
             'eleves_bepc': set(etat['eleves_bepc']),
@@ -947,6 +1014,10 @@ def nouvelle_annee_creer(request):
                 resultats.clear()
                 resultats.update(compteurs_avant)
                 etat['echecs'].append(eleve.pk)
+                if isinstance(exc, ValueError) and str(exc).startswith('Tarif manquant'):
+                    erreurs = etat.setdefault('erreurs_tarifs', [])
+                    if str(exc) not in erreurs and len(erreurs) < 20:
+                        erreurs.append(str(exc))
 
         request.session[cle] = etat
         # Le QuerySet initial a figé la liste d'exclusion avant les erreurs du lot.
@@ -972,15 +1043,25 @@ def nouvelle_annee_creer(request):
                       .exclude(pk__in=deja).select_related('classe')):
             try:
                 with transaction.atomic():
-                    if _creer_echeancier(request, eleve, ecole, annee_nouvelle):
+                    if _creer_echeancier(request, eleve, ecole, annee_nouvelle, reinscription=False):
                         resultats['echeanciers_crees'] += 1
             except Exception as exc:
                 logger.warning(f"Échéancier non créé pour {eleve}: {exc}")
+                messages.warning(request, f"Échéancier non créé pour {eleve.nom_complet} : {exc}")
 
     echecs = etat['echecs']
     request.session.pop(cle, None)
-    request.session[SESSION_ANNEE_ACTIVE] = annee_nouvelle
-    messages.success(request, _message_final(annee_nouvelle, resultats))
+    request.session[SESSION_ANNEE_ACTIVE] = (
+        annee_courante if echecs and len(echecs) == etat['total'] else annee_nouvelle
+    )
+    bilan = _message_final(annee_nouvelle, resultats)
+    if echecs:
+        bilan = bilan.replace('créée avec succès', 'préparée — passage à compléter')
+        messages.warning(request, bilan)
+    else:
+        messages.success(request, bilan)
+    for erreur in etat.get('erreurs_tarifs', []):
+        messages.warning(request, erreur)
     if echecs:
         noms = ', '.join(
             f"{e.prenom} {e.nom}" for e in Eleve.objects.filter(pk__in=echecs[:20])
@@ -988,4 +1069,6 @@ def nouvelle_annee_creer(request):
         messages.warning(request, f"{len(echecs)} élève(s) n'ont pas pu être passés et restent "
                                   f"en {annee_courante} : {noms}. Vous pouvez relancer la création "
                                   f"pour réessayer ou les déplacer manuellement.")
+        from django.urls import reverse
+        return redirect(reverse('eleves:nouvelle_annee_apercu') + f'?annee_courante={annee_courante}')
     return redirect('eleves:gestion_classes')

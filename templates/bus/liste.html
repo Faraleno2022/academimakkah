@@ -10,13 +10,14 @@
 <a class="btn btn-outline-primary" href="{% url 'administration:grilles_bus' %}"><i class="fas fa-table me-1"></i>Grilles tarifaires</a>
 {% endif %}
 <a class="btn btn-outline-dark" href="{% url 'bus:historique_abonnements' %}"><i class="fas fa-id-card me-1"></i>Abonnements par élève</a>
-<a class="btn btn-outline-info" href="{% url 'bus:remises' %}"><i class="fas fa-percent me-1"></i>Élèves avec remise</a>
+<a class="btn btn-outline-info" href="{% url 'bus:remises' %}?annee={{ annee_abonnements|urlencode }}"><i class="fas fa-percent me-1"></i>Élèves avec remise</a>
 <a class="btn btn-outline-primary" href="#periodicites"><i class="fas fa-calendar-alt me-1"></i>Périodicités bus</a>
 <a class="btn btn-success" href="{% url 'bus:nouveau' %}"><i class="fas fa-plus me-1"></i>Nouveau paiement bus</a>
 <a class="btn btn-outline-danger" href="{% url 'bus:export_abonnements_bus' 'pdf' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}"><i class="fas fa-file-pdf me-1"></i>{% if periodicite %}Liste PDF{% else %}Tous les abonnements PDF{% endif %}</a>
 <a class="btn btn-outline-success" href="{% url 'bus:export_abonnements_bus' 'excel' %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}"><i class="fas fa-file-excel me-1"></i>{% if periodicite %}Liste Excel{% else %}Tous les abonnements Excel{% endif %}</a>
 {% endblock %}
 {% block content %}
+{% include 'bus/_annees.html' %}
 {% include 'bus/_suivi_classe.html' %}
 <div class="mt-4">
   {% url 'bus:liste' as url_liste %}
@@ -31,6 +32,7 @@
   <span>Encaissements affichés : <strong>{{ total_montant|intcomma }} GNF</strong></span>
 </div>
 <form method="get" class="row g-2 mb-3">
+  <input type="hidden" name="annee" value="{{ annee_abonnements }}">
   {% if periode %}<input type="hidden" name="periode" value="{{ periode }}">{% endif %}
   {% if periodicite %}<input type="hidden" name="periodicite" value="{{ periodicite }}">{% endif %}
   <div class="col-md-4">
@@ -42,8 +44,8 @@
   <div class="col-md-6 text-md-end">
     <div class="btn-group" role="group" aria-label="Liste de contrôle du chauffeur">
       <span class="btn btn-outline-secondary disabled"><i class="fas fa-clipboard-check me-1"></i>Liste chauffeur</span>
-      <a class="btn btn-outline-danger" href="{% url 'bus:export_controle' 'pdf' %}?q={{ q|urlencode }}&filtre={{ filtre|urlencode }}&periode={{ periode|urlencode }}" target="_blank" title="Liste de contrôle du chauffeur (PDF) : itinéraire, élève, contact"><i class="fas fa-file-pdf me-1"></i>PDF</a>
-      <a class="btn btn-outline-success" href="{% url 'bus:export_controle' 'excel' %}?q={{ q|urlencode }}&filtre={{ filtre|urlencode }}&periode={{ periode|urlencode }}" title="Liste de contrôle du chauffeur (Excel) : itinéraire, élève, contact"><i class="fas fa-file-excel me-1"></i>Excel</a>
+      <a class="btn btn-outline-danger" href="{% url 'bus:export_controle' 'pdf' %}?annee={{ annee_abonnements|urlencode }}&amp;q={{ q|urlencode }}&filtre={{ filtre|urlencode }}&periode={{ periode|urlencode }}" target="_blank" title="Liste de contrôle du chauffeur (PDF) : itinéraire, élève, contact"><i class="fas fa-file-pdf me-1"></i>PDF</a>
+      <a class="btn btn-outline-success" href="{% url 'bus:export_controle' 'excel' %}?annee={{ annee_abonnements|urlencode }}&amp;q={{ q|urlencode }}&filtre={{ filtre|urlencode }}&periode={{ periode|urlencode }}" title="Liste de contrôle du chauffeur (Excel) : itinéraire, élève, contact"><i class="fas fa-file-excel me-1"></i>Excel</a>
     </div>
     <div class="form-text">Un élève par ligne, classé par itinéraire. Respecte la recherche et les filtres (ex. rechercher un itinéraire).</div>
   </div>
@@ -53,23 +55,23 @@
 <div class="mb-3">
   <div class="btn-group" role="group" aria-label="Filtres abonnements">
     <a class="btn btn-sm {% if not filtre %}btn-primary{% else %}btn-outline-primary{% endif %}"
-       href="{% url 'bus:liste' %}?{% if q %}q={{ q|urlencode }}&{% endif %}{% if periode %}periode={{ periode }}&{% endif %}{% if periodicite %}periodicite={{ periodicite|urlencode }}{% endif %}">
+       href="{% url 'bus:liste' %}?annee={{ annee_abonnements|urlencode }}&amp;{% if q %}q={{ q|urlencode }}&{% endif %}{% if periode %}periode={{ periode }}&{% endif %}{% if periodicite %}periodicite={{ periodicite|urlencode }}{% endif %}">
       <i class="fas fa-list me-1"></i>Tous
     </a>
     <a class="btn btn-sm {% if filtre == 'expires' %}btn-primary{% else %}btn-outline-primary{% endif %}"
-       href="{% url 'bus:liste' %}?{% if q %}q={{ q|urlencode }}&{% endif %}{% if periode %}periode={{ periode }}&{% endif %}{% if periodicite %}periodicite={{ periodicite|urlencode }}&{% endif %}filtre=expires">
+       href="{% url 'bus:liste' %}?annee={{ annee_abonnements|urlencode }}&amp;{% if q %}q={{ q|urlencode }}&{% endif %}{% if periode %}periode={{ periode }}&{% endif %}{% if periodicite %}periodicite={{ periodicite|urlencode }}&{% endif %}filtre=expires">
       <i class="fas fa-times-circle me-1"></i>Expirés
     </a>
     <a class="btn btn-sm {% if filtre == 'suspendus' %}btn-primary{% else %}btn-outline-primary{% endif %}"
-       href="{% url 'bus:liste' %}?{% if q %}q={{ q|urlencode }}&{% endif %}{% if periode %}periode={{ periode }}&{% endif %}{% if periodicite %}periodicite={{ periodicite|urlencode }}&{% endif %}filtre=suspendus">
+       href="{% url 'bus:liste' %}?annee={{ annee_abonnements|urlencode }}&amp;{% if q %}q={{ q|urlencode }}&{% endif %}{% if periode %}periode={{ periode }}&{% endif %}{% if periodicite %}periodicite={{ periodicite|urlencode }}&{% endif %}filtre=suspendus">
       <i class="fas fa-pause-circle me-1"></i>Suspendus
     </a>
     <a class="btn btn-sm {% if filtre == 'proches' %}btn-primary{% else %}btn-outline-primary{% endif %}"
-       href="{% url 'bus:liste' %}?{% if q %}q={{ q|urlencode }}&{% endif %}{% if periode %}periode={{ periode }}&{% endif %}{% if periodicite %}periodicite={{ periodicite|urlencode }}&{% endif %}filtre=proches">
+       href="{% url 'bus:liste' %}?annee={{ annee_abonnements|urlencode }}&amp;{% if q %}q={{ q|urlencode }}&{% endif %}{% if periode %}periode={{ periode }}&{% endif %}{% if periodicite %}periodicite={{ periodicite|urlencode }}&{% endif %}filtre=proches">
       <i class="fas fa-hourglass-half me-1"></i>Proches d'expiration
     </a>
     <a class="btn btn-sm {% if filtre == 'depassees' %}btn-primary{% else %}btn-outline-primary{% endif %}"
-       href="{% url 'bus:liste' %}?{% if q %}q={{ q|urlencode }}&{% endif %}{% if periode %}periode={{ periode }}&{% endif %}{% if periodicite %}periodicite={{ periodicite|urlencode }}&{% endif %}filtre=depassees">
+       href="{% url 'bus:liste' %}?annee={{ annee_abonnements|urlencode }}&amp;{% if q %}q={{ q|urlencode }}&{% endif %}{% if periode %}periode={{ periode }}&{% endif %}{% if periodicite %}periodicite={{ periodicite|urlencode }}&{% endif %}filtre=depassees">
       <i class="fas fa-exclamation-triangle me-1"></i>Expiration dépassée
     </a>
   </div>
@@ -168,7 +170,7 @@
     <div class="card shadow-sm h-100" id="periodicites">
       <div class="card-header d-flex justify-content-between align-items-center py-2">
         <span><i class="fas fa-stream me-1"></i>Répartition par périodicité</span>
-        <a class="btn btn-sm btn-outline-secondary" href="{% url 'bus:export_breakdown_csv' 'periodicite' %}?q={{ q|urlencode }}"><i class="fas fa-file-csv me-1"></i>Exporter CSV</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'bus:export_breakdown_csv' 'periodicite' %}?annee={{ annee_abonnements|urlencode }}&amp;q={{ q|urlencode }}"><i class="fas fa-file-csv me-1"></i>Exporter CSV</a>
       </div>
       <div class="card-body">
         <div class="table-responsive mt-3">
@@ -184,7 +186,7 @@
                 <td class="text-end">{{ r.du|intcomma }} GNF</td>
                 <td class="text-end">{{ r.paye|intcomma }} GNF</td>
                 <td class="text-end">{{ r.reste|intcomma }} GNF</td>
-                <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{% url 'bus:liste' %}?periodicite={{ r.code|urlencode }}#abonnements">Voir la liste</a></td>
+                <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{% url 'bus:liste' %}?annee={{ annee_abonnements|urlencode }}&amp;periodicite={{ r.code|urlencode }}#abonnements">Voir la liste</a></td>
               </tr>
               {% empty %}
               <tr><td colspan="8" class="text-center text-muted">Aucune donnée</td></tr>
@@ -200,7 +202,7 @@
     <div class="card shadow-sm h-100">
       <div class="card-header d-flex justify-content-between align-items-center py-2">
         <span><i class="fas fa-map-marker-alt me-1"></i>Top zones</span>
-        <a class="btn btn-sm btn-outline-secondary" href="{% url 'bus:export_breakdown_csv' 'zone' %}?q={{ q|urlencode }}"><i class="fas fa-file-csv me-1"></i>Exporter CSV</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'bus:export_breakdown_csv' 'zone' %}?annee={{ annee_abonnements|urlencode }}&amp;q={{ q|urlencode }}"><i class="fas fa-file-csv me-1"></i>Exporter CSV</a>
       </div>
       <div class="card-body">
         <div class="table-responsive mt-3">
