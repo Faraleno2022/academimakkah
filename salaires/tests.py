@@ -948,6 +948,66 @@ class MoteurPaieTests(TestCase):
             Decimal('8'),
         )
 
+    def test_creation_secondaire_plusieurs_matieres_meme_classe(self):
+        lignes = {}
+        for index, matiere in enumerate(['Biologie', 'Chimie', 'Physique', 'Géologie']):
+            lignes.update({
+                f'affectations-{index}-classe': str(self.classe_a.pk),
+                f'affectations-{index}-heures_par_semaine': '2',
+                f'affectations-{index}-matiere': matiere,
+                f'affectations-{index}-date_debut': '2026-10-05',
+                f'affectations-{index}-date_fin': '2027-06-30',
+                f'affectations-{index}-actif': 'on',
+            })
+        donnees = self.donnees_creation_enseignant(
+            TypeEnseignant.SECONDAIRE,
+            salaire_fixe='',
+            taux_horaire='10000',
+            **{'affectations-TOTAL_FORMS': '4'},
+            **lignes,
+        )
+
+        response = self.client.post(reverse('salaires:ajouter_enseignant'), donnees)
+
+        self.assertEqual(
+            response.status_code,
+            302,
+            (
+                response.context['affectations'].non_form_errors()
+                if response.context
+                else response.content[:500]
+            ),
+        )
+        enseignant = Enseignant.objects.get(email='fatoumata@example.com')
+        self.assertEqual(
+            enseignant.affectations.filter(classe=self.classe_a).count(), 4
+        )
+
+    def test_creation_secondaire_refuse_meme_classe_meme_matiere(self):
+        lignes = {}
+        for index, matiere in enumerate(['Biologie', 'BIOLOGIE ']):
+            lignes.update({
+                f'affectations-{index}-classe': str(self.classe_a.pk),
+                f'affectations-{index}-heures_par_semaine': '2',
+                f'affectations-{index}-matiere': matiere,
+                f'affectations-{index}-date_debut': '2026-10-05',
+                f'affectations-{index}-actif': 'on',
+            })
+        donnees = self.donnees_creation_enseignant(
+            TypeEnseignant.SECONDAIRE,
+            salaire_fixe='',
+            taux_horaire='10000',
+            **lignes,
+        )
+
+        response = self.client.post(reverse('salaires:ajouter_enseignant'), donnees)
+
+        self.assertEqual(response.status_code, 200)
+        erreurs = ' '.join(response.context['affectations'].non_form_errors())
+        self.assertIn('même matière', erreurs)
+        self.assertNotIn('date_debut', erreurs)
+        self.assertFalse(Enseignant.objects.filter(email='fatoumata@example.com').exists())
+
     def test_creation_administrateur_enregistre_sa_fonction(self):
         donnees = self.donnees_creation_enseignant(
             TypeEnseignant.ADMINISTRATEUR,

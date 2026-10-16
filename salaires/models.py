@@ -447,7 +447,9 @@ class AffectationClasse(SyncTrackedModel):
     class Meta:
         verbose_name = "Affectation de classe"
         verbose_name_plural = "Affectations de classes"
-        unique_together = ['enseignant', 'classe', 'date_debut']
+        # Un enseignant du secondaire peut donner plusieurs matières dans la
+        # même classe : la matière fait donc partie de l'unicité.
+        unique_together = ['enseignant', 'classe', 'matiere', 'date_debut']
         ordering = ['-date_debut']
     
     def __str__(self):
