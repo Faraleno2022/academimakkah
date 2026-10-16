@@ -65,8 +65,10 @@ Nous confirmons l'abonnement au bus scolaire pour votre enfant *{eleve.prenom} {
 • Élève: {eleve.prenom} {eleve.nom}
 • Classe: {eleve.classe.nom if eleve.classe else 'N/A'}
 • Périodicité: {abonnement.get_periodicite_display()}
+• Période couverte: {abonnement.periode_couverte}
 • Montant: *{montant_formate} GNF*
-• Date début: {abonnement.date_debut.strftime('%d/%m/%Y')}
+• Date du paiement: {abonnement.date_debut.strftime('%d/%m/%Y')}
+• Date début: {(abonnement.date_debut_abonnement or abonnement.date_debut).strftime('%d/%m/%Y')}
 • Date expiration: {abonnement.date_expiration.strftime('%d/%m/%Y')}
 • Statut: *{abonnement.get_statut_display()}*"""
 
@@ -243,8 +245,10 @@ def apercu_message_whatsapp_abonnement(request):
             'eleve_nom': f"{eleve.prenom} {eleve.nom}",
             'classe': eleve.classe.nom if eleve.classe else 'N/A',
             'periodicite': abonnement.get_periodicite_display(),
+            'periode_couverte': abonnement.periode_couverte,
             'montant': montant_formate,
-            'date_debut': abonnement.date_debut.strftime('%d/%m/%Y'),
+            'date_debut': (abonnement.date_debut_abonnement or abonnement.date_debut).strftime('%d/%m/%Y'),
+            'date_paiement': abonnement.date_debut.strftime('%d/%m/%Y'),
             'date_expiration': abonnement.date_expiration.strftime('%d/%m/%Y'),
             'statut': abonnement.get_statut_display(),
             'zone': abonnement.zone or 'N/A',
@@ -338,8 +342,10 @@ def apercu_message_whatsapp_expiration(request):
             'eleve_nom': f"{eleve.prenom} {eleve.nom}",
             'classe': eleve.classe.nom if eleve.classe else 'N/A',
             'periodicite': abonnement.get_periodicite_display(),
+            'periode_couverte': abonnement.periode_couverte,
             'montant': montant_formate,
-            'date_debut': abonnement.date_debut.strftime('%d/%m/%Y'),
+            'date_debut': (abonnement.date_debut_abonnement or abonnement.date_debut).strftime('%d/%m/%Y'),
+            'date_paiement': abonnement.date_debut.strftime('%d/%m/%Y'),
             'date_expiration': abonnement.date_expiration.strftime('%d/%m/%Y'),
             'statut': abonnement.get_statut_display(),
             'statut_expiration': statut_expiration,

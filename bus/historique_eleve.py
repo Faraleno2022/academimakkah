@@ -83,14 +83,8 @@ def date_expiration_cantine(date_debut, periodicite):
     """Date de fin d'une période cantine commençant le ``date_debut`` (incluse)."""
     if not date_debut:
         return None
-    duree = {
-        AbonnementCantine.Periodicite.JOURNALIER: relativedelta(days=1),
-        AbonnementCantine.Periodicite.HEBDOMADAIRE: relativedelta(weeks=1),
-        AbonnementCantine.Periodicite.MENSUEL: relativedelta(months=1),
-        AbonnementCantine.Periodicite.TRIMESTRIEL: relativedelta(months=3),
-        AbonnementCantine.Periodicite.ANNUEL: relativedelta(years=1),
-    }.get(periodicite, relativedelta(months=1))
-    return date_debut + duree - timedelta(days=1)
+    from .periodes import fin_abonnement
+    return fin_abonnement(date_debut, periodicite, 'cantine')
 
 
 def date_debut_suivante(dernier_abonnement):
@@ -253,9 +247,10 @@ def lignes_abonnements(eleve, type_abonnement='tous'):
             lignes.append({
                 'objet': abo,
                 'service': 'Bus',
-                'detail': f"{abo.grille.zone if abo.grille_id else abo.zone or '—'} · {abo.get_periodicite_display()}",
+                'detail': f"{abo.grille.zone if abo.grille_id else abo.zone or '—'} · {abo.periode_couverte} · {abo.get_periodicite_display()}",
                 'montant': Decimal(abo.montant or 0),
-                'date_debut': abo.date_debut,
+                'date_debut': abo.date_debut_abonnement or abo.date_debut,
+                'date_paiement': abo.date_debut,
                 'date_expiration': abo.date_expiration,
                 'reference': abo.numero_recu or abo.reference_externe or '',
                 'statut': _statut(abo),
@@ -265,7 +260,7 @@ def lignes_abonnements(eleve, type_abonnement='tous'):
             lignes.append({
                 'objet': abo,
                 'service': 'Cantine',
-                'detail': f"{abo.get_type_repas_display()} · {abo.get_periodicite_display()}",
+                'detail': f"{abo.get_type_repas_display()} · {abo.periode_couverte} · {abo.get_periodicite_display()}",
                 'montant': Decimal(abo.montant or 0),
                 'date_debut': abo.date_debut,
                 'date_expiration': abo.date_expiration,

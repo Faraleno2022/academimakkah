@@ -4499,23 +4499,25 @@ def generer_cartes_classe_pdf(request, classe_id):
 @login_required
 @require_http_methods(["POST"])
 def ajax_modifier_telephone_responsable(request):
-    """Modifie le numéro de téléphone du responsable principal d'un élève (AJAX)"""
+    """Modifie ensemble les deux téléphones du responsable principal."""
     import json
-    import re
+    from .telephones import normaliser_telephone
 
     try:
         data = json.loads(request.body.decode('utf-8'))
+        if not isinstance(data, dict):
+            raise ValueError
         eleve_id = data.get('eleve_id')
-        nouveau_telephone = data.get('telephone', '').strip()
-    except (json.JSONDecodeError, ValueError):
+        nouveau_telephone = normaliser_telephone(data.get('telephone', ''))
+        deuxieme = (normaliser_telephone(data['telephone_secondaire'], obligatoire=False)
+                    if 'telephone_secondaire' in data else None)
+        if isinstance(eleve_id, bool) or not str(eleve_id).isdigit():
+            raise ValueError
+    except (json.JSONDecodeError, ValueError, UnicodeDecodeError):
         return JsonResponse({'success': False, 'error': 'Données invalides'}, status=400)
 
     if not eleve_id or not nouveau_telephone:
         return JsonResponse({'success': False, 'error': 'Élève et téléphone requis'}, status=400)
-
-    # Validation du format téléphone guinéen
-    if not re.match(r'^\+224\d{8,9}$', nouveau_telephone):
-        return JsonResponse({'success': False, 'error': 'Format invalide. Utilisez +224XXXXXXXXX'}, status=400)
 
     # Récupérer l'élève avec vérification des permissions
     try:
@@ -4524,17 +4526,24 @@ def ajax_modifier_telephone_responsable(request):
         return JsonResponse({'success': False, 'error': 'Élève introuvable'}, status=404)
 
     # Vérifier que l'utilisateur a accès à cet élève
-    if not user_is_admin(request.user):
+    if not user_is_superadmin(request.user):
         user_school_obj = user_school(request.user)
-        if not user_school_obj or eleve.classe.ecole != user_school_obj:
+        if not user_school_obj or not eleve.classe_id or eleve.classe.ecole != user_school_obj:
             return JsonResponse({'success': False, 'error': 'Accès non autorisé'}, status=403)
 
     if not eleve.responsable_principal:
         return JsonResponse({'success': False, 'error': 'Aucun responsable principal pour cet élève'}, status=400)
 
     ancien_telephone = eleve.responsable_principal.telephone
-    eleve.responsable_principal.telephone = nouveau_telephone
-    eleve.responsable_principal.save(update_fields=['telephone'])
+    responsable = eleve.responsable_principal
+    ancien_deuxieme = responsable.telephone_secondaire
+    with transaction.atomic():
+        responsable.telephone = nouveau_telephone
+        champs = ['telephone']
+        if deuxieme is not None:
+            responsable.telephone_secondaire = deuxieme
+            champs.append('telephone_secondaire')
+        responsable.save(update_fields=champs)
 
     # Journaliser la modification
     try:
@@ -4543,8 +4552,9 @@ def ajax_modifier_telephone_responsable(request):
             action='MODIFICATION',
             type_objet='RESPONSABLE',
             objet_id=eleve.responsable_principal.id,
-            description=f"Téléphone modifié pour {eleve.responsable_principal.nom_complet} "
-                        f"(parent de {eleve.prenom} {eleve.nom}): {ancien_telephone} → {nouveau_telephone}",
+            description=f"Téléphones modifiés pour {eleve.responsable_principal.nom_complet} "
+                        f"(parent de {eleve.prenom} {eleve.nom}): {ancien_telephone} → {nouveau_telephone}; "
+                        f"deuxième: {ancien_deuxieme or 'vide'} → {responsable.telephone_secondaire or 'vide'}",
             adresse_ip=request.META.get('REMOTE_ADDR', ''),
             user_agent=request.META.get('HTTP_USER_AGENT', '')[:200]
         )
@@ -4554,5 +4564,7 @@ def ajax_modifier_telephone_responsable(request):
     return JsonResponse({
         'success': True,
         'telephone': nouveau_telephone,
-        'message': f'Téléphone mis à jour: {nouveau_telephone}'
+        'telephone_secondaire': responsable.telephone_secondaire,
+        'responsable_id': responsable.pk,
+        'message': 'Téléphones mis à jour.'
     })

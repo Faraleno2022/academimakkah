@@ -54,9 +54,15 @@ class FinancesJournalieresTests(TestCase):
         }, ecole=self.ecole)
         self.assertTrue(form.is_valid(), form.errors)
         abo = form.save()
-        self.assertEqual(abo.date_expiration, date(2027, 4, 8))
+        # 60 000 versés sur 108 000 dus couvrent un seul des deux trimestres.
+        self.assertEqual(abo.date_expiration, date(2027, 1, 8))
+        self.assertEqual(abo.periode_couverte, '3 mois sur 9 mois')
         self.assertEqual((abo.montant_remise, abo.montant_du, abo.reste_a_payer),
                          (Decimal('12000'), Decimal('108000'), Decimal('48000')))
+        abo.montant = Decimal('108000')
+        abo.save(update_fields=['montant'])
+        self.assertEqual(abo.date_expiration, date(2027, 4, 8))
+        self.assertEqual(abo.reste_a_payer, 0)
 
     def test_recherche_nom_complet_dans_les_deux_ordres(self):
         AbonnementCantine.objects.create(

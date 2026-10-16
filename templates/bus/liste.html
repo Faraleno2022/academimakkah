@@ -235,7 +235,7 @@
       <th>Élève</th>
       <th>Classe</th>
       <th>Zone / année</th>
-      <th>Tranche</th>
+      <th>Période couverte</th>
       <th>Montant</th>
       <th>Dû net</th>
       <th>Déjà payé<br><small>(cumul élève)</small></th>
@@ -255,12 +255,12 @@
       <td>{{ a.eleve.prenom }} {{ a.eleve.nom }} ({{ a.eleve.matricule }})</td>
       <td>{{ a.eleve.classe.nom }}</td>
       <td>{{ a.grille.zone|default:a.zone }}<br><small class="text-muted">{{ a.annee_scolaire|default:"—" }}</small></td>
-      <td>{{ a.get_periodicite_display }}</td>
+      <td><strong>{{ a.periode_couverte }}</strong><br><small class="text-muted">{{ a.montant|intcomma }} GNF versés · {{ a.get_periodicite_display }}</small></td>
       <td>{{ a.montant|intcomma }} GNF</td>
       <td>{% if a.situation_financiere %}{{ a.situation_financiere.du|intcomma }} GNF{% else %}—{% endif %}</td>
       <td>{{ a.deja_paye|intcomma }} GNF</td>
       <td>{% if a.situation_financiere %}{{ a.situation_financiere.reste|intcomma }} GNF{% else %}—{% endif %}</td>
-      <td>{{ a.date_debut|date:'d/m/Y' }}</td>
+      <td>{{ a.date_debut|date:'d/m/Y' }}<br><small class="text-muted">Début abonnement : {{ a.date_debut_abonnement|default:a.date_debut|date:'d/m/Y' }}</small></td>
       <td>{{ a.date_expiration|date:'d/m/Y' }}</td>
       <td>{{ a.mode_paiement.nom|default:"—" }}</td>
       <td>{{ a.get_statut_display }}</td>
@@ -413,7 +413,7 @@ function afficherApercuWhatsAppBus(data) {
                         <p><strong>Élève:</strong> ${data.eleve_nom}</p>
                         <p><strong>Classe:</strong> ${data.classe}</p>
                         <hr>
-                        <p><strong>Périodicité:</strong> ${data.periodicite}</p>
+                        <p><strong>Période couverte:</strong> ${data.periode_couverte || data.periodicite}</p>
                         <p><strong>Montant:</strong> <span class="badge bg-primary">${data.montant} GNF</span></p>
                         <p><strong>Début:</strong> ${data.date_debut}</p>
                         <p><strong>Expiration:</strong> ${data.date_expiration}</p>

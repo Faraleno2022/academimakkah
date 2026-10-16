@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-15",
+  "projet": "C:\\Users\\LENO\\Desktop\\GS_hadja_kanfing_dian--main",
+  "tests": [
+    {
+      "nombre": 348,
+      "duree_secondes": 125.972,
+      "resultat": "OK",
+      "journal": "tmp/tests_telephones_periodes_suites_finales_20261015.log"
+    },
+    {
+      "nombre": 32,
+      "duree_secondes": 13.635,
+      "resultat": "OK",
+      "journal": "tmp/tests_telephones_periodes_final_20261015.log"
+    }
+  ],
+  "suites_se_recouvrent": true,
+  "navigateur": {
+    "clic_reel": true,
+    "annulation": true,
+    "lots_automatiques": 3,
+    "rechargements_interrompant_creation": 0,
+    "nouvelle_annee_affichee": true,
+    "duree_creation_ms": 3465,
+    "filtres_annee_bus_cantine": true,
+    "renouvellement_cantine_tarif_remise": true,
+    "changement_eleve_efface_ancienne_remise": true,
+    "validite_bus_cantine_trois_six_neuf_mois": true,
+    "cantine_couverture_montants_apres_remise": true,
+    "deuxieme_telephone_ajout_rechargement_effacement": true,
+    "duree_parcours_ms": 15893,
+    "erreurs_js": []
+  },
+  "journal_navigateur": "tmp/navigateur_telephones_periodes_20261015.log",
+  "schema": {
+    "resultat": "OK",
+    "journal": "tmp/schema_telephones_periodes_20261015.log"
+  },
+  "migrations": [
+    "eleves.0023_responsable_telephone_secondaire",
+    "bus.0014_cantine_periode_payee"
+  ],
+  "base_client_utilisee_par_tests": false,
+  "reseau_externe_des_tests": false,
+  "nouvelle_compilation_effectuee": false,
+  "commit_effectue": false,
+  "push_effectue": false,
+  "dernier_installateur": "1.3.20",
+  "dernier_installateur_contient_ces_ajouts": false
+}

@@ -103,7 +103,7 @@ class SuiviBusClasseTests(TestCase):
         a = self.versement()
         for statut, debut, fin, attendu in (
             ('ACTIF', self.today, self.today, 'Actif'),
-            ('ACTIF', self.today, self.today - timedelta(days=1), 'Expiré'),
+            ('ACTIF', self.today - timedelta(days=100), self.today - timedelta(days=1), 'Expiré'),
             ('EXPIRE', self.today, self.today + timedelta(days=20), 'Expiré'),
             ('SUSPENDU', self.today, self.today + timedelta(days=20), 'Suspendu'),
             ('ACTIF', self.today + timedelta(days=2), self.today + timedelta(days=20), 'À venir'),

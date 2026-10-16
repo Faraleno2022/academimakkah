@@ -163,6 +163,8 @@ def abonnement_public_pdf(request, abonnement_id):
         top -= line_h
         c.drawString(left, top, f"Type / tranche: {abonnement.get_periodicite_display()}")
         top -= line_h
+        c.drawString(left, top, f"Période couverte: {abonnement.periode_couverte}")
+        top -= line_h
         c.drawString(left, top, f"Montant: {abonnement.montant:,.0f} GNF".replace(",", " "))
         top -= line_h
         c.drawString(left, top, f"Date de paiement: {abonnement.date_debut.strftime('%d/%m/%Y')}")
@@ -172,9 +174,11 @@ def abonnement_public_pdf(request, abonnement_id):
         if abonnement.grille_id:
             c.drawString(left, top, f"Grille: {abonnement.grille.zone} - {abonnement.grille.annee_scolaire}")
             top -= line_h
-        else:
-            c.drawString(left, top, f"Date expiration: {abonnement.date_expiration.strftime('%d/%m/%Y')}")
-            top -= line_h
+        debut_validite = abonnement.date_debut_abonnement or abonnement.date_debut
+        c.drawString(left, top, f"Début abonnement: {debut_validite.strftime('%d/%m/%Y')}")
+        top -= line_h
+        c.drawString(left, top, f"Fin abonnement: {abonnement.date_expiration.strftime('%d/%m/%Y')}")
+        top -= line_h
         
         if abonnement.zone:
             c.setFont('Helvetica', 11)

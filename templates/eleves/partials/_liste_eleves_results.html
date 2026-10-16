@@ -68,27 +68,35 @@
                                         <small class="text-muted" id="tel-display-{{ eleve.id }}">
                                             <i class="fas fa-phone me-1"></i>
                                             <span class="tel-text">{{ eleve.responsable_principal.telephone }}</span>
+                                            <span class="tel-secondaire" {% if not eleve.responsable_principal.telephone_secondaire %}hidden{% endif %}><br><i class="fas fa-phone me-1"></i><span class="tel-secondaire-text">{{ eleve.responsable_principal.telephone_secondaire }}</span></span>
                                             <button type="button" class="btn btn-link btn-sm p-0 ms-1 text-primary btn-edit-tel"
                                                     data-eleve-id="{{ eleve.id }}" 
                                                     data-tel-actuel="{{ eleve.responsable_principal.telephone }}"
-                                                    title="Modifier le téléphone">
+                                                    data-tel-secondaire="{{ eleve.responsable_principal.telephone_secondaire }}"
+                                                    data-responsable-id="{{ eleve.responsable_principal_id }}"
+                                                    title="Modifier les deux téléphones">
                                                 <i class="fas fa-pen" style="font-size: 0.7em;"></i>
                                             </button>
                                         </small>
                                         <div id="tel-edit-{{ eleve.id }}" style="display: none;">
+                                            <label class="small" for="tel-principal-{{ eleve.id }}">Téléphone 1</label>
                                             <div class="input-group input-group-sm mt-1">
-                                                <input type="text" class="form-control form-control-sm input-tel-edit" 
+                                                <input type="tel" id="tel-principal-{{ eleve.id }}" class="form-control form-control-sm input-tel-edit input-tel-principal"
                                                        value="{{ eleve.responsable_principal.telephone }}" 
                                                        placeholder="+224XXXXXXXXX"
                                                        data-eleve-id="{{ eleve.id }}"
-                                                       maxlength="14">
-                                                <button class="btn btn-success btn-sm btn-save-tel" data-eleve-id="{{ eleve.id }}" title="Enregistrer">
+                                                       maxlength="20">
+                                                <button type="button" class="btn btn-success btn-sm btn-save-tel" data-eleve-id="{{ eleve.id }}" title="Enregistrer les deux téléphones">
                                                     <i class="fas fa-check"></i>
                                                 </button>
-                                                <button class="btn btn-secondary btn-sm btn-cancel-tel" data-eleve-id="{{ eleve.id }}" title="Annuler">
+                                                <button type="button" class="btn btn-secondary btn-sm btn-cancel-tel" data-eleve-id="{{ eleve.id }}" title="Annuler">
                                                     <i class="fas fa-times"></i>
                                                 </button>
                                             </div>
+                                            <label class="small mt-1" for="tel-secondaire-{{ eleve.id }}">Téléphone 2 (facultatif)</label>
+                                            <input type="tel" id="tel-secondaire-{{ eleve.id }}" class="form-control form-control-sm input-tel-edit input-tel-secondaire"
+                                                   value="{{ eleve.responsable_principal.telephone_secondaire }}"
+                                                   placeholder="+224XXXXXXXXX" data-eleve-id="{{ eleve.id }}" maxlength="20">
                                         </div>
                                     </div>
                                 </td>

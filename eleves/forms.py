@@ -17,6 +17,11 @@ class ResponsableForm(forms.ModelForm):
         # Compatibilité: accepter 'user' ou 'utilisateur'
         self._current_user = kwargs.pop('user', None) or kwargs.pop('utilisateur', None)
         super().__init__(*args, **kwargs)
+        cle_deuxieme = self.add_prefix('telephone_secondaire')
+        if self.is_bound and cle_deuxieme not in self.data:
+            # Compatibilité des formulaires existants qui n'affichent pas ce champ.
+            self.data = self.data.copy()
+            self.data[cle_deuxieme] = self.instance.telephone_secondaire or ''
         # Rendre tous les champs optionnels au niveau du formulaire
         # La validation sera gérée manuellement dans la vue
         for field_name in self.fields:
@@ -38,7 +43,7 @@ class ResponsableForm(forms.ModelForm):
     
     class Meta:
         model = Responsable
-        fields = ['prenom', 'nom', 'relation', 'telephone', 'email', 'adresse', 'profession']
+        fields = ['prenom', 'nom', 'relation', 'telephone', 'telephone_secondaire', 'email', 'adresse', 'profession']
         widgets = {
             'prenom': forms.TextInput(attrs={
                 'class': 'form-control',
@@ -65,6 +70,10 @@ class ResponsableForm(forms.ModelForm):
                 'class': 'form-control',
                 'placeholder': 'email@exemple.com'
             }),
+            'telephone_secondaire': forms.TextInput(attrs={
+                'class': 'form-control', 'type': 'tel',
+                'placeholder': 'Deuxième numéro (facultatif)',
+            }),
             'adresse': forms.Textarea(attrs={
                 'class': 'form-control',
                 'rows': 3,
@@ -75,6 +84,13 @@ class ResponsableForm(forms.ModelForm):
                 'placeholder': 'Profession (optionnel)'
             })
         }
+
+    def clean_telephone_secondaire(self):
+        from .telephones import normaliser_telephone
+        try:
+            return normaliser_telephone(self.cleaned_data.get('telephone_secondaire', ''), obligatoire=False)
+        except ValueError as erreur:
+            raise forms.ValidationError(str(erreur))
 
     def clean_nom(self):
         """Convertir le nom en majuscules"""

@@ -353,6 +353,11 @@ class Responsable(SyncTrackedModel):
         validators=[RegexValidator(r'^\+224\d{8,9}$', 'Format: +224XXXXXXXXX')],
         verbose_name="Téléphone"
     )
+    telephone_secondaire = models.CharField(
+        max_length=20, blank=True, default='',
+        validators=[RegexValidator(r'^\+224\d{8,9}$', 'Format: +224XXXXXXXXX')],
+        verbose_name="Deuxième téléphone",
+    )
     email = models.EmailField(blank=True, null=True, verbose_name="Email")
     adresse = models.TextField(verbose_name="Adresse")
     profession = models.CharField(max_length=100, blank=True, null=True, verbose_name="Profession")
