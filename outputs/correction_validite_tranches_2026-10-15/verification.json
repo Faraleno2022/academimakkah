@@ -1,0 +1,29 @@
+{
+  "date": "2026-10-15",
+  "branche": "codex/validite-tranches-bus-cantine-2026-10-15",
+  "base": "6ba4bd4",
+  "migration": "bus.0013_validite_tranches",
+  "base_client_utilisee_par_tests": false,
+  "compilation_effectuee": false,
+  "commit_effectue": false,
+  "push_effectue": false,
+  "tests": [
+    {"nombre": 476, "duree_secondes": 221.528, "resultat": "OK", "etape": "suites avant derniers ajustements", "journal": "tmp/tests_validite_tranches_finances_sync_20261015.log"},
+    {"nombre": 64, "duree_secondes": 45.600, "resultat": "OK", "etape": "validation ciblee formulaire et synchronisation", "journal": "tmp/tests_validite_tranches_final_20261015.log"},
+    {"nombre": 18, "duree_secondes": 3.780, "resultat": "OK", "etape": "derniere verification incluant recu public", "journal": "tmp/tests_validite_tranches_affichages_20261015.log"}
+  ],
+  "navigateur": {
+    "resultat": "OK",
+    "clic_reel": true,
+    "annulation": true,
+    "lots_automatiques": 3,
+    "filtres_annee_bus_cantine": true,
+    "renouvellement_cantine_tarif_remise": true,
+    "changement_eleve_efface_ancienne_remise": true,
+    "validite_bus_cantine_trois_six_neuf_mois": true,
+    "erreurs_js": [],
+    "journal": "tmp/navigateur_validite_tranches_20261015.log"
+  },
+  "schema_temporaire": {"resultat": "OK", "journal": "tmp/schema_validite_tranches_20261015.log"},
+  "diff_check": "OK"
+}

@@ -402,9 +402,9 @@ class AbonnementCantineForm(forms.ModelForm):
         return cleaned
 
     def save(self, commit=True):
-        from .periodes import fin_abonnement
+        from .periodes import fin_validite_cantine
         abonnement = super().save(commit=False)
-        abonnement.date_expiration = fin_abonnement(abonnement.date_debut, abonnement.periodicite, 'cantine')
+        abonnement.date_expiration = fin_validite_cantine(abonnement)
         if commit:
             abonnement.save()
             self.save_m2m()

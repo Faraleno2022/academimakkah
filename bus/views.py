@@ -33,7 +33,7 @@ from ecole_moderne.security_decorators import require_school_object
 from ecole_moderne.pdf_utils import draw_logo_watermark
 from paiements.twilio_utils import send_message_async
 from ecole_moderne.recherche import filtrer_termes
-from .periodes import fin_abonnement
+from .periodes import dates_validite_bus
 from .export_listes import exporter_liste
 from .annees import filtrer_annee_abonnements
 
@@ -311,11 +311,11 @@ def export_abonnements_bus(request, fmt):
         'Zone', 'Année scolaire', 'Périodicité', 'Paiement encaissé (GNF)',
         'Dû net annuel (GNF)', 'Remise annuelle (GNF)', 'Déjà payé cumulé (GNF)',
         'Reste à payer (GNF)', 'Date paiement', 'Date expiration',
-        'Mode paiement', 'Statut', 'Itinéraire', 'Arrêt', 'Contact parent',
+        'Mode paiement', 'Statut', 'Itinéraire', 'Arrêt', 'Contact parent', 'Début abonnement',
     ]
     entetes_pdf = [
         'Élève', 'Matricule', 'Classe', 'Zone', 'Périodicité', 'N° reçu',
-        'Date', 'Fin', 'Encaissé', 'Dû net', 'Remise', 'Déjà payé', 'Reste', 'Année',
+        'Paiement', 'Fin', 'Encaissé', 'Dû net', 'Remise', 'Déjà payé', 'Reste', 'Année', 'Début',
     ]
     lignes_excel, lignes_pdf = [], []
     for abo in abonnements:
@@ -328,18 +328,19 @@ def export_abonnements_bus(request, fmt):
         lignes_excel.append([
             ecole, nom, eleve.matricule or '', classe,
             abo.numero_recu or '', abo.reference_externe or '', zone,
-            abo.annee_scolaire or '', abo.get_periodicite_display(), abo.montant,
+            abo.annee_scolaire or '', f'{abo.periode_couverte} ({abo.get_periodicite_display()})', abo.montant,
             situation.get('du'), situation.get('remise'), abo.deja_paye,
             situation.get('reste'), abo.date_debut, abo.date_expiration,
             abo.mode_paiement.nom if abo.mode_paiement_id else '',
             abo.get_statut_display(), abo.itineraire or '', abo.point_arret or '',
-            abo.contact_parent or '',
+            abo.contact_parent or '', abo.date_debut_abonnement or abo.date_debut,
         ])
         lignes_pdf.append([
-            nom, eleve.matricule or '', classe, zone, abo.get_periodicite_display(),
+            nom, eleve.matricule or '', classe, zone, f'{abo.periode_couverte} ({abo.get_periodicite_display()})',
             abo.numero_recu or '', abo.date_debut, abo.date_expiration,
             abo.montant, situation.get('du'), situation.get('remise'),
             abo.deja_paye, situation.get('reste'), abo.annee_scolaire,
+            abo.date_debut_abonnement or abo.date_debut,
         ])
     return exporter_liste(
         fmt, 'abonnements_bus', 'Abonnements bus — tous les versements',
@@ -497,6 +498,31 @@ def tarif_bus_json(request):
     ]
     depart = TRANCHE_DE_DEPART[periodicite]
     suivantes = ORDRE_TRANCHES[ORDRE_TRANCHES.index(depart):]
+    from django.utils.dateparse import parse_date
+    try:
+        date_saisie = request.GET.get('date_debut', '')
+        date_paiement = parse_date(date_saisie) if date_saisie else timezone.localdate()
+        if date_paiement is None:
+            raise ValueError
+    except ValueError:
+        return JsonResponse({'success': False, 'message': 'Date de paiement invalide.'}, status=400)
+    apercu = AbonnementBus(
+        pk=exclude_pk, eleve=eleve, grille=grille, annee_scolaire=grille.annee_scolaire,
+        zone=grille.zone, periodicite=periodicite, date_debut=date_paiement,
+    )
+    from decimal import Decimal, InvalidOperation
+    try:
+        apercu.montant = Decimal(request.GET['montant'].replace(',', '.')) if request.GET.get('montant') else reste
+        if not apercu.montant.is_finite() or apercu.montant < 0:
+            raise InvalidOperation
+    except InvalidOperation:
+        return JsonResponse({'success': False, 'message': 'Montant invalide.'}, status=400)
+    if exclude_pk:
+        original = AbonnementBus.objects.filter(pk=exclude_pk, eleve=eleve).first()
+        if original:
+            apercu.numero_recu = original.numero_recu
+            apercu.sync_uuid = original.sync_uuid
+    debut_validite, fin_validite = dates_validite_bus(apercu, remise=remise)
     return JsonResponse({
         'success': True,
         'brut': int(sum(parts_brutes.values())),
@@ -515,6 +541,8 @@ def tarif_bus_json(request):
         'echeance': echeance.isoformat() if echeance else '',
         'zone': grille.zone,
         'annee_scolaire': grille.annee_scolaire,
+        'debut_abonnement': debut_validite.isoformat(),
+        'fin_abonnement': fin_validite.isoformat(),
     })
 
 
@@ -545,7 +573,6 @@ def abonnement_create(request):
             abo.statut = AbonnementBus.Statut.ACTIF
             abo.zone = abo.grille.zone
             abo.annee_scolaire = abo.grille.annee_scolaire
-            abo.date_expiration = fin_abonnement(abo.date_debut, abo.periodicite, 'bus')
             # Itinéraire, arrêt et contact ne sont pas ressaisis : repris du dernier abonnement.
             for champ, valeur in infos_logistiques_bus(abo.eleve).items():
                 if not getattr(abo, champ):
@@ -580,7 +607,6 @@ def abonnement_edit(request, abo_id):
             if abo.grille_id:
                 abo.zone = abo.grille.zone
                 abo.annee_scolaire = abo.grille.annee_scolaire
-            abo.date_expiration = fin_abonnement(abo.date_debut, abo.periodicite, 'bus')
             abo.save()
             form.enregistrer_remise(request.user)
             messages.success(request, "Abonnement mis à jour.")
@@ -655,7 +681,7 @@ def export_relances_excel(request):
             getattr(getattr(el.classe, 'ecole', None), 'nom', ''),
             a.get_periodicite_display(),
             int(a.montant or 0),
-            a.date_debut.strftime('%d/%m/%Y') if a.date_debut else '',
+            (a.date_debut_abonnement or a.date_debut).strftime('%d/%m/%Y') if a.date_debut else '',
             a.date_expiration.strftime('%d/%m/%Y') if a.date_expiration else '',
             a.get_statut_display(),
             a.zone,
@@ -809,20 +835,22 @@ def generer_recu_abonnement_pdf(request, abo_id):
     line('Classe', getattr(el.classe, 'nom', ''))
     line('École', getattr(getattr(el.classe, 'ecole', None), 'nom', ''))
     line('Type / tranche', abo.get_periodicite_display())
+    line('Période couverte', abo.periode_couverte)
     line('Montant', f"{int(abo.montant):,}".replace(',', ' ') + ' GNF')
     line('Date de paiement', abo.date_debut.strftime('%d/%m/%Y') if abo.date_debut else '')
+    debut_validite = abo.date_debut_abonnement or abo.date_debut
+    line('Début abonnement', debut_validite.strftime('%d/%m/%Y') if debut_validite else '')
+    line('Fin abonnement', abo.date_expiration.strftime('%d/%m/%Y') if abo.date_expiration else '')
     line('Mode de paiement', getattr(abo.mode_paiement, 'nom', '') or 'Non renseigné')
     remise = abo.grille.remise_pour(abo.eleve) if abo.grille_id else None
     if abo.grille_id:
         line('Grille appliquée', f"{abo.grille.zone} - {abo.grille.annee_scolaire}")
         if remise:
             line('Remise accordée', remise.libelle)
-    else:
-        line('Expiration', abo.date_expiration.strftime('%d/%m/%Y') if abo.date_expiration else '')
     
     # Calcul et affichage de la durée en jours
-    if abo.date_debut and abo.date_expiration:
-        duree_jours = (abo.date_expiration - abo.date_debut).days
+    if debut_validite and abo.date_expiration:
+        duree_jours = (abo.date_expiration - debut_validite).days + 1
         line('Durée', f"{duree_jours} jours")
     line('Zone', abo.zone)
     if abo.point_arret:

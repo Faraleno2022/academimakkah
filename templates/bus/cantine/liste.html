@@ -186,7 +186,7 @@
                                     {{ abo.get_type_repas_display }}
                                 </span>
                             </td>
-                            <td>{{ abo.get_periodicite_display }}</td>
+                            <td><strong>{{ abo.periode_couverte }}</strong><br><small class="text-muted">{{ abo.deja_paye|intcomma }} GNF versés · {{ abo.get_periodicite_display }}</small></td>
                             <td>{{ abo.montant_brut|intcomma }} GNF</td>
                             <td>{{ abo.montant_remise|intcomma }} GNF{% if abo.type_remise %}<br><small class="text-muted">{{ abo.get_type_remise_display }} : {% if abo.type_remise == 'POURCENTAGE' %}{{ abo.valeur_remise|floatformat:2 }} %{% else %}{{ abo.valeur_remise|floatformat:0 }} GNF{% endif %}</small>{% endif %}</td>
                             <td>{{ abo.montant_du|intcomma }} GNF</td>

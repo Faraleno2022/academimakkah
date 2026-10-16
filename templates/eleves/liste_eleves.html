@@ -325,8 +325,11 @@
         const btnEdit = e.target.closest('.btn-edit-tel');
         if (btnEdit) {
             const eleveId = btnEdit.dataset.eleveId;
+            const zoneEdition = document.getElementById('tel-edit-' + eleveId);
+            zoneEdition.querySelector('.input-tel-principal').value = btnEdit.dataset.telActuel || '';
+            zoneEdition.querySelector('.input-tel-secondaire').value = btnEdit.dataset.telSecondaire || '';
             document.getElementById('tel-display-' + eleveId).style.display = 'none';
-            document.getElementById('tel-edit-' + eleveId).style.display = 'block';
+            zoneEdition.style.display = 'block';
             const input = document.querySelector('#tel-edit-' + eleveId + ' .input-tel-edit');
             if (input) { input.focus(); input.select(); }
             return;
@@ -345,12 +348,19 @@
         const btnSave = e.target.closest('.btn-save-tel');
         if (btnSave) {
             const eleveId = btnSave.dataset.eleveId;
-            const input = document.querySelector('#tel-edit-' + eleveId + ' .input-tel-edit');
-            const tel = (input.value || '').trim();
+            const input = document.querySelector('#tel-edit-' + eleveId + ' .input-tel-principal');
+            const inputDeuxieme = document.querySelector('#tel-edit-' + eleveId + ' .input-tel-secondaire');
+            const tel = (input.value || '').replace(/[\s().-]/g, '');
+            const telDeuxieme = (inputDeuxieme.value || '').replace(/[\s().-]/g, '');
 
-            if (!/^\+224\d{8,9}$/.test(tel)) {
-                alert('Format invalide. Utilisez +224XXXXXXXXX');
+            if (!/^(?:\+?224)?[0-9]{8,9}$/.test(tel)) {
+                alert('Téléphone 1 invalide. Utilisez 8 à 9 chiffres ou +224XXXXXXXXX.');
                 input.focus();
+                return;
+            }
+            if (telDeuxieme && !/^(?:\+?224)?[0-9]{8,9}$/.test(telDeuxieme)) {
+                alert('Téléphone 2 invalide. Utilisez 8 à 9 chiffres ou +224XXXXXXXXX.');
+                inputDeuxieme.focus();
                 return;
             }
 
@@ -364,17 +374,21 @@
                     'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value
                         || '{{ csrf_token }}'
                 },
-                body: JSON.stringify({ eleve_id: eleveId, telephone: tel })
+                body: JSON.stringify({ eleve_id: eleveId, telephone: tel, telephone_secondaire: telDeuxieme })
             })
             .then(r => r.json())
             .then(data => {
                 if (data.success) {
                     // Mettre à jour l'affichage
-                    const telText = document.querySelector('#tel-display-' + eleveId + ' .tel-text');
-                    if (telText) telText.textContent = data.telephone;
-                    // Mettre à jour le data-tel-actuel
-                    const btnEditOrig = document.querySelector('#tel-display-' + eleveId + ' .btn-edit-tel');
-                    if (btnEditOrig) btnEditOrig.dataset.telActuel = data.telephone;
+                    document.querySelectorAll('.btn-edit-tel').forEach(function(bouton) {
+                        if (bouton.dataset.responsableId !== String(data.responsable_id)) return;
+                        const affichage = document.getElementById('tel-display-' + bouton.dataset.eleveId);
+                        affichage.querySelector('.tel-text').textContent = data.telephone;
+                        affichage.querySelector('.tel-secondaire-text').textContent = data.telephone_secondaire;
+                        affichage.querySelector('.tel-secondaire').hidden = !data.telephone_secondaire;
+                        bouton.dataset.telActuel = data.telephone;
+                        bouton.dataset.telSecondaire = data.telephone_secondaire;
+                    });
                     document.getElementById('tel-display-' + eleveId).style.display = '';
                     document.getElementById('tel-edit-' + eleveId).style.display = 'none';
                     if (typeof showMessage === 'function') showMessage(data.message, 'success');

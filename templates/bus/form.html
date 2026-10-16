@@ -134,6 +134,7 @@
           <div class="col-md-4 mb-3">
             <label class="form-label small-label" for="{{ form.date_debut.id_for_label }}">Date du paiement <span class="required-field">*</span></label>
             {{ form.date_debut }}
+            <div id="periode-abonnement-bus" class="form-text text-primary" aria-live="polite"></div>
             {% if form.date_debut.errors %}<div class="text-danger small">{{ form.date_debut.errors.0 }}</div>{% endif %}
           </div>
           <div class="col-md-4 mb-3">
@@ -424,9 +425,13 @@ document.addEventListener('DOMContentLoaded', function() {
     montantPartiel.style.display = 'block';
   }
 
+  let requeteTarif = 0;
+  const periodeAbonnement = document.getElementById('periode-abonnement-bus');
   async function chargerTarif(conserverMontant) {
+    const numeroRequete = ++requeteTarif;
     if (!eleveSelect || !eleveSelect.value || !grilleSelect || !grilleSelect.value || !periodiciteSelect || !periodiciteSelect.value) {
       if (tarifInfo) tarifInfo.style.display = 'none';
+      if (periodeAbonnement) periodeAbonnement.textContent = '';
       resteAvantRecu = null;
       afficherPaiementPartiel();
       return;
@@ -437,6 +442,9 @@ document.addEventListener('DOMContentLoaded', function() {
       url.searchParams.set('grille_id', grilleSelect.value);
       url.searchParams.set('periodicite', periodiciteSelect.value);
       if (paiementEnModification) url.searchParams.set('exclure', paiementEnModification);
+      const datePaiement = document.getElementById('id_date_debut');
+      if (datePaiement && datePaiement.value) url.searchParams.set('date_debut', datePaiement.value);
+      if (conserverMontant && montantInput && montantInput.value) url.searchParams.set('montant', montantInput.value);
       if (remiseModifiee && remiseModifiee.value === '1') {
         url.searchParams.set('remise_modifiee', '1');
         url.searchParams.set('remise_type', remiseType.value);
@@ -448,7 +456,11 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       const response = await fetch(url.toString(), {headers: {'X-Requested-With': 'XMLHttpRequest'}});
       const data = await response.json();
+      if (numeroRequete !== requeteTarif) return;
       if (!response.ok || !data.success) throw new Error(data.message || 'Tarif indisponible');
+      const dateFr = valeur => valeur ? valeur.split('-').reverse().join('/') : '';
+      if (periodeAbonnement) periodeAbonnement.textContent = 'Début : ' + dateFr(data.debut_abonnement)
+          + ' — Fin : ' + dateFr(data.fin_abonnement) + ' inclus';
       tarifDu.textContent = formatGNF(data.du);
       tarifPaye.textContent = formatGNF(data.paye);
       tarifReste.textContent = formatGNF(data.reste);
@@ -489,7 +501,9 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       afficherPaiementPartiel();
     } catch (error) {
+      if (numeroRequete !== requeteTarif) return;
       if (tarifInfo) tarifInfo.style.display = 'none';
+      if (periodeAbonnement) periodeAbonnement.textContent = '';
       resteAvantRecu = null;
       plafondRecu = null;
       afficherPaiementPartiel();
@@ -605,6 +619,15 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   chargerEleveSelectionne(false);
   chargerTarif(true);
+  const datePaiementInput = document.getElementById('id_date_debut');
+  if (datePaiementInput) datePaiementInput.addEventListener('change', function() { chargerTarif(true); });
+  let attenteValidite;
+  if (montantInput) montantInput.addEventListener('input', function() {
+    // Une réponse encore en route ne doit pas écraser la nouvelle saisie.
+    ++requeteTarif;
+    clearTimeout(attenteValidite);
+    attenteValidite = setTimeout(function() { chargerTarif(true); }, 250);
+  });
 
   // Validation élève à la soumission
   form && form.addEventListener('submit', function(e) {

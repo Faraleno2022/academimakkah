@@ -67,7 +67,7 @@ with tempfile.TemporaryDirectory(prefix='myschool-annee-') as scratch, ExitStack
     from django.core.wsgi import get_wsgi_application
     from django.test import Client
     from django.test.runner import DiscoverRunner
-    from eleves.models import Classe, Ecole, Eleve, GrilleTarifaire
+    from eleves.models import Classe, Ecole, Eleve, GrilleTarifaire, Responsable
     from eleves.utils_annee import SESSION_ANNEE_ACTIVE
     from paiements.models import EcheancierPaiement
     from bus.models import AbonnementBus, AbonnementCantine, GrilleTarifaireBus
@@ -86,6 +86,10 @@ with tempfile.TemporaryDirectory(prefix='myschool-annee-') as scratch, ExitStack
         for index in range(3):
             Eleve.objects.create(classe=first, matricule=f'NAV-{index}', nom=f'Élève {index}', prenom='Test')
         eleve_test = Eleve.objects.filter(classe=first).order_by('pk').first()
+        parent_test = Responsable.objects.create(prenom='Parent', nom='Navigateur', relation='PERE',
+            telephone='+224620111222', adresse='Conakry')
+        eleve_test.responsable_principal = parent_test
+        eleve_test.save(update_fields=['responsable_principal'])
         for annee, debut, fin, suffixe in (
             ('2025-2026', date(2025, 10, 1), date(2026, 6, 30), 'ANCIEN'),
             ('2026-2027', date(2026, 10, 1), date(2027, 6, 30), 'NOUVEAU'),
@@ -114,6 +118,7 @@ with tempfile.TemporaryDirectory(prefix='myschool-annee-') as scratch, ExitStack
             setup = Path(scratch, 'navigateur.json')
             setup.write_text(json.dumps({'url': f'http://127.0.0.1:{server.server_port}',
                 'eleve_id': eleve_test.pk,
+                'grille_bus_id': grille_bus.pk,
                 'eleve_sans_abonnement': Eleve.objects.filter(classe=first).exclude(pk=eleve_test.pk).first().pk,
                 'cookie_name': settings.SESSION_COOKIE_NAME, 'cookie_value': client.cookies[settings.SESSION_COOKIE_NAME].value}), encoding='utf-8')
             try:
@@ -124,6 +129,8 @@ with tempfile.TemporaryDirectory(prefix='myschool-annee-') as scratch, ExitStack
         assert Classe.objects.filter(ecole=ecole, annee_scolaire='2026-2027').count() == 2
         assert Eleve.objects.filter(classe__ecole=ecole, classe__annee_scolaire='2026-2027', classe__nom='2ÈME ANNÉE').count() == 3
         assert EcheancierPaiement.objects.filter(eleve__classe__ecole=ecole, annee_scolaire='2026-2027').count() == 3
+        parent_test.refresh_from_db()
+        assert parent_test.telephone_secondaire == ''
         print('ORM : nouvelle année créée, 2 classes, 3 passages, 3 échéanciers ; base client non utilisée.')
     finally:
         runner.teardown_databases(databases)

@@ -336,7 +336,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function ajouterPeriode(iso, periodicite) {
         const d = new Date(iso + 'T00:00:00');
         if (isNaN(d)) return '';
-        const mois = {MENSUEL: 1, TRIMESTRIEL: 3, ANNUEL: 12}[periodicite];
+        const mois = {MENSUEL: 1, TRIMESTRIEL: 3, DEUX_TRIMESTRES: 6, TROIS_TRIMESTRES: 9, ANNUEL: 9}[periodicite];
         if (periodicite === 'JOURNALIER') d.setDate(d.getDate() + 1);
         else if (periodicite === 'HEBDOMADAIRE') d.setDate(d.getDate() + 7);
         else {
@@ -511,24 +511,37 @@ document.addEventListener('DOMContentLoaded', function() {
             : type === 'MONTANT' ? Math.min(tarif, Math.round(valeur)) : 0;
         const du = tarif - remise;
         const reste = Math.max(du - encaisse, 0);
+        const periode = champ('id_periodicite')?.value;
+        const trimestres = {TRIMESTRIEL: 1, DEUX_TRIMESTRES: 2, TROIS_TRIMESTRES: 3, ANNUEL: 3}[periode];
+        let moisPayes = null;
+        if (trimestres) {
+            let couverts = trimestres;
+            if (du > 0) {
+                const tranche = Math.round(du / trimestres);
+                const seuils = Array.from({length: trimestres}, (_, n) => n === trimestres - 1 ? du : tranche * (n + 1));
+                couverts = encaisse > 0 ? Math.max(1, seuils.filter(seuil => encaisse >= seuil).length) : 0;
+            }
+            moisPayes = couverts * 3;
+        }
         let fin = '';
         const dateTexte = champ('id_date_debut')?.value;
-        const periode = champ('id_periodicite')?.value;
         if (dateTexte && periode) {
             const [annee, mois, jour] = dateTexte.split('-').map(Number);
-            const durees = {MENSUEL: 1, TRIMESTRIEL: 3, DEUX_TRIMESTRES: 6, TROIS_TRIMESTRES: 9, ANNUEL: 12};
+            const durees = {MENSUEL: 1, TRIMESTRIEL: 3, DEUX_TRIMESTRES: 6, TROIS_TRIMESTRES: 9, ANNUEL: 9};
             const date = new Date(annee, mois - 1, jour, 12);
             if (periode === 'HEBDOMADAIRE') date.setDate(date.getDate() + 6);
             else if (durees[periode]) {
-                const premier = new Date(annee, mois - 1 + durees[periode], 1, 12);
+                const premier = new Date(annee, mois - 1 + (moisPayes ?? durees[periode]), 1, 12);
                 const dernierJour = new Date(premier.getFullYear(), premier.getMonth() + 1, 0).getDate();
                 premier.setDate(Math.min(jour, dernierJour));
                 premier.setDate(premier.getDate() - 1);
                 date.setTime(premier.getTime());
             }
-            fin = ' — Fin : ' + date.toLocaleDateString('fr-FR');
+            fin = ' — Début : ' + new Date(annee, mois - 1, jour, 12).toLocaleDateString('fr-FR')
+                + ' — Fin : ' + date.toLocaleDateString('fr-FR') + ' inclus';
         }
-        sortie.textContent = `Remise : ${format(remise)} — Dû net : ${format(du)} — Encaissé : ${format(encaisse)} — Reste : ${format(reste)}${fin}`;
+        const couverture = moisPayes !== null ? ` — Période couverte : ${moisPayes} mois sur 9 mois` : '';
+        sortie.textContent = `Remise : ${format(remise)} — Dû net : ${format(du)} — Encaissé : ${format(encaisse)} — Reste : ${format(reste)}${couverture}${fin}`;
     }
     for (const id of champs) {
         const element = champ(id);

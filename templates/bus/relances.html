@@ -54,7 +54,7 @@
       <td>{{ a.eleve.classe.ecole.nom }}</td>
       <td>{{ a.get_periodicite_display }}</td>
       <td>{{ a.montant|intcomma }} GNF</td>
-      <td>{{ a.date_debut|date:'d/m/Y' }}</td>
+      <td>{{ a.date_debut_abonnement|default:a.date_debut|date:'d/m/Y' }}</td>
       <td>{{ a.date_expiration|date:'d/m/Y' }}</td>
       <td>{{ a.get_statut_display }}</td>
       <td>{{ a.zone }}</td>

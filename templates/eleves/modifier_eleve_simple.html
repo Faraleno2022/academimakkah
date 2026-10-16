@@ -206,7 +206,7 @@
                             <div class="row mb-2" id="resp1Info">
                                 <div class="col-md-4"><small class="text-muted">Nom:</small> <strong>{{ eleve.responsable_principal.prenom }} {{ eleve.responsable_principal.nom }}</strong></div>
                                 <div class="col-md-4"><small class="text-muted">Relation:</small> {{ eleve.responsable_principal.get_relation_display }}</div>
-                                <div class="col-md-4"><small class="text-muted">Tel:</small> {{ eleve.responsable_principal.telephone|default:"-" }}</div>
+                                <div class="col-md-4"><small class="text-muted">Tel:</small> {{ eleve.responsable_principal.telephone|default:"-" }}{% if eleve.responsable_principal.telephone_secondaire %}<br>{{ eleve.responsable_principal.telephone_secondaire }}{% endif %}</div>
                             </div>
                             <div class="row mb-2" id="resp1InfoExtra">
                                 <div class="col-md-4"><small class="text-muted">Profession:</small> {{ eleve.responsable_principal.profession|default:"-" }}</div>
@@ -255,6 +255,10 @@
                                         <div class="col-md-6 mb-2">
                                             <label class="form-label small fw-bold">Telephone</label>
                                             {{ resp1_form.telephone }}
+                                        </div>
+                                        <div class="col-md-6 mb-2">
+                                            <label class="form-label small fw-bold" for="{{ resp1_form.telephone_secondaire.id_for_label }}">Deuxième téléphone (facultatif)</label>
+                                            {{ resp1_form.telephone_secondaire }}
                                         </div>
                                     </div>
                                     <div class="row">

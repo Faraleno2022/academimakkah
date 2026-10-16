@@ -424,11 +424,25 @@ class BaseAffectationEnseignantFormSet(BaseInlineFormSet):
                 "Ce type de personnel ne doit pas avoir d'affectation de classe."
             )
 
-        classes = [donnees['classe'].pk for donnees in affectations]
-        if len(classes) != len(set(classes)):
+        # Une même classe peut revenir pour des matières différentes
+        # (ex. Biologie et Chimie en 7ème), pas pour la même matière.
+        couples = [
+            (donnees['classe'].pk, (donnees.get('matiere') or '').strip().casefold())
+            for donnees in affectations
+        ]
+        if len(couples) != len(set(couples)):
             raise ValidationError(
-                "Une même classe ne peut être sélectionnée qu'une seule fois."
+                "Une même classe ne peut être saisie qu'une seule fois pour "
+                "la même matière. Indiquez une matière différente sur chaque "
+                "ligne de cette classe."
             )
+
+    def get_unique_error_message(self, unique_check):
+        return (
+            "Une même classe est saisie plusieurs fois avec la même matière "
+            "et la même date de début. Indiquez une matière différente sur "
+            "chaque ligne de cette classe."
+        )
 
 
 EnseignantAffectationFormSet = inlineformset_factory(

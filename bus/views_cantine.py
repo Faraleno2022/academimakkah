@@ -351,7 +351,7 @@ def _export_cantine(request, fmt):
         ecole = eleve.classe.ecole.nom if eleve.classe_id else ''
         lignes_excel.append([
             ecole, nom, eleve.matricule or '', classe,
-            abo.get_type_repas_display(), abo.get_periodicite_display(),
+            abo.get_type_repas_display(), f'{abo.periode_couverte} ({abo.get_periodicite_display()})',
             abo.montant_brut, abo.get_type_remise_display(), abo.valeur_remise,
             abo.montant_remise, abo.montant_du, abo.deja_paye, abo.reste_a_payer,
             abo.date_debut, abo.date_expiration, abo.jours_restants,
@@ -361,7 +361,7 @@ def _export_cantine(request, fmt):
         ])
         lignes_pdf.append([
             nom, eleve.matricule or '', classe, abo.get_type_repas_display(),
-            abo.get_periodicite_display(), abo.montant_brut,
+            f'{abo.periode_couverte} ({abo.get_periodicite_display()})', abo.montant_brut,
             abo.montant_remise, abo.montant_du, abo.deja_paye,
             abo.reste_a_payer, abo.date_debut, abo.date_expiration,
             abo.reference_externe or '', abo.annee_scolaire,
@@ -623,6 +623,7 @@ def generer_recu_cantine_pdf(request, abo_id):
     line('École', getattr(getattr(el.classe, 'ecole', None), 'nom', ''))
     line('Type de repas', abo.get_type_repas_display())
     line('Périodicité', abo.get_periodicite_display())
+    line('Période couverte', abo.periode_couverte)
     line('Tarif', f"{int(abo.montant_brut):,}".replace(',', ' ') + ' GNF')
     line('Remise', f"{int(abo.montant_remise):,}".replace(',', ' ') + ' GNF')
     line('Dû net', f"{int(abo.montant_du):,}".replace(',', ' ') + ' GNF')
@@ -633,7 +634,7 @@ def generer_recu_cantine_pdf(request, abo_id):
     
     # Calcul et affichage de la durée en jours
     if abo.date_debut and abo.date_expiration:
-        duree_jours = (abo.date_expiration - abo.date_debut).days
+        duree_jours = max(0, (abo.date_expiration - abo.date_debut).days + 1)
         line('Durée', f"{duree_jours} jours")
     
     # Informations spécifiques à la cantine

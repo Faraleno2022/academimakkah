@@ -2,7 +2,7 @@ from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 
 from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator, RegexValidator
-from django.db import IntegrityError, models
+from django.db import IntegrityError, models, transaction
 from django.utils import timezone
 from eleves.models import Ecole, Eleve
 from synchronisation.mixins import SyncTrackedModel
@@ -302,6 +302,7 @@ class AbonnementBus(SyncTrackedModel):
         help_text="Choisissez Annuel pour régler la totalité des trois tranches.",
     )
     date_debut = models.DateField(default=timezone.localdate)
+    date_debut_abonnement = models.DateField(null=True, blank=True, verbose_name="Début de validité")
     date_expiration = models.DateField(db_index=True)
     statut = models.CharField(max_length=10, choices=Statut.choices, default=Statut.ACTIF, db_index=True)
 
@@ -344,7 +345,21 @@ class AbonnementBus(SyncTrackedModel):
     def __str__(self):
         return f"Bus: {self.eleve} ({self.get_periodicite_display()})"
 
+    @property
+    def periode_couverte(self):
+        from .periodes import TRANCHES_VALIDITE_BUS, libelle_periode_couverte
+        if self.periodicite not in TRANCHES_VALIDITE_BUS:
+            return self.get_periodicite_display()
+        return libelle_periode_couverte(self.date_debut_abonnement or self.date_debut, self.date_expiration)
+
+    @transaction.atomic
     def save(self, *args, **kwargs):
+        from .periodes import dates_validite_bus, recalculer_dates_bus
+        self.date_debut = self._meta.get_field('date_debut').to_python(self.date_debut)
+        ancienne = None
+        if self.pk:
+            ancienne = AbonnementBus.objects.filter(pk=self.pk).values_list(
+                'eleve_id', 'grille_id', 'annee_scolaire', 'zone').first()
         champs_automatiques = set()
         if self.grille_id:
             self.annee_scolaire = self.grille.annee_scolaire
@@ -356,6 +371,21 @@ class AbonnementBus(SyncTrackedModel):
             from .annees import annee_depuis_date
             self.annee_scolaire = annee_depuis_date(self.date_debut)
             champs_automatiques.add('annee_scolaire')
+
+        if not self.sync_deleted_at:
+            self.date_debut_abonnement, self.date_expiration = dates_validite_bus(self)
+            champs_automatiques.update(('date_debut_abonnement', 'date_expiration'))
+
+        def enregistrer():
+            with transaction.atomic():
+                resultat = super(AbonnementBus, self).save(*args, **kwargs)
+                groupe = (self.eleve_id, self.grille_id, self.annee_scolaire, self.zone)
+                periodes = recalculer_dates_bus(*groupe)
+                if self.pk in periodes:
+                    self.date_debut_abonnement, self.date_expiration = periodes[self.pk]
+                if ancienne and ancienne != groupe:
+                    recalculer_dates_bus(*ancienne)
+            return resultat
 
         if not self.numero_recu:
             champs_automatiques.add('numero_recu')
@@ -375,14 +405,22 @@ class AbonnementBus(SyncTrackedModel):
                     sequence = 1
                 self.numero_recu = f"{prefix}{sequence:04d}"
                 try:
-                    return super().save(*args, **kwargs)
+                    return enregistrer()
                 except IntegrityError:
                     self.numero_recu = None
                     continue
             raise ValueError("Impossible de générer un numéro de reçu bus unique.")
         if kwargs.get('update_fields') is not None and champs_automatiques:
             kwargs['update_fields'] = set(kwargs['update_fields']) | champs_automatiques
-        return super().save(*args, **kwargs)
+        return enregistrer()
+
+    @transaction.atomic
+    def delete(self, *args, **kwargs):
+        from .periodes import recalculer_dates_bus
+        groupe = (self.eleve_id, self.grille_id, self.annee_scolaire, self.zone)
+        resultat = super().delete(*args, **kwargs)
+        recalculer_dates_bus(*groupe)
+        return resultat
 
     @property
     def est_proche_expiration(self) -> bool:
@@ -454,6 +492,21 @@ class RemiseBus(SyncTrackedModel):
 
     def __str__(self):
         return f"Remise bus {self.eleve} ({self.libelle_valeur})"
+
+    @transaction.atomic
+    def save(self, *args, **kwargs):
+        from .periodes import recalculer_dates_bus
+        resultat = super().save(*args, **kwargs)
+        recalculer_dates_bus(self.eleve_id, self.grille_id, self.grille.annee_scolaire, self.grille.zone)
+        return resultat
+
+    @transaction.atomic
+    def delete(self, *args, **kwargs):
+        from .periodes import recalculer_dates_bus
+        groupe = (self.eleve_id, self.grille_id, self.grille.annee_scolaire, self.grille.zone)
+        resultat = super().delete(*args, **kwargs)
+        recalculer_dates_bus(*groupe)
+        return resultat
 
     @property
     def tranches(self):
@@ -620,6 +673,12 @@ class AbonnementCantine(SyncTrackedModel):
         return f"Cantine: {self.eleve} ({self.get_periodicite_display()})"
 
     def save(self, *args, **kwargs):
+        from .periodes import fin_validite_cantine
+        self.date_debut = self._meta.get_field('date_debut').to_python(self.date_debut)
+        if self.periodicite in ('TRIMESTRIEL', 'DEUX_TRIMESTRES', 'TROIS_TRIMESTRES', 'ANNUEL'):
+            self.date_expiration = fin_validite_cantine(self)
+            if kwargs.get('update_fields') is not None:
+                kwargs['update_fields'] = set(kwargs['update_fields']) | {'date_expiration'}
         if not self.annee_scolaire:
             from .annees import annee_depuis_date
             self.annee_scolaire = annee_depuis_date(self.date_debut)
@@ -630,6 +689,14 @@ class AbonnementCantine(SyncTrackedModel):
     @property
     def montant_brut(self):
         return Decimal(self.montant_tarif if self.montant_tarif is not None else self.montant or 0)
+
+    @property
+    def periode_couverte(self):
+        from .periodes import TRIMESTRES_CANTINE, trimestres_cantine_payes
+        if self.periodicite not in TRIMESTRES_CANTINE:
+            return self.get_periodicite_display()
+        nombre = trimestres_cantine_payes(self.periodicite, self.montant_du, self.deja_paye)
+        return f'{3 * nombre} mois sur 9 mois'
 
     @property
     def montant_remise(self):
