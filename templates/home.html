@@ -230,8 +230,47 @@
     background-color: #f3f4f6;
   }
 
+  .image-card > picture {
+    display: block;
+    overflow: hidden;
+    border-radius: 0.5rem 0.5rem 0 0;
+  }
+
   .image-card:hover .card-img-top {
-    transform: scale(1.05);
+    transform: scale(1.04);
+  }
+
+  @keyframes classroom-zoom {
+    from { transform: scale(1.06); }
+    to { transform: scale(1); }
+  }
+
+  @keyframes classroom-reveal {
+    from { opacity: 0; transform: translateY(24px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .hero-image {
+      animation: classroom-zoom 5s ease-out both;
+    }
+
+    .image-card.is-visible {
+      animation: classroom-reveal 0.8s ease-out both;
+    }
+
+    .image-card.is-visible .card-img-top {
+      animation: classroom-zoom 4s ease-out;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .scroll-indicator { animation: none; }
+    .image-card, .image-card .card-img-top, .presentation-card {
+      transition: none;
+    }
+    .image-card:hover, .image-card:hover .card-img-top,
+    .presentation-card:hover { transform: none; }
   }
 
   /* Responsive design */
@@ -293,13 +332,13 @@
             srcset="{% static 'images/optimized/ecole.webp' %}"
             media="(min-width: 1px)">
     <img src="{% static 'images/optimized/ecole_optimized.jpg' %}"
-         alt="Myschool"
+         alt="Des élèves guinéens participent en classe avec leur enseignante"
          class="hero-image"
          loading="eager"
          decoding="sync"
          fetchpriority="high"
-         width="1920"
-         height="1080">
+         width="1672"
+         height="941">
   </picture>
 
 
@@ -481,13 +520,13 @@
                   srcset="{% static 'images/optimized/carte1.webp' %}"
                   sizes="(min-width: 992px) 545px, (min-width: 768px) 50vw, 100vw">
           <img src="{% static 'images/optimized/carte1_optimized.jpg' %}"
-               alt="Nos installations modernes"
+               alt="Des élèves guinéens étudient en classe avec leur enseignant"
                class="card-img-top"
                loading="lazy"
                decoding="async"
                sizes="(min-width: 992px) 545px, (min-width: 768px) 50vw, 100vw"
                width="1200"
-               height="800">
+               height="675">
         </picture>
 
         <div class="card-body">
@@ -511,13 +550,13 @@
                   srcset="{% static 'images/optimized/carte2.webp' %}"
                   sizes="(min-width: 992px) 545px, (min-width: 768px) 50vw, 100vw">
           <img src="{% static 'images/optimized/carte2_optimized.jpg' %}"
-               alt="Notre équipe pédagogique"
+               alt="Une élève guinéenne résout un exercice au tableau avec son enseignante"
                class="card-img-top"
                loading="lazy"
                decoding="async"
                sizes="(min-width: 992px) 545px, (min-width: 768px) 50vw, 100vw"
                width="1200"
-               height="800">
+               height="675">
         </picture>
 
         <div class="card-body">
@@ -581,41 +620,26 @@
 // Fonction de défilement fluide
 function scrollToContent() {
   document.getElementById('content-section').scrollIntoView({
-    behavior: 'smooth',
+    behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
     block: 'start'
   });
 }
 
-// Optimisations de performance - Version allégée pour vitesse maximale
+// Déclencher les animations au moment où les images deviennent visibles.
 document.addEventListener('DOMContentLoaded', function() {
-  // Animation d'entrée légère pour les cartes (sans observer lourd)
-  const cards = document.querySelectorAll('.image-card, .presentation-card');
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches ||
+      !('IntersectionObserver' in window)) return;
 
-  // Animation simple avec délai progressif (plus rapide que IntersectionObserver)
-  cards.forEach((card, index) => {
-    card.style.opacity = '0';
-    card.style.transform = 'translateY(20px)';
-    card.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('is-visible');
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.15 });
 
-    // Animation décalée simple
-    setTimeout(() => {
-      card.style.opacity = '1';
-      card.style.transform = 'translateY(0)';
-    }, 100 * index);
-  });
-});
-
-// Optimisation du redimensionnement
-let resizeTimeout;
-window.addEventListener('resize', function() {
-  clearTimeout(resizeTimeout);
-  resizeTimeout = setTimeout(function() {
-    // Recalculer les dimensions si nécessaire
-    const heroImage = document.querySelector('.hero-image');
-    if (heroImage) {
-      heroImage.style.height = window.innerHeight + 'px';
-    }
-  }, 250);
+  document.querySelectorAll('.image-card').forEach((card) => observer.observe(card));
 });
 </script>
 {% endblock %}
