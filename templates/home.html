@@ -6,10 +6,10 @@
 {% block meta_description %}MySchoolGN est le système de gestion scolaire conçu pour les réalités des écoles guinéennes : paiements, bulletins, parents, offline et pilotage directeur.{% endblock %}
 {% block og_title %}Myschool GN - Logiciel de gestion scolaire en Guinée{% endblock %}
 {% block og_description %}Le système de gestion scolaire conçu pour les réalités des écoles guinéennes.{% endblock %}
-{% block og_image %}{{ request.scheme }}://{{ request.get_host }}{% static 'images/optimized/ecole.webp' %}{% endblock %}
+{% block og_image %}{{ request.scheme }}://{{ request.get_host }}{% static_versioned 'images/optimized/ecole.webp' %}{% endblock %}
 {% block twitter_title %}Myschool GN - Logiciel de gestion scolaire en Guinée{% endblock %}
 {% block twitter_description %}Paiements, bulletins, parents, offline et pilotage directeur pour les écoles en Guinée.{% endblock %}
-{% block twitter_image %}{{ request.scheme }}://{{ request.get_host }}{% static 'images/optimized/ecole.webp' %}{% endblock %}
+{% block twitter_image %}{{ request.scheme }}://{{ request.get_host }}{% static_versioned 'images/optimized/ecole.webp' %}{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -317,7 +317,7 @@
   .image-loading { background: #f3f4f6; }
 </style>
 <!-- Préchargement critique de l'image héro optimisée (WebP pour vitesse maximale) -->
-<link rel="preload" as="image" href="{% static 'images/optimized/ecole.webp' %}" type="image/webp" imagesizes="100vw">
+<link rel="preload" as="image" href="{% static_versioned 'images/optimized/ecole.webp' %}" type="image/webp" imagesizes="100vw">
 {# Les images des cartes sont sous le pli : on laisse le navigateur les charger en lazy plutôt que de les précharger #}
 {% endblock %}
 
@@ -329,9 +329,9 @@
   <!-- Image héro optimisée avec WebP et fallback JPEG -->
   <picture>
     <source type="image/webp"
-            srcset="{% static 'images/optimized/ecole.webp' %}"
+            srcset="{% static_versioned 'images/optimized/ecole.webp' %}"
             media="(min-width: 1px)">
-    <img src="{% static 'images/optimized/ecole_optimized.jpg' %}"
+    <img src="{% static_versioned 'images/optimized/ecole_optimized.jpg' %}"
          alt="Des élèves guinéens participent en classe avec leur enseignante"
          class="hero-image"
          loading="eager"
@@ -517,9 +517,9 @@
         <!-- Image optimisée WebP avec fallback JPEG (lazy : sous le pli) -->
         <picture>
           <source type="image/webp"
-                  srcset="{% static 'images/optimized/carte1.webp' %}"
+                  srcset="{% static_versioned 'images/optimized/carte1.webp' %}"
                   sizes="(min-width: 992px) 545px, (min-width: 768px) 50vw, 100vw">
-          <img src="{% static 'images/optimized/carte1_optimized.jpg' %}"
+          <img src="{% static_versioned 'images/optimized/carte1_optimized.jpg' %}"
                alt="Des élèves guinéens étudient en classe avec leur enseignant"
                class="card-img-top"
                loading="lazy"
@@ -547,9 +547,9 @@
         <!-- Image optimisée WebP avec fallback JPEG (lazy : sous le pli) -->
         <picture>
           <source type="image/webp"
-                  srcset="{% static 'images/optimized/carte2.webp' %}"
+                  srcset="{% static_versioned 'images/optimized/carte2.webp' %}"
                   sizes="(min-width: 992px) 545px, (min-width: 768px) 50vw, 100vw">
-          <img src="{% static 'images/optimized/carte2_optimized.jpg' %}"
+          <img src="{% static_versioned 'images/optimized/carte2_optimized.jpg' %}"
                alt="Une élève guinéenne résout un exercice au tableau avec son enseignante"
                class="card-img-top"
                loading="lazy"
