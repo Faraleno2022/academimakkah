@@ -35,8 +35,8 @@
                         {% if etat.enseignant.est_taux_horaire %}
                         <div class="alert alert-info small">
                             <i class="fas fa-info-circle me-1"></i>
-                            Le salaire du secondaire est calculé avec le taux horaire et les heures.
-                            En présence de pointages journaliers, les heures sont verrouillées et calculées automatiquement.
+                            Le salaire est calculé avec le taux horaire et les heures du mois.
+                            Une correction des heures est conservée pour ce bulletin lors du recalcul mensuel.
                         </div>
 
                         <div class="row">
@@ -58,6 +58,14 @@
                         {{ form.total_heures }}
                         {% endif %}
 
+                        {% for champ in form.champs_heures_cours %}
+                        <div class="mb-3">
+                            <label class="form-label" for="{{ champ.id_for_label }}">{{ champ.label }} : heures du mois</label>
+                            {{ champ }}
+                            <div class="form-text">{{ champ.help_text }}</div>
+                            {% for error in champ.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+                        </div>
+                        {% endfor %}
                         <div class="mb-3">
                             <label class="form-label" for="{{ form.salaire_base.id_for_label }}">{% if form.montant_cours %}Salaire fixe (GNF){% else %}Salaire de base (GNF){% endif %}</label>
                             {{ form.salaire_base }}

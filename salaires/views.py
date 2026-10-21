@@ -1465,30 +1465,12 @@ def ajuster_etat_salaire(request, etat_id):
                     taux_horaire = arrondir_montant(
                         form.cleaned_data['taux_horaire_applique']
                     )
-                    if (
-                        enseignant.mode_calcul_horaire
-                        == ModeCalculHoraire.POINTAGE
-                        and pointages_existent(enseignant, periode)
-                    ):
-                        total_heures = heures_reellement_travaillees(
-                            enseignant, periode
-                        )
-                        source_heures = SourceHeuresSalaire.POINTAGE
-                    else:
-                        total_heures = arrondir_heures(
-                            form.cleaned_data['total_heures']
-                        )
-                        if (
-                            'total_heures' in form.changed_data
-                            or enseignant.mode_calcul_horaire
-                            == ModeCalculHoraire.POINTAGE
-                        ):
-                            source_heures = SourceHeuresSalaire.SAISIE
-                        else:
-                            source_heures = (
-                                etat_verrouille.mode_calcul_heures
-                                or enseignant.mode_calcul_horaire
-                            )
+                    total_heures = arrondir_heures(form.cleaned_data['total_heures'])
+                    source_heures = (
+                        SourceHeuresSalaire.SAISIE
+                        if 'total_heures' in form.changed_data
+                        else etat_verrouille.mode_calcul_heures or enseignant.mode_calcul_horaire
+                    )
 
                     etat_verrouille.total_heures = total_heures
                     etat_verrouille.mode_calcul_heures = source_heures
@@ -1500,6 +1482,8 @@ def ajuster_etat_salaire(request, etat_id):
                     etat_verrouille.salaire_base = arrondir_montant(
                         form.cleaned_data['salaire_base']
                     )
+                    if enseignant.type_enseignant == TypeEnseignant.ADMINISTRATEUR:
+                        etat_verrouille.heures_cours_corrigees = form.corrections_cours
 
                 for champ in (
                     *EtatSalaire.CHAMPS_PRIMES, 'jours_chomes', 'heures_revision'

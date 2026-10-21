@@ -144,18 +144,16 @@ def source_et_heures_pour_calcul(enseignant, periode, etat=None):
     """Retourne la source et les heures applicables à un salaire horaire.
 
     Le mode mensuel reste prioritaire lorsqu'il a été explicitement choisi.
-    En mode pointage, une saisie propre à la période est conservée tant
-    qu'aucun pointage n'existe. Dès qu'un pointage est disponible, il devient
-    la source de vérité du calcul.
+    Une correction manuelle du bulletin reste prioritaire, même en présence
+    de pointages, afin de conserver les heures validées par le gestionnaire.
     """
+    if (
+        etat is not None and etat.ajuste_manuellement
+        and etat.mode_calcul_heures == SourceHeuresSalaire.SAISIE
+        and etat.total_heures is not None
+    ):
+        return SourceHeuresSalaire.SAISIE, arrondir_heures(etat.total_heures)
     if enseignant.mode_calcul_horaire == ModeCalculHoraire.MENSUEL:
-        if (
-            etat is not None
-            and etat.ajuste_manuellement
-            and etat.mode_calcul_heures == SourceHeuresSalaire.SAISIE
-            and etat.total_heures is not None
-        ):
-            return SourceHeuresSalaire.SAISIE, arrondir_heures(etat.total_heures)
         return (
             SourceHeuresSalaire.MENSUEL,
             arrondir_heures(enseignant.heures_mensuelles),
@@ -166,14 +164,6 @@ def source_et_heures_pour_calcul(enseignant, periode, etat=None):
             SourceHeuresSalaire.POINTAGE,
             heures_reellement_travaillees(enseignant, periode),
         )
-
-    if (
-        etat is not None
-        and etat.ajuste_manuellement
-        and etat.mode_calcul_heures == SourceHeuresSalaire.SAISIE
-        and etat.total_heures is not None
-    ):
-        return SourceHeuresSalaire.SAISIE, arrondir_heures(etat.total_heures)
 
     return SourceHeuresSalaire.POINTAGE, Decimal('0.00')
 
@@ -253,7 +243,7 @@ def repartir_heures(total_heures, lignes_prevues):
     return repartition
 
 
-def lignes_cours_administrateur(enseignant, periode):
+def lignes_cours_administrateur(enseignant, periode, etat=None):
     """Cours d'un administrateur : ``[(affectation, heures, taux, montant)]``.
 
     Les heures sont celles prévues par l'affectation (heures par semaine ×
@@ -266,16 +256,17 @@ def lignes_cours_administrateur(enseignant, periode):
     for affectation, heures_prevues in heures_prevues_par_affectation(
         enseignant, periode
     ):
-        heures = arrondir_heures(heures_prevues)
+        corrections = etat.heures_cours_corrigees if etat is not None else {}
+        heures = arrondir_heures(corrections.get(str(affectation.pk), heures_prevues))
         taux = arrondir_montant(affectation.taux_horaire)
         lignes.append((affectation, heures, taux, arrondir_montant(heures * taux)))
     return lignes
 
 
-def montant_cours_administrateur(enseignant, periode):
+def montant_cours_administrateur(enseignant, periode, etat=None):
     """Total des cours au secondaire à ajouter au salaire d'un administrateur."""
     return sum(
-        (montant for *_, montant in lignes_cours_administrateur(enseignant, periode)),
+        (montant for *_, montant in lignes_cours_administrateur(enseignant, periode, etat)),
         Decimal('0.00'),
     )
 
@@ -301,7 +292,7 @@ def actualiser_details_heures(etat):
     etat.details_heures.all().delete()
     if etat.enseignant.type_enseignant == TypeEnseignant.ADMINISTRATEUR:
         for affectation, heures, taux, _ in lignes_cours_administrateur(
-            etat.enseignant, etat.periode
+            etat.enseignant, etat.periode, etat
         ):
             DetailHeuresClasse.objects.create(
                 etat_salaire=etat,
@@ -475,7 +466,7 @@ def calculer_etat_salaire(enseignant, periode, utilisateur):
         etat.mode_calcul_heures = ''
         etat.taux_horaire_applique = None
         etat.salaire_base = part_fixe + montant_cours_administrateur(
-            enseignant, periode
+            enseignant, periode, etat
         )
         etat.calcule_par = utilisateur
         etat.save()

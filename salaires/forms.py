@@ -142,6 +142,11 @@ class EnseignantForm(forms.ModelForm):
         self.fields['prenoms'].required = True
         self.fields['ecole'].required = True
         self.fields['type_enseignant'].required = True
+        self.fields['type_enseignant'].choices = [
+            (valeur, "Enseignant à l'heure (tous cycles)"
+             if valeur == TypeEnseignant.SECONDAIRE else libelle)
+            for valeur, libelle in self.fields['type_enseignant'].choices
+        ]
         self.fields['date_embauche'].required = True
         
         # Restreindre les écoles visibles selon l'utilisateur
@@ -597,6 +602,7 @@ class EtatSalaireAjustementForm(forms.ModelForm):
         self.a_des_pointages = False
         self.revision_calculee = False
         self.montant_cours = Decimal('0')
+        self.cours_modifiables = []
         # Compatibilité avec les anciens appels qui ne transmettaient que les
         # primes et retenues : le salaire courant reste alors inchangé.
         self.fields['salaire_base'].required = False
@@ -622,9 +628,9 @@ class EtatSalaireAjustementForm(forms.ModelForm):
                     enseignant, periode
                 )
                 if self.a_des_pointages:
-                    self.fields['total_heures'].disabled = True
                     self.fields['total_heures'].help_text = (
-                        'Calculé depuis les pointages journaliers de la période.'
+                        'Heures issues du pointage, modifiables pour ce bulletin. '
+                        'La correction est conservée lors du recalcul mensuel.'
                     )
                 else:
                     self.fields['total_heures'].help_text = (
@@ -652,19 +658,35 @@ class EtatSalaireAjustementForm(forms.ModelForm):
             self.fields['heures_revision'].widget = forms.HiddenInput()
             if enseignant.type_enseignant == TypeEnseignant.ADMINISTRATEUR:
                 from .services import (
+                    lignes_cours_administrateur,
                     montant_cours_administrateur,
                     part_fixe_salaire,
                 )
 
                 # Seule la part fixe se saisit ; les cours s'y ajoutent.
                 self.montant_cours = montant_cours_administrateur(
-                    enseignant, periode
+                    enseignant, periode, self.instance
                 )
+                for affectation, heures, taux, _ in lignes_cours_administrateur(
+                    enseignant, periode, self.instance
+                ):
+                    nom = f'cours_heures_{affectation.pk}'
+                    self.fields[nom] = forms.DecimalField(
+                        label=f'{affectation.classe.nom} - {affectation.matiere or "Cours"}',
+                        initial=heures, min_value=Decimal('0'),
+                        max_value=Decimal('9999.99'), max_digits=6, decimal_places=2,
+                        required=False,
+                        help_text=f'Heures du mois × {taux:,.0f} GNF/h.',
+                        widget=forms.NumberInput(attrs={
+                            'class': 'form-control', 'step': '0.01', 'min': '0',
+                        }),
+                    )
+                    self.cours_modifiables.append((nom, affectation, heures, taux))
                 self.initial['salaire_base'] = part_fixe_salaire(self.instance)
                 if self.montant_cours:
                     montant = f"{self.montant_cours:,.0f}".replace(',', ' ')
                     self.fields['salaire_base'].help_text = (
-                        f"Cours au secondaire du mois : {montant} GNF, "
+                        f"Cours du mois : {montant} GNF, "
                         "ajoutés automatiquement."
                     )
 
@@ -680,6 +702,17 @@ class EtatSalaireAjustementForm(forms.ModelForm):
 
             if salaire_base is None:
                 salaire_base = part_fixe_salaire(self.instance)
+            self.corrections_cours = dict(self.instance.heures_cours_corrigees)
+            self.montant_cours = Decimal('0')
+            for nom, affectation, heures, taux in self.cours_modifiables:
+                valeur = cleaned_data.get(nom)
+                if valeur is None:
+                    valeur = heures
+                if self.add_prefix(nom) in self.data and nom in self.changed_data:
+                    self.corrections_cours[str(affectation.pk)] = str(valeur)
+                self.montant_cours += (valeur * taux).quantize(
+                    Decimal('0.01'), rounding=ROUND_HALF_UP
+                )
             salaire_base += self.montant_cours
             cleaned_data['salaire_base'] = salaire_base
         elif salaire_base is None:
@@ -743,6 +776,10 @@ class EtatSalaireAjustementForm(forms.ModelForm):
             )
 
         return cleaned_data
+
+    @property
+    def champs_heures_cours(self):
+        return [self[nom] for nom, *_ in self.cours_modifiables]
 
 
 class PeriodePrimesChoiceField(forms.ModelChoiceField):

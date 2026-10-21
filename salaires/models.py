@@ -76,8 +76,10 @@ NIVEAUX_CLASSE_PAR_TYPE_ENSEIGNANT = {
         'TERMINALE',
     },
 }
-# Un membre de l'administration peut aussi donner des cours au secondaire,
-# payés à l'heure en plus de son salaire fixe.
+# Les cours payés à l'heure peuvent couvrir tous les cycles.
+NIVEAUX_CLASSE_PAR_TYPE_ENSEIGNANT[TypeEnseignant.SECONDAIRE] = set().union(
+    *NIVEAUX_CLASSE_PAR_TYPE_ENSEIGNANT.values()
+)
 NIVEAUX_CLASSE_PAR_TYPE_ENSEIGNANT[TypeEnseignant.ADMINISTRATEUR] = (
     NIVEAUX_CLASSE_PAR_TYPE_ENSEIGNANT[TypeEnseignant.SECONDAIRE]
 )
@@ -679,6 +681,7 @@ class PeriodeSalaire(SyncTrackedModel):
 
 class EtatSalaire(SyncTrackedModel):
     """État de salaire d'un enseignant pour une période donnée"""
+    heures_cours_corrigees = models.JSONField(default=dict, blank=True)
     
     enseignant = models.ForeignKey(
         Enseignant, 
