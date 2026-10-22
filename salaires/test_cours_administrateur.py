@@ -87,6 +87,18 @@ class CoursAdministrateurTests(TestCase):
             charge_ou_fonction(self.admin, self.periode), 'Censeur (cours : Maths/PC)'
         )
 
+    def test_heures_sans_prorata_de_la_date_de_debut(self):
+        affectation = self.affecter(self.classe_a, '8', '13500')
+        affectation.date_debut = date(2026, 7, 5)
+        affectation.save()
+
+        etat, _ = calculer_etat_salaire(self.admin, self.periode, self.user)
+
+        # 8 h × 4 semaines, même si l'affectation commence le 5 du mois
+        detail = etat.details_heures.get()
+        self.assertEqual(detail.heures_realisees, Decimal('32.00'))
+        self.assertEqual(etat.salaire_base, Decimal('1432000.00'))
+
     def test_sans_cours_le_salaire_reste_fixe(self):
         etat, _ = calculer_etat_salaire(self.admin, self.periode, self.user)
         self.assertEqual(etat.salaire_base, Decimal('1000000.00'))

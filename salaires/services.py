@@ -193,16 +193,19 @@ def affectations_de_la_periode(enseignant, periode):
     )
 
 
-def heures_prevues_par_affectation(enseignant, periode):
+def heures_prevues_par_affectation(enseignant, periode, avec_prorata=True):
     premier_jour, dernier_jour = bornes_periode(periode)
     jours_periode = Decimal((dernier_jour - premier_jour).days + 1)
     lignes = []
 
     for affectation in affectations_de_la_periode(enseignant, periode):
-        debut = max(premier_jour, affectation.date_debut)
-        fin = min(dernier_jour, affectation.date_fin or dernier_jour)
-        jours_couverts = Decimal((fin - debut).days + 1)
-        prorata = jours_couverts / jours_periode
+        if avec_prorata:
+            debut = max(premier_jour, affectation.date_debut)
+            fin = min(dernier_jour, affectation.date_fin or dernier_jour)
+            jours_couverts = Decimal((fin - debut).days + 1)
+            prorata = jours_couverts / jours_periode
+        else:
+            prorata = Decimal('1')
         heures_prevues = (
             (affectation.heures_par_semaine or Decimal('0'))
             * periode.nombre_semaines
@@ -247,14 +250,14 @@ def lignes_cours_administrateur(enseignant, periode, etat=None):
     """Cours d'un administrateur : ``[(affectation, heures, taux, montant)]``.
 
     Les heures sont celles prévues par l'affectation (heures par semaine ×
-    semaines de la période, au prorata des dates) ; le montant est arrondi
+    semaines de la période, sans prorata des dates) ; le montant est arrondi
     comme sur la ligne de détail enregistrée.
     """
     if enseignant.type_enseignant != TypeEnseignant.ADMINISTRATEUR:
         return []
     lignes = []
     for affectation, heures_prevues in heures_prevues_par_affectation(
-        enseignant, periode
+        enseignant, periode, avec_prorata=False
     ):
         corrections = etat.heures_cours_corrigees if etat is not None else {}
         heures = arrondir_heures(corrections.get(str(affectation.pk), heures_prevues))
