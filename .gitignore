@@ -114,3 +114,6 @@ iscc_log*.txt
 /livrables/
 /logistique-site/
 build_cahier_charges.py
+
+# Fichiers d activation .cmd envoyes aux clients (contiennent une licence)
+activations_clients/

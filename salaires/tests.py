@@ -287,6 +287,23 @@ class MoteurPaieTests(TestCase):
         self.assertEqual(etat.mode_calcul_heures, ModeCalculHoraire.MENSUEL)
         self.assertEqual(etat.salaire_base, Decimal('755000.00'))
 
+    def test_horaire_tous_cycles_quarante_heures_a_quatorze_mille(self):
+        enseignant = self.creer_secondaire(taux='14000')
+        enseignant.mode_calcul_horaire = ModeCalculHoraire.MENSUEL
+        enseignant.heures_mensuelles = Decimal('40')
+        enseignant.save()
+        for nom, niveau in [('CP', 'PRIMAIRE_1'), ('PS', 'PETITE_SECTION')]:
+            classe = Classe.objects.create(
+                ecole=self.ecole, nom=nom, niveau=niveau, annee_scolaire='2025-2026',
+            )
+            self.affecter(enseignant, classe, '3')
+        self.affecter(enseignant, self.classe_a, '4')
+        etat, _ = calculer_etat_salaire_reel(enseignant, self.periode, self.user)
+        self.assertEqual(etat.salaire_base, Decimal('560000.00'))
+        self.assertEqual(etat.details_heures.count(), 3)
+        self.assertEqual(sum(d.heures_realisees for d in etat.details_heures.all()), Decimal('40'))
+        self.assertEqual(sum(d.montant for d in etat.details_heures.all()), Decimal('560000'))
+
     def test_mode_mensuel_ignore_les_pointages_pour_eviter_le_double_compte(self):
         enseignant = self.creer_secondaire()
         enseignant.mode_calcul_horaire = ModeCalculHoraire.MENSUEL
@@ -355,7 +372,7 @@ class MoteurPaieTests(TestCase):
         self.assertEqual(etat.taux_horaire_applique, Decimal('12000.00'))
         self.assertEqual(etat.salaire_base, Decimal('510000.00'))
 
-    def test_pointages_calculent_heures_et_jours_et_bloquent_saisie_heures(self):
+    def test_heures_corrigees_prioritaires_sur_pointages_et_conservees(self):
         enseignant = self.creer_secondaire()
         self.pointer(enseignant, [1, 2, 3])
         PresenceEnseignant.objects.create(
@@ -385,10 +402,14 @@ class MoteurPaieTests(TestCase):
 
         self.assertEqual(response.status_code, 302)
         etat.refresh_from_db()
-        self.assertEqual(etat.total_heures, Decimal('24.00'))
+        self.assertEqual(etat.total_heures, Decimal('99.00'))
         self.assertEqual(etat.taux_horaire_applique, Decimal('12500.00'))
-        self.assertEqual(etat.salaire_base, Decimal('300000.00'))
-        self.assertEqual(etat.mode_calcul_heures, ModeCalculHoraire.POINTAGE)
+        self.assertEqual(etat.salaire_base, Decimal('1237500.00'))
+        self.assertEqual(etat.mode_calcul_heures, SourceHeuresSalaire.SAISIE)
+        calculer_etat_salaire_reel(enseignant, self.periode, self.user)
+        etat.refresh_from_db()
+        self.assertEqual(etat.total_heures, Decimal('99.00'))
+        self.assertEqual(etat.salaire_net, Decimal('1237500.00'))
 
         response = self.client.get(
             reverse('salaires:fiche_paie_pdf', args=[etat.id])

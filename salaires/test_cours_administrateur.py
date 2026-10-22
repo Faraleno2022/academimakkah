@@ -87,6 +87,18 @@ class CoursAdministrateurTests(TestCase):
             charge_ou_fonction(self.admin, self.periode), 'Censeur (cours : Maths/PC)'
         )
 
+    def test_heures_sans_prorata_de_la_date_de_debut(self):
+        affectation = self.affecter(self.classe_a, '8', '13500')
+        affectation.date_debut = date(2026, 7, 5)
+        affectation.save()
+
+        etat, _ = calculer_etat_salaire(self.admin, self.periode, self.user)
+
+        # 8 h × 4 semaines, même si l'affectation commence le 5 du mois
+        detail = etat.details_heures.get()
+        self.assertEqual(detail.heures_realisees, Decimal('32.00'))
+        self.assertEqual(etat.salaire_base, Decimal('1432000.00'))
+
     def test_sans_cours_le_salaire_reste_fixe(self):
         etat, _ = calculer_etat_salaire(self.admin, self.periode, self.user)
         self.assertEqual(etat.salaire_base, Decimal('1000000.00'))
@@ -100,9 +112,36 @@ class CoursAdministrateurTests(TestCase):
             )
         self.assertIn('taux_horaire', erreur.exception.message_dict)
 
-    def test_classe_du_primaire_refusee(self):
-        with self.assertRaises(ValidationError):
-            self.affecter(self.classe_primaire, '3', '10000')
+    def test_cours_primaire_et_maternelle_compris_dans_le_bulletin(self):
+        maternelle = Classe.objects.create(
+            ecole=self.ecole, nom='Petite section', niveau='PETITE_SECTION',
+            annee_scolaire='2025-2026',
+        )
+        self.affecter(self.classe_primaire, '3', '14000')
+        self.affecter(maternelle, '2', '14000')
+        self.affecter(self.classe_a, '5', '14000')
+        etat, _ = calculer_etat_salaire(self.admin, self.periode, self.user)
+        self.assertEqual(etat.salaire_base, Decimal('1560000.00'))
+        self.assertEqual(etat.details_heures.count(), 3)
+
+    def test_correction_heures_cours_conservee_apres_recalcul(self):
+        affectation = self.affecter(self.classe_primaire, '3', '14000')
+        etat, _ = calculer_etat_salaire(self.admin, self.periode, self.user)
+        url = reverse('salaires:ajuster_etat_salaire', args=[etat.pk])
+        response = self.client.get(url)
+        self.assertContains(response, f'cours_heures_{affectation.pk}')
+        for heures, attendu in [('40', '1560000.00'), ('0', '1000000.00')]:
+            response = self.client.post(url, {
+                'salaire_base': '1000000', 'deductions': '0', 'observations': '',
+                f'cours_heures_{affectation.pk}': heures,
+            })
+            self.assertEqual(response.status_code, 302)
+            etat.refresh_from_db()
+            self.assertEqual(etat.salaire_base, Decimal(attendu))
+            calculer_etat_salaire(self.admin, self.periode, self.user)
+            etat.refresh_from_db()
+            self.assertEqual(etat.salaire_net, Decimal(attendu))
+            self.assertEqual(etat.details_heures.get().heures_realisees, Decimal(heures))
 
     def test_taux_ignore_pour_un_enseignant_du_secondaire(self):
         prof = Enseignant.objects.create(
@@ -189,7 +228,7 @@ class CoursAdministrateurTests(TestCase):
 
         page = self.client.get(reverse('salaires:ajuster_etat_salaire', args=[etat.pk]))
         self.assertContains(page, 'Salaire fixe (GNF)')
-        self.assertContains(page, 'Cours au secondaire du mois : 120 000 GNF, ajoutés automatiquement.')
+        self.assertContains(page, 'Cours du mois : 120 000 GNF, ajoutés automatiquement.')
         self.assertContains(page, 'value="1000000.00"')
 
         response = self.client.post(

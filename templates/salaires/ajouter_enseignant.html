@@ -751,11 +751,11 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!administrateur) fonctionInput.value = '';
 
         if (administrateur) {
-            affectationHelp.textContent = "Facultatif : classes du secondaire où il donne des cours. "
-                + "Les heures par semaine × le taux horaire de chaque classe s'ajoutent à son salaire fixe.";
+            affectationHelp.textContent = "Facultatif : cours en maternelle, primaire ou secondaire. "
+                + "Heures par semaine × semaines du mois × taux de chaque classe, ajoutés au salaire fixe.";
         } else {
             affectationHelp.textContent = type === 'SECONDAIRE'
-                ? "Ajoutez une ou plusieurs classes, la matière et les heures hebdomadaires de chaque affectation."
+                ? "Ajoutez les classes de maternelle, primaire ou secondaire, la matière et les heures hebdomadaires. Le total mensuel ou le pointage détermine les heures payées."
                 : "Sélectionnez l'unique classe principale de l'enseignant.";
         }
 
@@ -776,7 +776,7 @@ document.addEventListener('DOMContentLoaded', function() {
             row.querySelectorAll('.classe-label').forEach((label) => {
                 label.textContent = classeUnique
                     ? 'Classe principale'
-                    : (administrateur ? 'Classe (cours au secondaire)' : 'Classe affectée');
+                    : (administrateur ? 'Classe (cours à l’heure)' : 'Classe affectée');
             });
 
             if (suppression && !afficherLigne && row.dataset.existing === 'true') {

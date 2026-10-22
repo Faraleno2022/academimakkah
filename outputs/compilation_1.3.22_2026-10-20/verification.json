@@ -1,0 +1,30 @@
+{
+  "version": "1.3.22",
+  "images_conformes": {
+    "static\\images\\optimized\\ecole.webp": true,
+    "static\\images\\optimized\\carte1.webp": true,
+    "static\\images\\optimized\\carte2.webp": true,
+    "staticfiles\\images\\optimized\\ecole.webp": true,
+    "staticfiles\\images\\optimized\\carte1.webp": true,
+    "staticfiles\\images\\optimized\\carte2.webp": true
+  },
+  "templates_conformes": true,
+  "integrite": true,
+  "donnees_client_exclues": true,
+  "fichiers_prives_inchanges": true,
+  "tests_updater": 7,
+  "executable_sha256": "d3b2ba349cb8ce3ea77802a763c73d7f57eb934fb6afcc21e7b083347f5da973",
+  "source_commit": "120a67b7",
+  "modifications_locales_incluses": [
+    "app_version.py",
+    "installer_myschool.iss"
+  ],
+  "controle_demarrage_code": 0,
+  "construction_pyinstaller": true,
+  "construction_inno_setup": true,
+  "installateur": "Output\\MySchoolGN_Setup_v1.3.22.exe",
+  "installateur_octets": 474727905,
+  "installateur_sha256": "47a9bc6023cfb6029eb7e63d7d8b9b4cf9c17b989fc75188820c7b8f1c3b9f2e",
+  "distribution_precedente_conservee": "dist/MySchoolGN_avant_recompilation_20261020",
+  "publication_github_effectuee": false
+}
