@@ -96,9 +96,22 @@
     <div class="card">
         <div class="card-header d-flex justify-content-between align-items-center">
             <h5 class="mb-0">Pointage du {{ date_pointage_obj|date:"d/m/Y" }}</h5>
-            <span class="badge bg-info">{{ mois_courant }}</span>
+            <div>
+                {% if stats_jour.pointes %}
+                <button type="submit" form="form-annuler-pointage" name="tout" value="1"
+                        class="btn btn-sm btn-outline-danger me-2"
+                        onclick="return confirm('Annuler tout le pointage du {{ date_pointage_obj|date:"d/m/Y" }} ({{ stats_jour.pointes }} enseignant(s)) ? Les salaires horaires non validés seront recalculés.');">
+                    <i class="fas fa-undo"></i> Annuler le pointage du jour
+                </button>
+                {% endif %}
+                <span class="badge bg-info">{{ mois_courant }}</span>
+            </div>
         </div>
         <div class="card-body">
+            <form method="post" action="{% url 'salaires:annuler_pointage' %}" id="form-annuler-pointage">
+                {% csrf_token %}
+                <input type="hidden" name="date" value="{{ date_pointage }}">
+            </form>
             <form method="post">
                 {% csrf_token %}
                 
@@ -138,6 +151,7 @@
                                 <th width="100" class="text-center">Cumul Mois</th>
                                 <th width="60">Just.</th>
                                 <th>Observations</th>
+                                <th width="60"></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -202,11 +216,20 @@
                                            placeholder="Obs..."
                                            value="{% if presence %}{{ presence.observations }}{% endif %}">
                                 </td>
+                                <td class="text-center">
+                                    {% if presence %}
+                                    <button type="submit" form="form-annuler-pointage" name="enseignants" value="{{ ens.id }}"
+                                            class="btn btn-sm btn-outline-danger" title="Annuler ce pointage"
+                                            onclick="return confirm('Annuler le pointage de {{ ens.nom|escapejs }} {{ ens.prenoms|escapejs }} pour ce jour ?');">
+                                        <i class="fas fa-undo"></i>
+                                    </button>
+                                    {% endif %}
+                                </td>
                             </tr>
                             {% endwith %}
                             {% empty %}
                             <tr>
-                                <td colspan="10" class="text-center text-muted">
+                                <td colspan="11" class="text-center text-muted">
                                     Aucun enseignant actif trouvé.
                                 </td>
                             </tr>

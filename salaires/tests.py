@@ -439,6 +439,153 @@ class MoteurPaieTests(TestCase):
         self.assertEqual(etat.total_heures, Decimal('8.50'))
         self.assertEqual(etat.salaire_base, Decimal('85000.00'))
 
+    def test_annuler_pointage_d_un_enseignant_recalcule_le_salaire(self):
+        enseignant = self.creer_secondaire()
+        autre = self.creer_secondaire(nom='Autre')
+        self.pointer(enseignant, [1, 2])
+        self.pointer(autre, [1])
+        self.calculer()
+
+        with patch(
+            'salaires.views_presences.user_school', return_value=self.ecole
+        ):
+            page = self.client.get(
+                reverse('salaires:pointer_presence') + '?date=2026-07-01'
+            )
+            self.assertContains(page, 'Annuler le pointage du jour')
+            self.assertContains(
+                page, f'name="enseignants" value="{enseignant.id}"\n', count=1
+            )
+            response = self.client.post(
+                reverse('salaires:annuler_pointage'),
+                {'date': '2026-07-01', 'enseignants': [str(enseignant.id)]},
+            )
+
+        self.assertRedirects(
+            response,
+            reverse('salaires:pointer_presence') + '?date=2026-07-01',
+            fetch_redirect_response=False,
+        )
+        self.assertFalse(
+            PresenceEnseignant.objects.filter(
+                enseignant=enseignant, date=date(2026, 7, 1)
+            ).exists()
+        )
+        self.assertTrue(
+            PresenceEnseignant.objects.filter(
+                enseignant=enseignant, date=date(2026, 7, 2)
+            ).exists()
+        )
+        self.assertTrue(
+            PresenceEnseignant.objects.filter(
+                enseignant=autre, date=date(2026, 7, 1)
+            ).exists()
+        )
+        etat = EtatSalaire.objects.get(enseignant=enseignant, periode=self.periode)
+        self.assertEqual(etat.total_heures, Decimal('8.00'))
+
+    def test_annuler_tout_le_pointage_du_jour_reste_dans_l_ecole(self):
+        enseignant = self.creer_secondaire()
+        autre = self.creer_secondaire(nom='Autre')
+        self.pointer(enseignant, [1])
+        self.pointer(autre, [1])
+        autre_ecole = Ecole.objects.create(
+            nom='Autre école',
+            adresse='Kindia',
+            telephone='+224610000001',
+            directeur='Direction',
+        )
+        externe = Enseignant.objects.create(
+            nom='Externe',
+            prenoms='Test',
+            ecole=autre_ecole,
+            type_enseignant=TypeEnseignant.PRIMAIRE,
+            statut='ACTIF',
+            salaire_fixe=Decimal('500000'),
+            date_embauche=date(2025, 1, 1),
+            cree_par=self.user,
+        )
+        PresenceEnseignant.objects.create(
+            enseignant=externe, date=date(2026, 7, 1), statut='PRESENT',
+            heures_travaillees=Decimal('8'), pointe_par=self.user,
+        )
+
+        with patch(
+            'salaires.views_presences.user_school', return_value=self.ecole
+        ):
+            self.client.post(
+                reverse('salaires:annuler_pointage'),
+                {'date': '2026-07-01', 'tout': '1'},
+            )
+            # Une requête GET ne doit rien supprimer.
+            self.assertEqual(
+                self.client.get(reverse('salaires:annuler_pointage')).status_code,
+                405,
+            )
+
+        self.assertFalse(
+            PresenceEnseignant.objects.filter(
+                enseignant__ecole=self.ecole, date=date(2026, 7, 1)
+            ).exists()
+        )
+        self.assertTrue(
+            PresenceEnseignant.objects.filter(enseignant=externe).exists()
+        )
+
+    def test_salaire_valide_non_paye_peut_etre_modifie(self):
+        enseignant = self.creer_fixe()
+        self.calculer()
+        etat = EtatSalaire.objects.get(enseignant=enseignant, periode=self.periode)
+        self.client.post(reverse('salaires:valider_etat_salaire', args=[etat.id]))
+        etat.refresh_from_db()
+        self.assertTrue(etat.valide)
+
+        liste = self.client.get(reverse('salaires:etats_salaire'))
+        self.assertContains(liste, 'La modification annule la validation')
+
+        page = self.client.get(
+            reverse('salaires:ajuster_etat_salaire', args=[etat.id])
+        )
+        self.assertContains(page, 'annule sa validation')
+
+        response = self.client.post(
+            reverse('salaires:ajuster_etat_salaire', args=[etat.id]),
+            {
+                'salaire_base': '1200000',
+                'primes': '0',
+                'deductions': '0',
+                'observations': 'Correction après validation',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        etat.refresh_from_db()
+        self.assertEqual(etat.salaire_base, Decimal('1200000.00'))
+        self.assertFalse(etat.valide)
+        self.assertIsNone(etat.valide_par)
+        self.assertIsNone(etat.date_validation)
+
+    def test_salaire_paye_reste_non_modifiable(self):
+        enseignant = self.creer_fixe()
+        self.calculer()
+        etat = EtatSalaire.objects.get(enseignant=enseignant, periode=self.periode)
+        EtatSalaire.objects.filter(pk=etat.pk).update(valide=True, paye=True)
+
+        self.client.post(
+            reverse('salaires:ajuster_etat_salaire', args=[etat.id]),
+            {
+                'salaire_base': '1200000',
+                'primes': '0',
+                'deductions': '0',
+                'observations': '',
+            },
+        )
+
+        etat.refresh_from_db()
+        self.assertEqual(etat.salaire_base, Decimal('1000000.00'))
+        self.assertTrue(etat.paye)
+        self.assertTrue(etat.valide)
+
     def test_repartition_respecte_les_heures_hebdomadaires(self):
         enseignant = self.creer_secondaire()
         self.affecter(enseignant, self.classe_a, '10')

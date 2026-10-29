@@ -15,6 +15,13 @@
                     </div>
                 </div>
                 <div class="card-body">
+                    {% if etat.valide %}
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle me-1"></i>
+                        Ce salaire est déjà validé. Enregistrer une modification
+                        <strong>annule sa validation</strong> : il faudra le valider de nouveau avant paiement.
+                    </div>
+                    {% endif %}
                     <div class="alert alert-light border d-flex justify-content-between">
                         <span>Jours de présence enregistrés</span>
                         <strong>{{ etat.nombre_jours_presence }} jour{{ etat.nombre_jours_presence|pluralize }}</strong>
