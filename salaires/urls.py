@@ -63,6 +63,7 @@ urlpatterns = [
     # Pointage de présence
     path('presences/', views.liste_presences, name='liste_presences'),
     path('presences/pointer/', views.pointer_presence, name='pointer_presence'),
+    path('presences/annuler/', views.annuler_pointage, name='annuler_pointage'),
     path('presences/<int:presence_id>/modifier/', views.modifier_presence, name='modifier_presence'),
     path('presences/<int:presence_id>/supprimer/', views.supprimer_presence, name='supprimer_presence'),
     path('presences/rapport/', views.rapport_presences, name='rapport_presences'),

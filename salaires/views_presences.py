@@ -5,7 +5,9 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q, Count, Sum
 from django.http import HttpResponse, JsonResponse
+from django.urls import reverse
 from django.utils import timezone
+from django.views.decorators.http import require_POST
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 import csv
@@ -369,6 +371,68 @@ def supprimer_presence(request, presence_id):
     }
     
     return render(request, 'salaires/presences/supprimer.html', context)
+
+
+@login_required
+@require_POST
+def annuler_pointage(request):
+    """Annuler le pointage d'une date : un enseignant, une sélection ou toute la journée"""
+    user_school_obj = user_school(request.user)
+    date_pointage_str = request.POST.get('date', '')
+
+    try:
+        date_pointage = datetime.strptime(date_pointage_str, '%Y-%m-%d').date()
+    except ValueError:
+        messages.error(request, "Format de date invalide.")
+        return redirect('salaires:pointer_presence')
+
+    retour = f"{reverse('salaires:pointer_presence')}?date={date_pointage_str}"
+
+    presences = PresenceEnseignant.objects.filter(
+        enseignant__ecole=user_school_obj, date=date_pointage
+    ).select_related('enseignant')
+
+    if request.POST.get('tout') != '1':
+        try:
+            ids = [int(value) for value in request.POST.getlist('enseignants')]
+        except (TypeError, ValueError):
+            messages.error(request, "Sélection d'enseignants invalide.")
+            return redirect(retour)
+        if not ids:
+            messages.error(request, "Aucun pointage sélectionné à annuler.")
+            return redirect(retour)
+        presences = presences.filter(enseignant_id__in=ids)
+
+    salaires_recalcules = 0
+    with transaction.atomic():
+        enseignants = {
+            presence.enseignant_id: presence.enseignant
+            for presence in presences.select_for_update()
+        }
+        if not enseignants:
+            messages.warning(request, "Aucun pointage à annuler pour cette date.")
+            return redirect(retour)
+
+        nombre_annules = len(enseignants)
+        presences.delete()
+
+        for enseignant in enseignants.values():
+            if (
+                enseignant.est_taux_horaire
+                and enseignant.mode_calcul_horaire
+                == ModeCalculHoraire.POINTAGE
+            ):
+                _, modifie = recalculer_salaire_ouvert_pour_date(
+                    enseignant, date_pointage, request.user
+                )
+                salaires_recalcules += int(modifie)
+
+    messages.success(
+        request,
+        f"{nombre_annules} pointage(s) du {date_pointage.strftime('%d/%m/%Y')} annulé(s). "
+        f"{salaires_recalcules} salaire(s) horaire(s) recalculé(s)."
+    )
+    return redirect(retour)
 
 
 @login_required

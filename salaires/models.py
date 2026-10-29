@@ -966,6 +966,13 @@ class EtatSalaire(SyncTrackedModel):
         """Vérifie si l'état de salaire peut être marqué comme payé"""
         return self.valide and not self.paye
 
+    @property
+    def peut_etre_modifie(self):
+        """Un état, même validé, reste modifiable tant qu'il n'est pas payé
+        et que sa période n'est pas clôturée (la modification annule alors
+        la validation)."""
+        return not self.paye and not self.periode.cloturee
+
 
 class AvanceSalaire(SyncTrackedModel):
     """Somme versée avant la paie et déduite d'une période de salaire."""

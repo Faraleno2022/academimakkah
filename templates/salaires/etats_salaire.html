@@ -422,6 +422,14 @@
                     </form>
                     {% endif %}
                     
+                    {% if etat.valide and etat.peut_etre_modifie %}
+                    <a href="{% url 'salaires:ajuster_etat_salaire' etat.id %}"
+                       class="btn btn-outline-warning btn-action"
+                       title="La modification annule la validation">
+                        <i class="fas fa-edit"></i> Modifier
+                    </a>
+                    {% endif %}
+
                     {% if etat.valide and not etat.paye %}
                     <form method="post" action="{% url 'salaires:marquer_paye' etat.id %}" class="d-inline">
                         {% csrf_token %}

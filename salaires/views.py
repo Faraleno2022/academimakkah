@@ -66,8 +66,8 @@ from ecole_moderne.security_decorators import delete_permission_required, requir
 # Importer les vues de présence
 from .views_presences import (
     liste_presences, pointer_presence, modifier_presence,
-    supprimer_presence, rapport_presences, export_presences_csv,
-    export_presences_excel
+    supprimer_presence, annuler_pointage, rapport_presences,
+    export_presences_csv, export_presences_excel
 )
 
 def _ecole_utilisateur(request):
@@ -1434,15 +1434,19 @@ def calculer_salaires(request, periode_id):
 @login_required
 @require_school_object(model=EtatSalaire, pk_kwarg='etat_id', field_path='periode__ecole')
 def ajuster_etat_salaire(request, etat_id):
-    """Modifier les paramètres d'un salaire avant validation."""
+    """Modifier les paramètres d'un salaire, y compris après validation.
+
+    Un état validé mais non payé peut être corrigé : l'enregistrement annule
+    sa validation, qu'il faudra refaire.
+    """
     etat = get_object_or_404(
         EtatSalaire.objects.select_related('enseignant', 'periode'), id=etat_id
     )
 
-    if etat.valide or etat.periode.cloturee:
+    if not etat.peut_etre_modifie:
         messages.error(
             request,
-            "Un état validé ou appartenant à une période clôturée ne peut plus être ajusté.",
+            "Un état payé ou appartenant à une période clôturée ne peut plus être ajusté.",
         )
         return redirect('salaires:etats_salaire')
 
@@ -1455,9 +1459,14 @@ def ajuster_etat_salaire(request, etat_id):
                     .select_related('enseignant', 'periode')
                     .get(pk=etat.pk)
                 )
-                if etat_verrouille.valide or etat_verrouille.periode.cloturee:
+                if not etat_verrouille.peut_etre_modifie:
                     messages.error(request, "Cet état ne peut plus être ajusté.")
                     return redirect('salaires:etats_salaire')
+
+                etait_valide = etat_verrouille.valide
+                etat_verrouille.valide = False
+                etat_verrouille.valide_par = None
+                etat_verrouille.date_validation = None
 
                 enseignant = etat_verrouille.enseignant
                 periode = etat_verrouille.periode
@@ -1498,10 +1507,17 @@ def ajuster_etat_salaire(request, etat_id):
                 etat_verrouille.save()
                 actualiser_details_heures(etat_verrouille)
 
-            messages.success(
-                request,
-                f"Salaire de {etat.enseignant.nom_complet} mis à jour avant validation.",
-            )
+            if etait_valide:
+                messages.warning(
+                    request,
+                    f"Salaire de {etat.enseignant.nom_complet} modifié : la validation "
+                    "a été annulée, pensez à le valider de nouveau.",
+                )
+            else:
+                messages.success(
+                    request,
+                    f"Salaire de {etat.enseignant.nom_complet} mis à jour avant validation.",
+                )
             return redirect('salaires:etats_salaire')
     else:
         form = EtatSalaireAjustementForm(instance=etat)
