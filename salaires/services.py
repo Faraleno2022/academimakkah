@@ -502,3 +502,36 @@ def recalculer_salaire_ouvert_pour_date(
         return None, False
 
     return calculer_etat_salaire(enseignant, periode, utilisateur)
+
+
+def recalculer_salaire_apres_pointage(enseignant, date_reference, utilisateur):
+    """Recalcule le salaire du mois après l'annulation d'un pointage.
+
+    Un état validé mais non payé est aussi recalculé : sa validation est
+    annulée, il faudra la refaire. Un état payé reste intact. Retourne
+    ``(modifie, validation_annulee)``.
+    """
+    if enseignant.statut != 'ACTIF':
+        return False, False
+    periode = PeriodeSalaire.objects.filter(
+        ecole=enseignant.ecole,
+        mois=date_reference.month,
+        annee=date_reference.year,
+        cloturee=False,
+    ).first()
+    if periode is None or not enseignants_eligibles(periode).filter(
+        pk=enseignant.pk
+    ).exists():
+        return False, False
+
+    etat_valide = EtatSalaire.objects.select_for_update().filter(
+        enseignant=enseignant, periode=periode, valide=True, paye=False,
+    ).first()
+    validation_annulee = etat_valide is not None
+    if validation_annulee:
+        etat_valide.valide = False
+        etat_valide.valide_par = None
+        etat_valide.date_validation = None
+        etat_valide.save()
+    _, modifie = calculer_etat_salaire(enseignant, periode, utilisateur)
+    return modifie, validation_annulee

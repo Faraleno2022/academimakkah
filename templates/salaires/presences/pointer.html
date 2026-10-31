@@ -100,7 +100,7 @@
                 {% if stats_jour.pointes %}
                 <button type="submit" form="form-annuler-pointage" name="tout" value="1"
                         class="btn btn-sm btn-outline-danger me-2"
-                        onclick="return confirm('Annuler tout le pointage du {{ date_pointage_obj|date:"d/m/Y" }} ({{ stats_jour.pointes }} enseignant(s)) ? Les salaires horaires non validés seront recalculés.');">
+                        onclick="return confirm('Annuler tout le pointage du {{ date_pointage_obj|date:"d/m/Y" }} ({{ stats_jour.pointes }} enseignant(s)) ? Les salaires horaires non payés seront recalculés (un salaire validé devra être validé de nouveau).');">
                     <i class="fas fa-undo"></i> Annuler le pointage du jour
                 </button>
                 {% endif %}
