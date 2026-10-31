@@ -16,6 +16,7 @@ from .models import Enseignant, ModeCalculHoraire, PresenceEnseignant
 from .forms import PresenceForm
 from .services import (
     STATUTS_HEURES_PAYEES,
+    recalculer_salaire_apres_pointage,
     recalculer_salaire_ouvert_pour_date,
 )
 from utilisateurs.utils import user_school, user_is_admin
@@ -346,13 +347,13 @@ def supprimer_presence(request, presence_id):
         date_presence = presence.date
         with transaction.atomic():
             presence.delete()
-            salaire_recalcule = False
+            salaire_recalcule = validation_annulee = False
             if (
                 enseignant.est_taux_horaire
                 and enseignant.mode_calcul_horaire
                 == ModeCalculHoraire.POINTAGE
             ):
-                _, salaire_recalcule = recalculer_salaire_ouvert_pour_date(
+                salaire_recalcule, validation_annulee = recalculer_salaire_apres_pointage(
                     enseignant, date_presence, request.user
                 )
         messages.success(
@@ -361,6 +362,11 @@ def supprimer_presence(request, presence_id):
             + (
                 "Le salaire horaire a été recalculé."
                 if salaire_recalcule
+                else ""
+            )
+            + (
+                " Sa validation a été annulée : validez-le de nouveau."
+                if validation_annulee
                 else ""
             )
         )
@@ -403,7 +409,7 @@ def annuler_pointage(request):
             return redirect(retour)
         presences = presences.filter(enseignant_id__in=ids)
 
-    salaires_recalcules = 0
+    salaires_recalcules = validations_annulees = 0
     with transaction.atomic():
         enseignants = {
             presence.enseignant_id: presence.enseignant
@@ -422,15 +428,21 @@ def annuler_pointage(request):
                 and enseignant.mode_calcul_horaire
                 == ModeCalculHoraire.POINTAGE
             ):
-                _, modifie = recalculer_salaire_ouvert_pour_date(
+                modifie, validation_annulee = recalculer_salaire_apres_pointage(
                     enseignant, date_pointage, request.user
                 )
                 salaires_recalcules += int(modifie)
+                validations_annulees += int(validation_annulee)
 
     messages.success(
         request,
         f"{nombre_annules} pointage(s) du {date_pointage.strftime('%d/%m/%Y')} annulé(s). "
         f"{salaires_recalcules} salaire(s) horaire(s) recalculé(s)."
+        + (
+            f" {validations_annulees} salaire(s) déjà validé(s) à valider de nouveau."
+            if validations_annulees
+            else ""
+        )
     )
     return redirect(retour)
 

@@ -766,7 +766,10 @@ class EtatSalaireAjustementForm(forms.ModelForm):
             Decimal('0'),
         )
         deductions = cleaned_data.get('deductions') or Decimal('0')
-        avances = self.instance.avances or Decimal('0')
+        # L'enregistrement reporte les bons d'acompte réels de la période.
+        from .services import total_avances_salaire
+
+        avances = total_avances_salaire(self.instance.enseignant, self.instance.periode)
 
         if deductions + avances > salaire_base + primes:
             self.add_error(

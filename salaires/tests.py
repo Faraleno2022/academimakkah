@@ -586,6 +586,68 @@ class MoteurPaieTests(TestCase):
         self.assertTrue(etat.paye)
         self.assertTrue(etat.valide)
 
+    def test_annuler_paiement_rend_le_salaire_modifiable(self):
+        enseignant = self.creer_fixe()
+        self.calculer()
+        etat = EtatSalaire.objects.get(enseignant=enseignant, periode=self.periode)
+        self.client.post(reverse('salaires:valider_etat_salaire', args=[etat.id]))
+        self.client.post(reverse('salaires:marquer_paye', args=[etat.id]))
+        etat.refresh_from_db()
+        self.assertTrue(etat.paye)
+
+        liste = self.client.get(reverse('salaires:etats_salaire'))
+        self.assertContains(liste, reverse('salaires:annuler_paiement', args=[etat.id]))
+        self.assertEqual(
+            self.client.get(reverse('salaires:annuler_paiement', args=[etat.id])).status_code,
+            405,
+        )
+
+        self.client.post(reverse('salaires:annuler_paiement', args=[etat.id]))
+        etat.refresh_from_db()
+        self.assertFalse(etat.paye)
+        self.assertIsNone(etat.date_paiement)
+        self.assertTrue(etat.valide)
+        self.assertTrue(etat.peut_etre_modifie)
+
+    def test_annuler_paiement_refuse_sur_periode_cloturee(self):
+        enseignant = self.creer_fixe()
+        self.calculer()
+        etat = EtatSalaire.objects.get(enseignant=enseignant, periode=self.periode)
+        EtatSalaire.objects.filter(pk=etat.pk).update(valide=True, paye=True)
+        PeriodeSalaire.objects.filter(pk=self.periode.pk).update(cloturee=True)
+
+        self.client.post(reverse('salaires:annuler_paiement', args=[etat.id]))
+        etat.refresh_from_db()
+        self.assertTrue(etat.paye)
+
+    def test_annuler_pointage_recalcule_un_salaire_valide_non_paye(self):
+        enseignant = self.creer_secondaire()
+        deja_paye = self.creer_secondaire(nom='Paye')
+        self.pointer(enseignant, [1, 2])
+        self.pointer(deja_paye, [1, 2])
+        self.calculer()
+        etat = EtatSalaire.objects.get(enseignant=enseignant, periode=self.periode)
+        self.client.post(reverse('salaires:valider_etat_salaire', args=[etat.id]))
+        etat_paye = EtatSalaire.objects.get(enseignant=deja_paye, periode=self.periode)
+        EtatSalaire.objects.filter(pk=etat_paye.pk).update(valide=True, paye=True)
+
+        with patch(
+            'salaires.views_presences.user_school', return_value=self.ecole
+        ):
+            self.client.post(
+                reverse('salaires:annuler_pointage'),
+                {'date': '2026-07-01', 'tout': '1'},
+            )
+
+        etat.refresh_from_db()
+        self.assertEqual(etat.total_heures, Decimal('8.00'))
+        self.assertFalse(etat.valide)
+        self.assertIsNone(etat.valide_par)
+        # Un salaire payé n'est jamais recalculé.
+        etat_paye.refresh_from_db()
+        self.assertEqual(etat_paye.total_heures, Decimal('16.00'))
+        self.assertTrue(etat_paye.paye)
+
     def test_repartition_respecte_les_heures_hebdomadaires(self):
         enseignant = self.creer_secondaire()
         self.affecter(enseignant, self.classe_a, '10')
@@ -1573,6 +1635,80 @@ class ClasseurPaieTests(TestCase):
         self.assertEqual(self.client.get(
             reverse('salaires:document_paie_pdf', args=[self.periode.pk, 'etat'])
         ).status_code, 404)
+
+    def test_masse_salariale_reprend_tous_les_acomptes_et_rubriques(self):
+        import io
+
+        import pypdf
+
+        from .documents_paie import totaux_par_groupe
+
+        maitre = self.creer_maitre()
+        professeur = self.creer_professeur()
+        for personne in (maitre, professeur):
+            calculer_etat_salaire_reel(personne, self.periode, self.user)
+        AvanceSalaire.objects.create(
+            enseignant=professeur, periode=self.periode,
+            montant=Decimal('100000'), cree_par=self.user,
+        )
+        AvanceSalaire.objects.create(
+            enseignant=maitre, periode=self.periode,
+            montant=Decimal('50000'), cree_par=self.user,
+        )
+        # Acompte d'un maître dont l'état n'est pas encore calculé.
+        nouveau = Enseignant.objects.create(
+            nom='KOLIE', prenoms='Marie', ecole=self.ecole,
+            type_enseignant=TypeEnseignant.MATERNELLE,
+            salaire_fixe=Decimal('400000'), date_embauche=date(2025, 9, 1),
+            cree_par=self.user,
+        )
+        AvanceSalaire.objects.create(
+            enseignant=nouveau, periode=self.periode,
+            montant=Decimal('20000'), cree_par=self.user,
+        )
+        # État reçu d'un autre poste sans le dernier acompte.
+        EtatSalaire.objects.filter(enseignant=professeur).update(avances=0)
+
+        lignes, _ = totaux_par_groupe(self.periode)
+        par_groupe = {ligne['groupe']: ligne for ligne in lignes}
+        self.assertEqual(
+            [ligne['groupe'] for ligne in lignes],
+            ['DIRECTION', 'PRIMAIRE', 'SECONDAIRE', 'APPUI'],
+        )
+        self.assertEqual(par_groupe['DIRECTION']['effectif'], 0)
+        primaire = par_groupe['PRIMAIRE']
+        self.assertEqual(primaire['effectif'], 2)
+        self.assertEqual(primaire['brut'], Decimal('847500.00'))
+        self.assertEqual(primaire['avances'], Decimal('70000'))
+        self.assertEqual(primaire['net'], Decimal('777500.00'))
+        secondaire = par_groupe['SECONDAIRE']
+        self.assertEqual(secondaire['brut'], Decimal('513000.00'))
+        self.assertEqual(secondaire['avances'], Decimal('100000'))
+        self.assertEqual(secondaire['net'], Decimal('413000.00'))
+
+        response = self.client.get(
+            reverse('salaires:document_paie_pdf', args=[self.periode.pk, 'masse'])
+        )
+        texte = ' '.join(
+            page.extract_text()
+            for page in pypdf.PdfReader(io.BytesIO(response.content)).pages
+        )
+        self.assertIn('Marie KOLIE', texte)
+        self.assertIn('Acomptes non report', texte)
+
+        # Enregistrer l'état depuis « Modifier » reporte les bons réels.
+        etat = EtatSalaire.objects.get(enseignant=professeur)
+        form = EtatSalaireAjustementForm(instance=etat)
+        donnees = {
+            nom: champ.value() for nom, champ in
+            ((nom, form[nom]) for nom in form.fields)
+            if champ.value() is not None
+        }
+        self.client.post(
+            reverse('salaires:ajuster_etat_salaire', args=[etat.pk]), donnees,
+        )
+        etat.refresh_from_db()
+        self.assertEqual(etat.avances, Decimal('100000.00'))
 
     def test_pages_affichent_primes_detaillees_et_documents(self):
         maitre = self.creer_maitre()

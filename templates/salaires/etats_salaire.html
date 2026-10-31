@@ -439,6 +439,16 @@
                         </button>
                     </form>
                     {% endif %}
+
+                    {% if etat.paye and not etat.periode.cloturee %}
+                    <form method="post" action="{% url 'salaires:annuler_paiement' etat.id %}" class="d-inline">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-danger btn-action"
+                                onclick="return confirm('Annuler le paiement de ce salaire ? Il redeviendra « validé, non payé » et pourra être modifié.')">
+                            <i class="fas fa-undo"></i> Annuler le paiement
+                        </button>
+                    </form>
+                    {% endif %}
                     
                     <a href="{% url 'salaires:detail_enseignant' etat.enseignant.id %}" 
                        class="btn btn-outline-primary btn-action">

@@ -399,23 +399,90 @@ def etat_salaire_groupe_pdf(reponse, periode, groupe):
 # Masse salariale
 # --------------------------------------------------------------------------
 
+def acomptes_par_enseignant(periode):
+    """Total des bons d'acompte de la période, par travailleur."""
+    acomptes = {}
+    personnes = {}
+    for avance in AvanceSalaire.objects.filter(periode=periode).select_related('enseignant'):
+        acomptes[avance.enseignant_id] = acomptes.get(avance.enseignant_id, ZERO) + avance.montant
+        personnes[avance.enseignant_id] = avance.enseignant
+    return acomptes, personnes
+
+
 def totaux_par_groupe(periode):
-    totaux = []
+    """Une ligne par rubrique, même vide, comme la feuille du classeur.
+
+    Les acomptes sont ceux des bons enregistrés (feuille « ACOMPTE PERSONNEL »),
+    y compris pour un travailleur dont l'état n'est pas encore calculé : la
+    synthèse ne dépend pas d'un report éventuellement en retard sur l'état.
+    """
     etats = etats_de_la_periode(periode)
+    acomptes, personnes = acomptes_par_enseignant(periode)
+    for etat in etats:
+        personnes[etat.enseignant_id] = etat.enseignant
+
+    totaux = []
     for groupe in ORDRE_GROUPES:
         du_groupe = [etat for etat in etats if etat.enseignant.groupe_paie == groupe]
-        if not du_groupe:
-            continue
+        ids = [pk for pk, enseignant in personnes.items() if enseignant.groupe_paie == groupe]
+        brut = sum((etat.salaire_brut for etat in du_groupe), ZERO)
+        avances = sum((acomptes.get(pk, ZERO) for pk in ids), ZERO)
+        retenues = sum((etat.deductions or ZERO for etat in du_groupe), ZERO)
         totaux.append({
             'groupe': groupe,
             'libelle': GroupePaie(groupe).label,
-            'effectif': len(du_groupe),
-            'brut': sum((etat.salaire_brut for etat in du_groupe), ZERO),
-            'avances': sum((etat.avances or ZERO for etat in du_groupe), ZERO),
-            'retenues': sum((etat.deductions or ZERO for etat in du_groupe), ZERO),
-            'net': sum((etat.salaire_net or ZERO for etat in du_groupe), ZERO),
+            'effectif': len(ids),
+            'brut': brut,
+            'avances': avances,
+            'retenues': retenues,
+            'net': brut - avances - retenues,
         })
     return totaux, etats
+
+
+def avertissements_masse(periode, etats):
+    """Écarts qui rendraient la masse salariale différente des états."""
+    from .services import enseignants_eligibles
+
+    acomptes, personnes = acomptes_par_enseignant(periode)
+    avec_etat = {etat.enseignant_id for etat in etats}
+    sans_etat = [
+        enseignant for enseignant in enseignants_eligibles(periode)
+        if enseignant.pk not in avec_etat
+    ]
+    sans_etat += [
+        enseignant for pk, enseignant in personnes.items()
+        if pk not in avec_etat and enseignant not in sans_etat
+    ]
+    non_reportes = [
+        etat for etat in etats
+        if (etat.avances or ZERO) != acomptes.get(etat.enseignant_id, ZERO)
+    ]
+
+    messages = []
+    if sans_etat:
+        noms = ', '.join(nom_document(enseignant) for enseignant in sans_etat[:8])
+        if len(sans_etat) > 8:
+            noms += '…'
+        messages.append(
+            f"{len(sans_etat)} travailleur(s) sans état de salaire calculé "
+            f"({noms}) : lancez « Calculer les salaires »."
+        )
+    if non_reportes:
+        noms = ', '.join(nom_document(etat.enseignant) for etat in non_reportes[:8])
+        messages.append(
+            f"Acomptes non reportés sur {len(non_reportes)} état(s) ({noms}) : "
+            "le net de ces états ne tient pas compte de tous les bons. Relancez "
+            "« Calculer les salaires », ou ouvrez « Modifier » puis enregistrez "
+            "pour un état validé."
+        )
+    elements = []
+    for message in messages:
+        elements += [
+            Paragraph(f"<font color='#b45309'>{escape(message)}</font>", STYLE_TEXTE),
+            Spacer(1, 0.15 * cm),
+        ]
+    return elements
 
 
 def masse_salariale_pdf(reponse, periode):
@@ -451,6 +518,7 @@ def masse_salariale_pdf(reponse, periode):
     elements = [entete_ecole(periode, largeur)]
     elements += titre_document('MASSE SALARIALE', periode)
     elements += avertissement_brouillon(etats)
+    elements += avertissements_masse(periode, etats)
     elements += [
         table,
         Spacer(1, 0.4 * cm),

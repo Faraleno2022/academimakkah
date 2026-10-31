@@ -57,6 +57,7 @@ from .services import (
     parametres_herites,
     pointages_existent,
     recalculer_salaire_ouvert_pour_date,
+    total_avances_salaire,
 )
 from eleves.models import Ecole, Classe
 from utilisateurs.utils import user_is_admin, user_school
@@ -1499,6 +1500,7 @@ def ajuster_etat_salaire(request, etat_id):
                 ):
                     setattr(etat_verrouille, champ, form.cleaned_data[champ])
                 etat_verrouille.deductions = form.cleaned_data['deductions']
+                etat_verrouille.avances = total_avances_salaire(enseignant, periode)
                 etat_verrouille.observations = form.cleaned_data['observations']
                 etat_verrouille.nombre_jours_presence = nombre_jours_presence(
                     enseignant, periode
@@ -1584,6 +1586,42 @@ def marquer_paye(request, etat_id):
     messages.success(
         request,
         f"État de salaire de {etat.enseignant.nom_complet} marqué comme payé.",
+    )
+
+    return redirect('salaires:etats_salaire')
+
+
+@login_required
+@require_POST
+@require_school_object(model=EtatSalaire, pk_kwarg='etat_id', field_path='periode__ecole')
+def annuler_paiement(request, etat_id):
+    """Remettre un salaire payé à l'état « validé, non payé » pour le corriger.
+
+    Impossible sur une période clôturée : sa paie est définitive.
+    """
+    with transaction.atomic():
+        etat = get_object_or_404(
+            EtatSalaire.objects.select_for_update().select_related(
+                'enseignant', 'periode'
+            ),
+            id=etat_id,
+        )
+
+        if not etat.paye or etat.periode.cloturee:
+            messages.error(
+                request,
+                "Seul un salaire payé d'une période non clôturée peut voir son paiement annulé.",
+            )
+            return redirect('salaires:etats_salaire')
+
+        etat.paye = False
+        etat.date_paiement = None
+        etat.save()
+
+    messages.warning(
+        request,
+        f"Paiement du salaire de {etat.enseignant.nom_complet} annulé : il est de "
+        "nouveau « validé, non payé » et peut être modifié.",
     )
 
     return redirect('salaires:etats_salaire')
