@@ -73,8 +73,10 @@ Le systeme supporte plusieurs etablissements (multi-ecoles), gere les cycles mat
 - Journal d'activite (audit log complet)
 - Rapports statistiques exportables
 
-### Chatbot IA
-- Assistant integre via l'API OpenAI pour aider les utilisateurs
+### Tests d'accueil
+- Classes de test, matieres et coefficients, notes des candidats
+- Moyennes, classement, admission, exports PDF/Excel et bulletins
+- Notes independantes : jamais comptees dans les moyennes mensuelles ni les compositions
 
 ---
 
@@ -88,7 +90,6 @@ Le systeme supporte plusieurs etablissements (multi-ecoles), gere les cycles mat
 | Generation PDF | ReportLab 4.4.3 + WeasyPrint 63.1 |
 | Export Excel | OpenPyXL 3.1.5 + Pandas |
 | SMS | Twilio 9.8.1 (optionnel) |
-| Chatbot | OpenAI API |
 | Distribution desktop | PyInstaller |
 | Traitement images | Pillow 11.3.0 |
 
@@ -144,7 +145,7 @@ GS_hadja_kanfing_dian--main/
 |-- administration/         # Module administration et configuration
 |-- utilisateurs/           # Module utilisateurs, roles et authentification
 |-- rapports/               # Module rapports et statistiques
-|-- chatbot/                # Module assistant IA
+|-- examen_accueil/         # Module tests d'accueil (tests d'entree)
 |-- comptes/                # Module comptabilite
 |-- bus/                    # Gestion transport scolaire
 |
@@ -176,7 +177,7 @@ Voir [docs/MODULES.md](docs/MODULES.md) pour la description detaillee de chaque 
 | Administration | `administration` | Config ecole, parametres |
 | Utilisateurs | `utilisateurs` | Comptes, roles, audit |
 | Rapports | `rapports` | Exports, statistiques |
-| Chatbot | `chatbot` | Assistant IA |
+| Tests d'accueil | `examen_accueil` | Tests d'entree, classement, bulletins |
 
 ---
 
@@ -232,7 +233,6 @@ TWILIO_ENABLED=false
 | [docs/ROLES_PERMISSIONS.md](docs/ROLES_PERMISSIONS.md) | Systeme de roles et permissions |
 | [docs/GUIDE_UTILISATEUR.md](docs/GUIDE_UTILISATEUR.md) | Manuel utilisateur |
 | [docs/GUIDE_PAIEMENT_PARTIEL_INTELLIGENT.md](docs/GUIDE_PAIEMENT_PARTIEL_INTELLIGENT.md) | Systeme de paiement partiel |
-| [CHATBOT_REVISION_GUIDE.md](CHATBOT_REVISION_GUIDE.md) | Documentation du chatbot |
 
 ---
 

@@ -166,7 +166,7 @@ MENUS = [
     ('depenses', 'Dépenses, recouvrement et bibliothèque'),
     ('salaires', 'Salaires'),
     ('bus', 'Transport et cantine'),
-    ('notes', 'Notes, présences et chatbot'),
+    ('notes', "Notes, présences et tests d'accueil"),
     ('rapports', 'Rapports'),
 ]
 

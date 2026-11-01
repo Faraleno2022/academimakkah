@@ -721,8 +721,8 @@ def volet_3a():
                     "accent": NAVY, "fill": PALE_BLUE,
                 },
                 {
-                    "title": "ASSISTANT INTELLIGENT",
-                    "body": "Chatbot d'aide intégré pour guider les utilisateurs dans les écrans et les procédures courantes.",
+                    "title": "TESTS D'ACCUEIL",
+                    "body": "Tests d'entrée des candidats : matières et coefficients, notes, classement, résultats et bulletins.",
                     "accent": GREEN, "fill": PALE_GREEN,
                 },
                 {

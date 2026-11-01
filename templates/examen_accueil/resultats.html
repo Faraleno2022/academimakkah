@@ -1,0 +1,66 @@
+{% extends 'base.html' %}
+
+{% block title %}Résultats - {{ classe.nom }}{% endblock %}
+{% block meta_robots %}noindex,nofollow{% endblock %}
+
+{% block extra_css %}{% include 'examen_accueil/_style.html' %}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <a href="{% url 'examen_accueil:detail' classe.pk %}" class="btn btn-sm btn-outline-secondary mb-2"><i class="fas fa-arrow-left me-1"></i>{{ classe.nom }}</a>
+    <div class="ta-entete d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+            <h1><i class="fas fa-trophy me-2"></i>Résultats - {{ classe.nom }}</h1>
+            <p>Notes sur {{ classe.note_sur }} · admission à partir de {{ classe.moyenne_admission|floatformat:"-2" }} de moyenne · une matière non notée compte 0.</p>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+            <a href="{% url 'examen_accueil:resultats_pdf' classe.pk %}" target="_blank" class="btn btn-light btn-sm"><i class="fas fa-file-pdf text-danger me-1"></i>Résultats PDF</a>
+            <a href="{% url 'examen_accueil:resultats_excel' classe.pk %}" class="btn btn-light btn-sm"><i class="fas fa-file-excel text-success me-1"></i>Excel</a>
+            <a href="{% url 'examen_accueil:bulletins_pdf' classe.pk %}" target="_blank" class="btn btn-warning btn-sm"><i class="fas fa-print me-1"></i>Bulletins</a>
+        </div>
+    </div>
+
+    {% include 'examen_accueil/_independance.html' %}
+
+    <div class="row g-2 mb-3 text-center">
+        <div class="col-6 col-md-2"><div class="ta-carte p-2 mb-0"><div class="small text-muted">Effectif</div><div class="h5 mb-0">{{ stats.effectif }}</div></div></div>
+        <div class="col-6 col-md-2"><div class="ta-carte p-2 mb-0"><div class="small text-muted">Admis</div><div class="h5 mb-0 text-success">{{ stats.admis }}</div></div></div>
+        <div class="col-6 col-md-2"><div class="ta-carte p-2 mb-0"><div class="small text-muted">Non admis</div><div class="h5 mb-0 text-danger">{{ stats.non_admis }}</div></div></div>
+        <div class="col-6 col-md-2"><div class="ta-carte p-2 mb-0"><div class="small text-muted">Taux d'admission</div><div class="h5 mb-0">{{ stats.taux_admission|floatformat:"-2" }} %</div></div></div>
+        <div class="col-6 col-md-2"><div class="ta-carte p-2 mb-0"><div class="small text-muted">Moyenne de la classe</div><div class="h5 mb-0">{% if stats.moyenne_classe is not None %}{{ stats.moyenne_classe|floatformat:"-2" }}{% else %}-{% endif %}</div></div></div>
+        <div class="col-6 col-md-2"><div class="ta-carte p-2 mb-0"><div class="small text-muted">Plus forte / faible</div><div class="h5 mb-0">{% if stats.plus_forte is not None %}{{ stats.plus_forte|floatformat:"-2" }} / {{ stats.plus_faible|floatformat:"-2" }}{% else %}-{% endif %}</div></div></div>
+    </div>
+
+    <div class="ta-carte">
+        {% if lignes %}
+        <div class="table-responsive">
+            <table class="table table-hover table-sm align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>Rang</th><th>Nom et prénom(s)</th>
+                        {% for matiere in matieres %}<th class="text-center">{{ matiere.nom }}<br><small class="text-muted">coef. {{ matiere.coefficient|floatformat:"-2" }}</small></th>{% endfor %}
+                        <th class="text-center">Total</th><th class="text-center">Moyenne</th><th>Mention</th><th>Décision</th><th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for ligne in lignes %}
+                    <tr>
+                        <td class="fw-semibold">{{ ligne.rang_texte }}</td>
+                        <td>{{ ligne.candidat.nom }} {{ ligne.candidat.prenom }}</td>
+                        {% for detail in ligne.details %}<td class="text-center">{% if detail.note is None %}<span class="text-muted" title="Non noté : compte 0">-</span>{% else %}{{ detail.note|floatformat:"-2" }}{% endif %}</td>{% endfor %}
+                        <td class="text-center">{{ ligne.total_points|floatformat:"-2" }}</td>
+                        <td class="text-center fw-bold">{% if ligne.moyenne is not None %}{{ ligne.moyenne|floatformat:"-2" }}{% else %}-{% endif %}</td>
+                        <td>{{ ligne.mention }}</td>
+                        <td><span class="badge {% if ligne.admis %}ta-badge-admis{% else %}ta-badge-refus{% endif %}">{% if ligne.admis %}Admis{% else %}Non admis{% endif %}</span></td>
+                        <td class="text-end"><a href="{% url 'examen_accueil:bulletin_candidat' ligne.candidat.pk %}" target="_blank" class="btn btn-sm btn-outline-danger" title="Bulletin"><i class="fas fa-file-pdf"></i></a></td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted mb-0">Aucun candidat dans cette classe de test.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

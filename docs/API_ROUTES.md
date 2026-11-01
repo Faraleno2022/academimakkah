@@ -17,7 +17,7 @@ Fichier : `ecole_moderne/urls.py`
 /utilisateurs/              -> Module gestion des utilisateurs
 /rapports/                  -> Module rapports
 /bus/                       -> Module transport scolaire
-/chatbot/                   -> Module chatbot IA
+/test-accueil/              -> Module tests d'accueil
 ```
 
 ---
@@ -170,13 +170,18 @@ Fichier : `ecole_moderne/urls.py`
 
 ---
 
-## Module Chatbot (`/chatbot/`)
+## Module Tests d'accueil (`/test-accueil/`)
 
 | Methode | URL | Vue | Description |
 |---------|-----|-----|-------------|
-| GET | `/chatbot/` | `interface_chatbot` | Interface du chatbot |
-| POST | `/chatbot/message/` | `envoyer_message` | Envoyer un message (AJAX) |
-| POST | `/chatbot/reinitialiser/` | `reinitialiser_conversation` | Nouvelle conversation |
+| GET/POST | `/test-accueil/` | `liste_classes` | Liste et creation des classes de test |
+| GET/POST | `/test-accueil/classe/<id>/` | `detail_classe` | Matieres et candidats d'une classe de test |
+| GET/POST | `/test-accueil/classe/<id>/notes/` | `saisie_notes` | Saisie des notes (grille candidats x matieres) |
+| GET | `/test-accueil/classe/<id>/resultats/` | `resultats` | Moyennes, rangs, admission |
+| GET | `/test-accueil/classe/<id>/resultats/pdf/` | `resultats_pdf` | Resultats PDF |
+| GET | `/test-accueil/classe/<id>/resultats/excel/` | `resultats_excel` | Resultats Excel |
+| GET | `/test-accueil/classe/<id>/bulletins/` | `bulletins_pdf` | Bulletins de toute la classe (PDF) |
+| GET | `/test-accueil/candidat/<id>/bulletin/` | `bulletin_candidat_pdf` | Bulletin d'un candidat (PDF) |
 
 ---
 

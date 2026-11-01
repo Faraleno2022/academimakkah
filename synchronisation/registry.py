@@ -95,10 +95,19 @@ MODELES_REGISTRE_3 = [
 ]
 SYNC_MODEL_LABELS += MODELES_REGISTRE_3
 
+# Version 4 : module Test d'accueil (parents avant enfants).
+MODELES_REGISTRE_4 = [
+    'examen_accueil.ClasseAccueil',
+    'examen_accueil.MatiereAccueil',
+    'examen_accueil.CandidatAccueil',
+    'examen_accueil.NoteAccueil',
+]
+SYNC_MODEL_LABELS += MODELES_REGISTRE_4
+
 # Version du registre connue de ce code. Un poste l'annonce au serveur, qui ne
 # lui envoie pas les modèles qu'il ne sait pas appliquer.
-REGISTRE_VERSION = 3
-MODELES_PAR_VERSION = {2: MODELES_REGISTRE_2, 3: MODELES_REGISTRE_3}
+REGISTRE_VERSION = 4
+MODELES_PAR_VERSION = {2: MODELES_REGISTRE_2, 3: MODELES_REGISTRE_3, 4: MODELES_REGISTRE_4}
 
 SYNC_MODEL_SET = set(SYNC_MODEL_LABELS)
 
@@ -126,6 +135,7 @@ def version_registre(valeur):
 CLES_NATURELLES = {
     'presence.PresenceJournaliere': ('eleve', 'date'),
     'notes.RemiseDevoir': ('devoir', 'eleve'),
+    'examen_accueil.NoteAccueil': ('candidat', 'matiere'),
     # Modes et types créés par défaut sur un poste avant sa liaison au serveur.
     'paiements.ModePaiement': ('nom',),
     'paiements.TypePaiement': ('nom',),
