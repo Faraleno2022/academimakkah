@@ -16,7 +16,7 @@
 ;   - Mise à jour (préserve base de données, licences, médias, config)
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.3.28"
+  #define MyAppVersion "1.3.29"
 #endif
 
 [Setup]
