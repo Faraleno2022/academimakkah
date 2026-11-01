@@ -48,6 +48,11 @@ class Migration(migrations.Migration):
         ('contenttypes', '0002_remove_content_type_name'),
     ]
 
+    # MySQL ne sait pas annuler un DROP TABLE : Django y refuse tout DDL dans
+    # une transaction. L'opération tourne donc hors transaction ; chaque étape
+    # est rejouable (tables testées avant suppression, filtres sur 'chatbot').
+    atomic = False
+
     operations = [
-        migrations.RunPython(supprimer_chatbot, migrations.RunPython.noop),
+        migrations.RunPython(supprimer_chatbot, migrations.RunPython.noop, atomic=False),
     ]
