@@ -484,6 +484,64 @@ class MoteurPaieTests(TestCase):
         etat = EtatSalaire.objects.get(enseignant=enseignant, periode=self.periode)
         self.assertEqual(etat.total_heures, Decimal('8.00'))
 
+    def test_annuler_le_pointage_du_mois_d_un_enseignant(self):
+        enseignant = self.creer_secondaire()
+        autre = self.creer_secondaire(nom='Autre')
+        self.pointer(enseignant, [1, 2, 15])
+        self.pointer(autre, [1])
+        PresenceEnseignant.objects.create(
+            enseignant=enseignant, date=date(2026, 8, 3), statut='PRESENT',
+            heures_travaillees=Decimal('8'), pointe_par=self.user,
+        )
+        self.calculer()
+
+        with patch(
+            'salaires.views_presences.user_school', return_value=self.ecole
+        ):
+            page = self.client.get(
+                reverse('salaires:pointer_presence') + '?date=2026-07-01'
+            )
+            self.assertContains(page, 'Annuler le pointage du mois')
+            self.assertContains(page, 'Annuler son pointage du mois (3 jour(s))')
+            self.client.post(
+                reverse('salaires:annuler_pointage'),
+                {'date': '2026-07-01', 'portee': 'mois',
+                 'enseignants': [str(enseignant.id)]},
+            )
+
+        self.assertFalse(
+            PresenceEnseignant.objects.filter(
+                enseignant=enseignant, date__month=7
+            ).exists()
+        )
+        # Le mois suivant et les autres enseignants ne sont pas touchés.
+        self.assertTrue(
+            PresenceEnseignant.objects.filter(
+                enseignant=enseignant, date=date(2026, 8, 3)
+            ).exists()
+        )
+        self.assertTrue(PresenceEnseignant.objects.filter(enseignant=autre).exists())
+        etat = EtatSalaire.objects.get(enseignant=enseignant, periode=self.periode)
+        self.assertEqual(etat.total_heures, Decimal('0.00'))
+
+    def test_annuler_tout_le_pointage_du_mois(self):
+        enseignant = self.creer_secondaire()
+        autre = self.creer_secondaire(nom='Autre')
+        self.pointer(enseignant, [1, 20])
+        self.pointer(autre, [31])
+
+        with patch(
+            'salaires.views_presences.user_school', return_value=self.ecole
+        ):
+            self.client.post(
+                reverse('salaires:annuler_pointage'),
+                {'date': '2026-07-10', 'portee': 'mois', 'tout': '1'},
+            )
+
+        self.assertFalse(
+            PresenceEnseignant.objects.filter(enseignant__ecole=self.ecole).exists()
+        )
+
     def test_annuler_tout_le_pointage_du_jour_reste_dans_l_ecole(self):
         enseignant = self.creer_secondaire()
         autre = self.creer_secondaire(nom='Autre')
