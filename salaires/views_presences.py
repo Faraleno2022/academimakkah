@@ -255,6 +255,15 @@ def pointer_presence(request):
     
     # Statistiques globales du mois
     total_heures_mois = sum(h['heures'] for h in heures_mois_par_enseignant.values())
+
+    # Pointages du mois entier (au-delà de la date choisie), pour l'annulation
+    pointages_mois_par_enseignant = dict(
+        PresenceEnseignant.objects.filter(
+            enseignant__ecole=user_school_obj,
+            date__year=date_pointage_obj.year,
+            date__month=date_pointage_obj.month,
+        ).values_list('enseignant_id').annotate(nombre=Count('id'))
+    )
     
     context = {
         'enseignants': enseignants,
@@ -262,6 +271,8 @@ def pointer_presence(request):
         'date_pointage_obj': date_pointage_obj,
         'presences_existantes': presences_existantes,
         'heures_mois_par_enseignant': heures_mois_par_enseignant,
+        'pointages_mois_par_enseignant': pointages_mois_par_enseignant,
+        'pointages_mois': sum(pointages_mois_par_enseignant.values()),
         'statuts': PresenceEnseignant.STATUT_CHOICES,
         'stats_jour': stats_jour,
         'total_heures_mois': total_heures_mois,
@@ -382,7 +393,8 @@ def supprimer_presence(request, presence_id):
 @login_required
 @require_POST
 def annuler_pointage(request):
-    """Annuler le pointage d'une date : un enseignant, une sélection ou toute la journée"""
+    """Annuler le pointage d'une date ou de tout son mois (``portee=mois``) :
+    un enseignant, une sélection ou toute l'école."""
     user_school_obj = user_school(request.user)
     date_pointage_str = request.POST.get('date', '')
 
@@ -393,10 +405,19 @@ def annuler_pointage(request):
         return redirect('salaires:pointer_presence')
 
     retour = f"{reverse('salaires:pointer_presence')}?date={date_pointage_str}"
+    tout_le_mois = request.POST.get('portee') == 'mois'
 
     presences = PresenceEnseignant.objects.filter(
-        enseignant__ecole=user_school_obj, date=date_pointage
+        enseignant__ecole=user_school_obj
     ).select_related('enseignant')
+    if tout_le_mois:
+        presences = presences.filter(
+            date__year=date_pointage.year, date__month=date_pointage.month
+        )
+        libelle = f"du mois {date_pointage.strftime('%m/%Y')}"
+    else:
+        presences = presences.filter(date=date_pointage)
+        libelle = f"du {date_pointage.strftime('%d/%m/%Y')}"
 
     if request.POST.get('tout') != '1':
         try:
@@ -411,15 +432,16 @@ def annuler_pointage(request):
 
     salaires_recalcules = validations_annulees = 0
     with transaction.atomic():
+        verrouillees = list(presences.select_for_update())
         enseignants = {
             presence.enseignant_id: presence.enseignant
-            for presence in presences.select_for_update()
+            for presence in verrouillees
         }
         if not enseignants:
-            messages.warning(request, "Aucun pointage à annuler pour cette date.")
+            messages.warning(request, f"Aucun pointage {libelle} à annuler.")
             return redirect(retour)
 
-        nombre_annules = len(enseignants)
+        nombre_annules = len(verrouillees)
         presences.delete()
 
         for enseignant in enseignants.values():
@@ -436,7 +458,8 @@ def annuler_pointage(request):
 
     messages.success(
         request,
-        f"{nombre_annules} pointage(s) du {date_pointage.strftime('%d/%m/%Y')} annulé(s). "
+        f"{nombre_annules} pointage(s) {libelle} annulé(s) "
+        f"({len(enseignants)} enseignant(s)). "
         f"{salaires_recalcules} salaire(s) horaire(s) recalculé(s)."
         + (
             f" {validations_annulees} salaire(s) déjà validé(s) à valider de nouveau."
