@@ -1,7 +1,7 @@
 {% extends 'examen_accueil/_base.html' %}
 
 {% block title %}Test d'accueil - Consultation{% endblock %}
-{% block sous_titre %}{% if classe %}Notes sur {{ parametre.note_sur }} · admission à partir de {{ parametre.moyenne_admission|floatformat:"-2" }} de moyenne · une matière non notée compte 0.{% else %}Choisissez une classe pour voir les résultats du test.{% endif %}{% endblock %}
+{% block sous_titre %}{% if classe %}{{ parametre.libelle_niveau }} · notes sur {{ parametre.note_sur }}{% if not parametre.avec_coefficients %} sans coefficient{% endif %} · admission à partir de {{ parametre.moyenne_admission|floatformat:"-2" }} de moyenne · une matière non notée compte 0.{% else %}Choisissez une classe pour voir les résultats du test.{% endif %}{% endblock %}
 
 {% block corps %}
 {% include 'examen_accueil/_choix_classe.html' %}
@@ -29,7 +29,7 @@
             <thead class="table-light">
                 <tr>
                     <th>Rang</th><th>Matricule</th><th>Nom et prénom(s)</th>
-                    {% for matiere in matieres %}<th class="text-center">{{ matiere.nom }}<br><small class="text-muted">coef. {{ matiere.coefficient|floatformat:"-2" }}</small></th>{% endfor %}
+                    {% for matiere in matieres %}<th class="text-center">{{ matiere.nom }}{% if parametre.avec_coefficients %}<br><small class="text-muted">coef. {{ matiere.coefficient|floatformat:"-2" }}</small>{% endif %}</th>{% endfor %}
                     <th class="text-center">Total</th><th class="text-center">Moyenne</th><th>Mention</th><th>Décision</th><th></th>
                 </tr>
             </thead>
@@ -39,10 +39,10 @@
                     <td class="fw-semibold">{{ ligne.rang_texte }}</td>
                     <td>{{ ligne.eleve.matricule }}</td>
                     <td>{{ ligne.eleve.nom }} {{ ligne.eleve.prenom }}</td>
-                    {% for detail in ligne.details %}<td class="text-center">{% if detail.note is None %}<span class="text-muted" title="Non noté : compte 0">-</span>{% else %}{{ detail.note|floatformat:"-2" }}{% endif %}</td>{% endfor %}
+                    {% for detail in ligne.details %}<td class="text-center">{% if detail.note is None %}<span class="text-muted" title="Non noté : compte 0">-</span>{% else %}{{ detail.note|floatformat:"-2" }}{% if detail.lettre %} <small class="text-muted">{{ detail.lettre }}</small>{% endif %}{% endif %}</td>{% endfor %}
                     <td class="text-center">{{ ligne.total_points|floatformat:"-2" }}</td>
                     <td class="text-center fw-bold">{% if ligne.moyenne is not None %}{{ ligne.moyenne|floatformat:"-2" }}{% else %}-{% endif %}</td>
-                    <td>{{ ligne.mention }}</td>
+                    <td>{{ ligne.appreciation }}</td>
                     <td><span class="badge {% if ligne.admis %}ta-badge-admis{% else %}ta-badge-refus{% endif %}">{% if ligne.admis %}Admis{% else %}Non admis{% endif %}</span></td>
                     <td class="text-end"><a href="{% url 'examen_accueil:bulletin_eleve' classe.pk ligne.eleve.pk %}" target="_blank" class="btn btn-sm btn-outline-danger" title="Bulletin"><i class="fas fa-file-pdf"></i></a></td>
                 </tr>

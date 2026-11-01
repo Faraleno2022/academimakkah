@@ -30,7 +30,7 @@
                 <thead class="table-light">
                     <tr>
                         <th class="ta-nom">Élève</th>
-                        {% for matiere in matieres %}<th class="text-center">{{ matiere.nom }}<br><small class="text-muted">coef. {{ matiere.coefficient|floatformat:"-2" }}</small></th>{% endfor %}
+                        {% for matiere in matieres %}<th class="text-center">{{ matiere.nom }}{% if parametre.avec_coefficients %}<br><small class="text-muted">coef. {{ matiere.coefficient|floatformat:"-2" }}</small>{% endif %}</th>{% endfor %}
                     </tr>
                 </thead>
                 <tbody>

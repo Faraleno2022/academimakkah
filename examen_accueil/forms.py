@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import MatiereAccueil, ParametreAccueil
+from .models import MatiereAccueil, ParametreAccueil, niveau_enseignement
 
 
 class _BootstrapMixin:
@@ -29,6 +29,9 @@ class MatiereAccueilForm(_BootstrapMixin, forms.ModelForm):
     def __init__(self, *args, classe=None, **kwargs):
         self.classe = classe
         super().__init__(*args, **kwargs)
+        if classe is not None and niveau_enseignement(classe) != 'SECONDAIRE':
+            # Maternelle et primaire : pas de coefficient, comme au module Notes.
+            del self.fields['coefficient']
 
     def clean_nom(self):
         nom = self.cleaned_data['nom'].strip()

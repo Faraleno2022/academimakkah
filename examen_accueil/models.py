@@ -19,6 +19,23 @@ from synchronisation.mixins import SyncTrackedModel
 NOTE_SUR_DEFAUT = 20
 MOYENNE_ADMISSION_DEFAUT = Decimal('10')
 
+# Mêmes règles que le module Notes : maternelle et primaire notés sur 10 sans
+# coefficient, secondaire (collège, lycée) sur 20 avec coefficients.
+NIVEAUX_MATERNELLE = {'GARDERIE', 'TOUTE_PETITE_SECTION', 'PETITE_SECTION', 'MOYENNE_SECTION',
+                      'GRANDE_SECTION', 'MATERNELLE'}
+BAREME_PAR_NIVEAU = {'MATERNELLE': 10, 'PRIMAIRE': 10, 'SECONDAIRE': 20}
+LIBELLES_NIVEAU = {'MATERNELLE': 'Maternelle', 'PRIMAIRE': 'Primaire', 'SECONDAIRE': 'Secondaire'}
+
+
+def niveau_enseignement(classe):
+    """'MATERNELLE', 'PRIMAIRE' ou 'SECONDAIRE' d'après le niveau de la classe."""
+    niveau = classe.niveau or ''
+    if niveau in NIVEAUX_MATERNELLE:
+        return 'MATERNELLE'
+    if niveau.startswith('PRIMAIRE'):
+        return 'PRIMAIRE'
+    return 'SECONDAIRE'
+
 
 class ParametreAccueil(SyncTrackedModel):
     """Barème, moyenne d'admission et date du test d'accueil d'une classe."""
@@ -52,8 +69,27 @@ class ParametreAccueil(SyncTrackedModel):
 
     @classmethod
     def pour(cls, classe):
-        """Paramètres enregistrés de la classe, ou valeurs par défaut non enregistrées."""
-        return cls.objects.filter(classe=classe).first() or cls(classe=classe)
+        """Paramètres enregistrés de la classe, ou valeurs par défaut de son niveau (non enregistrées)."""
+        return cls.objects.filter(classe=classe).first() or cls.defaut(classe)
+
+    @classmethod
+    def defaut(cls, classe):
+        """Barème du niveau de la classe et admission à la moitié, non enregistrés."""
+        note_sur = BAREME_PAR_NIVEAU[niveau_enseignement(classe)]
+        return cls(classe=classe, note_sur=note_sur, moyenne_admission=Decimal(note_sur) / 2)
+
+    @property
+    def niveau(self):
+        return niveau_enseignement(self.classe)
+
+    @property
+    def libelle_niveau(self):
+        return LIBELLES_NIVEAU[self.niveau]
+
+    @property
+    def avec_coefficients(self):
+        """Comme au module Notes, seuls les coefficients du secondaire comptent."""
+        return self.niveau == 'SECONDAIRE'
 
 
 class MatiereAccueil(SyncTrackedModel):

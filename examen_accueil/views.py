@@ -71,6 +71,7 @@ def _contexte(request, section, classe=None, **extra):
                      for nom, titre, icone in SECTIONS],
         'classes': classes_visibles(request),
         'classe': classe,
+        'parametre': ParametreAccueil.pour(classe) if classe is not None else None,
         **extra,
     }
 
@@ -131,7 +132,7 @@ def classes(request):
         nb_matieres=Count('matieres_test_accueil', distinct=True),
         nb_evalues=Count('matieres_test_accueil__notes__eleve', distinct=True),
     )
-    lignes = [{'classe': c, 'parametre': getattr(c, 'parametre_test_accueil', None) or ParametreAccueil(classe=c)}
+    lignes = [{'classe': c, 'parametre': getattr(c, 'parametre_test_accueil', None) or ParametreAccueil.defaut(c)}
               for c in lignes]
     return render(request, 'examen_accueil/classes.html', _contexte(request, 'classes', lignes=lignes))
 
@@ -154,7 +155,8 @@ def parametres_classe(request, classe_id):
             messages.success(request, f"Paramètres du test d'accueil de {classe.nom} enregistrés.")
             return redirect('examen_accueil:classes')
     return render(request, 'examen_accueil/formulaire.html', _contexte(
-        request, 'classes', classe, form=form, titre=f"Paramètres du test d'accueil - {classe.nom}",
+        request, 'classes', classe, form=form,
+        titre=f"Paramètres du test d'accueil - {classe.nom} ({parametre.libelle_niveau})",
         retour=reverse('examen_accueil:classes')))
 
 

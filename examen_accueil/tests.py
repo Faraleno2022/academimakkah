@@ -98,7 +98,128 @@ class CalculsTests(TestCase):
         ParametreAccueil.objects.create(classe=classe, note_sur=10, moyenne_admission=Decimal('5'))
         ligne = calculer_resultats(classe)[0]
         self.assertTrue(ligne['admis'])
-        self.assertEqual(ligne['mention'], 'Assez bien')   # 6/10 = 12/20
+        self.assertEqual(ligne['mention'], 'Assez Bien')   # 6/10 = 12/20 au secondaire
+
+
+class NiveauxTests(TestCase):
+    """Maternelle, primaire et secondaire suivent les règles du module Notes."""
+
+    def setUp(self):
+        self.ecole = creer_ecole('7')
+
+    def _test(self, nom, niveau, notes):
+        """Français coef. 3 et Calcul coef. 1 ; ``notes`` : (français, calcul) par élève."""
+        classe = creer_classe(self.ecole, nom, niveau)
+        francais = MatiereAccueil.objects.create(classe=classe, nom="Français", coefficient=Decimal('3'), ordre=1)
+        calcul = MatiereAccueil.objects.create(classe=classe, nom="Calcul", coefficient=Decimal('1'), ordre=2)
+        for index, valeurs in enumerate(notes):
+            eleve = creer_eleve(classe, f'ELEVE{index}', 'Test')
+            for matiere, valeur in zip((francais, calcul), valeurs):
+                if valeur is not None:
+                    NoteAccueil.objects.create(eleve=eleve, matiere=matiere, note=Decimal(str(valeur)))
+        return classe
+
+    def test_niveau_deduit_de_la_classe(self):
+        from .models import niveau_enseignement
+        attendus = {'GARDERIE': 'MATERNELLE', 'PETITE_SECTION': 'MATERNELLE', 'GRANDE_SECTION': 'MATERNELLE',
+                    'MATERNELLE': 'MATERNELLE', 'PRIMAIRE_1': 'PRIMAIRE', 'PRIMAIRE_6': 'PRIMAIRE',
+                    'COLLEGE_7': 'SECONDAIRE', 'COLLEGE_10': 'SECONDAIRE', 'LYCEE_11': 'SECONDAIRE',
+                    'TERMINALE': 'SECONDAIRE'}
+        for niveau, attendu in attendus.items():
+            self.assertEqual(niveau_enseignement(Classe(niveau=niveau)), attendu, niveau)
+
+    def test_baremes_par_defaut(self):
+        for niveau, note_sur, admission in [('PETITE_SECTION', 10, '5'), ('PRIMAIRE_3', 10, '5'),
+                                            ('COLLEGE_7', 20, '10'), ('TERMINALE', 20, '10')]:
+            parametre = ParametreAccueil.pour(creer_classe(self.ecole, niveau, niveau))
+            self.assertEqual((parametre.note_sur, parametre.moyenne_admission), (note_sur, Decimal(admission)), niveau)
+            self.assertEqual(parametre.avec_coefficients, note_sur == 20, niveau)
+
+    def test_maternelle_sur_10_sans_coefficient_avec_lettres(self):
+        classe = self._test('Petite section', 'PETITE_SECTION', [(9, 6), (4, None)])
+        premier, second = calculer_resultats(classe)
+        self.assertEqual(premier['moyenne'], Decimal('7.50'))     # (9 + 6) / 2, coefficients ignorés
+        self.assertEqual((premier['lettre'], premier['mention'], premier['appreciation']), ('B', 'Assez bien', 'B - Assez bien'))
+        self.assertEqual([d['lettre'] for d in premier['details']], ['B+', 'B-'])
+        self.assertTrue(premier['admis'])
+        self.assertEqual(second['moyenne'], Decimal('2.00'))      # calcul non noté = 0
+        self.assertEqual((second['lettre'], second['mention']), ('D', 'Éprouve des difficultés'))
+        self.assertFalse(second['admis'])
+
+    def test_primaire_sur_10_sans_coefficient(self):
+        classe = self._test('CE2', 'PRIMAIRE_3', [(8, 5), (5, 4)])
+        premier, second = calculer_resultats(classe)
+        self.assertEqual(premier['moyenne'], Decimal('6.50'))     # (8 + 5) / 2 et non (24 + 5) / 4
+        self.assertEqual(premier['mention'], 'Assez Bien')
+        self.assertEqual((second['moyenne'], second['mention'], second['admis']), (Decimal('4.50'), 'Insuffisant', False))
+
+    def test_secondaire_sur_20_avec_coefficients(self):
+        classe = self._test('7ème B', 'COLLEGE_7', [(16, 8), (9, 13)])
+        premier, second = calculer_resultats(classe)
+        self.assertEqual(premier['moyenne'], Decimal('14.00'))    # (48 + 8) / 4
+        self.assertEqual(premier['mention'], 'Bien')
+        self.assertEqual((second['moyenne'], second['mention'], second['admis']), (Decimal('10.00'), 'Passable', True))
+
+    def test_echelles_identiques_au_module_notes(self):
+        from notes.calculs_moyennes import obtenir_mention_intelligente
+        from notes.models import EvaluationMaternelle
+
+        from .calculs import lettre_maternelle, mention
+
+        for centiemes in range(0, 2001, 25):
+            valeur = Decimal(centiemes) / 100
+            self.assertEqual(mention(valeur, 'SECONDAIRE', 20), obtenir_mention_intelligente(valeur, 'SECONDAIRE'), valeur)
+            if valeur <= 10:
+                self.assertEqual(mention(valeur, 'PRIMAIRE', 10), obtenir_mention_intelligente(valeur, 'PRIMAIRE'), valeur)
+                lettre = EvaluationMaternelle.note_vers_lettre(float(valeur))
+                self.assertEqual(lettre_maternelle(valeur), lettre, valeur)
+                self.assertEqual(mention(valeur, 'MATERNELLE', 10), EvaluationMaternelle.lettre_vers_mention(lettre), valeur)
+
+    def test_bareme_change_par_l_ecole(self):
+        # Primaire noté sur 20 : l'échelle /10 du primaire s'applique après conversion.
+        classe = self._test('CM1', 'PRIMAIRE_4', [(16, 14)])
+        ParametreAccueil.objects.create(classe=classe, note_sur=20, moyenne_admission=Decimal('10'))
+        ligne = calculer_resultats(classe)[0]
+        self.assertEqual((ligne['moyenne'], ligne['mention']), (Decimal('15.00'), 'Bien'))   # 7,5 / 10
+
+
+@override_settings(MIDDLEWARE=MIDDLEWARE_SANS_LICENCE)
+class NiveauxPagesTests(TestCase):
+    def setUp(self):
+        self.ecole = creer_ecole('8')
+        self.client.force_login(creer_utilisateur('directeur_niveaux', self.ecole))
+
+    def test_pages_et_exports_des_trois_niveaux(self):
+        from openpyxl import load_workbook
+
+        for nom, niveau, bareme in [('Moyenne section', 'MOYENNE_SECTION', 10), ('CE1', 'PRIMAIRE_2', 10),
+                                    ('11ème Lettres', 'LYCEE_11', 20)]:
+            classe = creer_classe(self.ecole, nom, niveau)
+            eleve = creer_eleve(classe, 'DIALLO', 'Fatou', 'F')
+            url_matieres = f"{reverse('examen_accueil:matieres')}?classe={classe.pk}"
+            formulaire = self.client.get(url_matieres).context['form']
+            self.assertEqual('coefficient' in formulaire.fields, bareme == 20, niveau)
+            self.client.post(url_matieres, {'nom': 'Lecture', 'coefficient': '4', 'ordre': '1'})
+            matiere = MatiereAccueil.objects.get(classe=classe)
+            self.assertEqual(matiere.coefficient, Decimal('4') if bareme == 20 else Decimal('1'), niveau)
+
+            url_saisie = f"{reverse('examen_accueil:saisie_notes')}?classe={classe.pk}"
+            reponse = self.client.post(url_saisie, {f'note_{eleve.pk}_{matiere.pk}': '15'})
+            if bareme == 10:
+                self.assertContains(reponse, 'hors du barème (0 à 10)')
+                self.client.post(url_saisie, {f'note_{eleve.pk}_{matiere.pk}': '8'})
+            self.assertTrue(NoteAccueil.objects.filter(eleve=eleve).exists(), niveau)
+
+            consultation = self.client.get(f"{reverse('examen_accueil:consultation')}?classe={classe.pk}")
+            self.assertContains(consultation, 'coef.' if bareme == 20 else 'sans coefficient')
+            for vue in ('resultats_pdf', 'bulletins_pdf'):
+                pdf = self.client.get(reverse(f'examen_accueil:{vue}', args=[classe.pk]))
+                self.assertTrue(pdf.content.startswith(b'%PDF'), (vue, niveau))
+            excel = self.client.get(reverse('examen_accueil:resultats_excel', args=[classe.pk]))
+            feuille = load_workbook(io.BytesIO(excel.content)).active
+            self.assertEqual(feuille.cell(row=5, column=5).value, 'Lecture (coef. 4)' if bareme == 20 else 'Lecture')
+            attendu = {'MOYENNE_SECTION': 'B+ - Bien', 'PRIMAIRE_2': 'Très Bien', 'LYCEE_11': 'Bien'}[niveau]
+            self.assertEqual(feuille.cell(row=6, column=8).value, attendu, niveau)
 
 
 @override_settings(MIDDLEWARE=MIDDLEWARE_SANS_LICENCE)

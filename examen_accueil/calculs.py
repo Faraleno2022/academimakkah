@@ -29,20 +29,40 @@ def format_rang(rang, ex_aequo=False, sexe=''):
     return f'{texte} ex' if ex_aequo else texte
 
 
-def mention(moyenne, note_sur):
-    """Mention sur l'échelle /20, ramenée au barème de la classe."""
+# Échelles du module Notes (calculs_moyennes.obtenir_mention_intelligente et
+# EvaluationMaternelle), recopiées pour garder le calcul autonome ; un test
+# vérifie qu'elles restent identiques.
+MENTIONS_SECONDAIRE = [(18, 'Excellent'), (16, 'Très Bien'), (14, 'Bien'), (12, 'Assez Bien'),
+                       (10, 'Passable'), (8, 'Insuffisant'), (6, 'Faible')]
+MENTIONS_PRIMAIRE = [(9, 'Excellent'), (8, 'Très Bien'), (7, 'Bien'), (6, 'Assez Bien'),
+                     (5, 'Passable'), (4, 'Insuffisant'), (3, 'Faible')]
+LETTRES_MATERNELLE = [(Decimal('10'), 'A+'), (Decimal('9.5'), 'A'), (Decimal('8'), 'B+'), (Decimal('7'), 'B'),
+                      (Decimal('6'), 'B-'), (Decimal('5'), 'C')]
+MENTIONS_LETTRES = {'A+': 'Excellent', 'A': 'Très bien', 'B+': 'Bien', 'B': 'Assez bien', 'B-': 'Moyen',
+                    'C': 'Passable', 'D': 'Éprouve des difficultés'}
+
+
+def _sur(valeur, note_sur, reference):
+    """Ramène une note du barème de la classe au barème de référence du niveau."""
+    return valeur * Decimal(reference) / Decimal(note_sur)
+
+
+def lettre_maternelle(valeur, note_sur=10):
+    if valeur is None:
+        return ''
+    sur_10 = _sur(valeur, note_sur, 10)
+    return next((lettre for seuil, lettre in LETTRES_MATERNELLE if sur_10 >= seuil), 'D')
+
+
+def mention(moyenne, niveau, note_sur):
+    """Mention du niveau (maternelle, primaire, secondaire), au barème de la classe."""
     if moyenne is None:
         return ''
-    sur_20 = moyenne * Decimal(20) / Decimal(note_sur)
-    if sur_20 >= 16:
-        return 'Très bien'
-    if sur_20 >= 14:
-        return 'Bien'
-    if sur_20 >= 12:
-        return 'Assez bien'
-    if sur_20 >= 10:
-        return 'Passable'
-    return 'Insuffisant'
+    if niveau == 'MATERNELLE':
+        return MENTIONS_LETTRES[lettre_maternelle(moyenne, note_sur)]
+    reference, echelle = (10, MENTIONS_PRIMAIRE) if niveau == 'PRIMAIRE' else (20, MENTIONS_SECONDAIRE)
+    valeur = _sur(moyenne, note_sur, reference)
+    return next((texte for seuil, texte in echelle if valeur >= seuil), 'Très faible')
 
 
 def eleves_participants(classe):
@@ -54,11 +74,17 @@ def eleves_participants(classe):
 def calculer_resultats(classe, parametre=None):
     """Résultats des élèves évalués au test d'accueil de ``classe``, triés par rang.
 
-    Chaque ligne : eleve, détails par matière (note, coefficient, points),
-    total des points, moyenne, rang, ex aequo, admis, mention.
+    Chaque ligne : eleve, détails par matière (note, coefficient, points,
+    lettre en maternelle), total des points, moyenne, rang, ex aequo, admis,
+    mention et appréciation (lettre et mention en maternelle). En maternelle
+    et au primaire, chaque matière compte pour 1 quel que soit son coefficient.
     """
     parametre = parametre or ParametreAccueil.pour(classe)
+    niveau, note_sur = parametre.niveau, parametre.note_sur
     matieres = list(MatiereAccueil.objects.filter(classe=classe))
+    if not parametre.avec_coefficients:
+        for matiere in matieres:
+            matiere.coefficient = Decimal('1')
     eleves = list(eleves_participants(classe))
     notes = {
         (eleve_id, matiere_id): note
@@ -79,8 +105,11 @@ def calculer_resultats(classe, parametre=None):
             points = (note or Decimal('0')) * matiere.coefficient
             total_points += points
             details.append({'matiere': matiere, 'note': note, 'coefficient': matiere.coefficient,
-                            'points': arrondir(points)})
+                            'points': arrondir(points),
+                            'lettre': lettre_maternelle(note, note_sur) if niveau == 'MATERNELLE' else ''})
         moyenne = arrondir(total_points / total_coefficients) if total_coefficients else None
+        texte = mention(moyenne, niveau, note_sur)
+        lettre = lettre_maternelle(moyenne, note_sur) if niveau == 'MATERNELLE' else ''
         resultats.append({
             'eleve': eleve,
             'details': details,
@@ -89,7 +118,9 @@ def calculer_resultats(classe, parametre=None):
             'total_coefficients': total_coefficients,
             'moyenne': moyenne,
             'admis': moyenne is not None and moyenne >= parametre.moyenne_admission,
-            'mention': mention(moyenne, parametre.note_sur),
+            'mention': texte,
+            'lettre': lettre,
+            'appreciation': f"{lettre} - {texte}" if lettre else texte,
         })
 
     _attribuer_rangs(resultats)

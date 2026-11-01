@@ -19,7 +19,7 @@
             {% for ligne in lignes %}
                 <tr>
                     <td class="fw-semibold">{{ ligne.classe.nom }} <small class="text-muted">({{ ligne.classe.annee_scolaire }})</small>{% if request.user.is_superuser %}<br><small class="text-muted">{{ ligne.classe.ecole.nom }}</small>{% endif %}</td>
-                    <td>{{ ligne.classe.get_niveau_display }}</td>
+                    <td><span class="badge bg-info text-dark">{{ ligne.parametre.libelle_niveau }}</span><br><small class="text-muted">{{ ligne.classe.get_niveau_display }}</small></td>
                     <td class="text-center">{{ ligne.classe.nb_eleves }}</td>
                     <td class="text-center">{% if ligne.classe.nb_matieres %}{{ ligne.classe.nb_matieres }}{% else %}<span class="badge bg-warning text-dark">Aucune</span>{% endif %}</td>
                     <td class="text-center">{{ ligne.classe.nb_evalues }}</td>
