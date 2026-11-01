@@ -66,7 +66,7 @@ def build():
     django_apps = [
         'eleves', 'paiements', 'depenses', 'salaires', 'utilisateurs',
         'rapports', 'administration', 'bus', 'notes', 'abonnements',
-        'chatbot', 'ecole_moderne', 'desktop',
+        'examen_accueil', 'ecole_moderne', 'desktop',
     ]
 
     datas = [

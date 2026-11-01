@@ -69,7 +69,7 @@ MySchoolGN est une application web Django suivant le pattern **MVT** (Model-View
 | `administration` | Configuration systeme, parametres ecole |
 | `utilisateurs` | Authentification, roles, audit log |
 | `rapports` | Generation de rapports et statistiques |
-| `chatbot` | Assistant IA (OpenAI) |
+| `examen_accueil` | Tests d'accueil (tests d'entree des candidats) |
 | `comptes` | Module comptabilite |
 | `bus` | Gestion transport scolaire |
 

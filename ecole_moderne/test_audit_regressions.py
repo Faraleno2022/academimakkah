@@ -104,29 +104,6 @@ class AuditRegressions(TestCase):
         self.assertNotEqual(response.get('Content-Type'), 'application/pdf')
 
 
-    def test_chatbot_ecarte_documents_autre_ecole(self):
-        from chatbot.models import Matiere, DocumentCours
-        from chatbot.views import _filter_documents_by_school
-        self.admin()
-        matiere = Matiere.objects.create(nom='Audit calcul')
-        document = DocumentCours.objects.create(
-            matiere=matiere, titre='Audit geometrie confidentiel',
-            contenu_extrait='La geometrie du document confidentiel de l école B.',
-            uploaded_by=self.user2, fichier='audit-fictif.pdf',
-        )
-        self.assertFalse(_filter_documents_by_school(DocumentCours.objects.all(), self.ecole1).filter(pk=document.pk).exists())
-        def reponse_locale(question, resultats):
-            return {'reponse': ' '.join(r['passage'] for r in resultats),
-                    'documents': [r['document'] for r in resultats],
-                    'confiance': 'haute', 'suggestions': []}
-        with patch('chatbot.views.generer_reponse', side_effect=reponse_locale):
-            response = self.client.post(reverse('chatbot:api_envoyer'),
-                                        json.dumps({'message': 'geometrie confidentiel'}),
-                                        content_type='application/json')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()['documents'], [])
-
-
     def test_sync_refuse_modification_autre_ecole(self):
         response = self.client.post('/api/v1/sync/push/', json.dumps({'changes': [{
             'model': 'eleves.Eleve', 'object_uuid': str(self.eleve2.sync_uuid),

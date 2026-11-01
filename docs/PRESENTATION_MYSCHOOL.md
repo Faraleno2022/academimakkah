@@ -17,7 +17,7 @@
 7. [Ressources Humaines & Salaires](#7--ressources-humaines--salaires)
 8. [Transport Scolaire & Cantine](#8--transport-scolaire--cantine)
 9. [Bibliothèque & Logistique](#9--bibliothèque--logistique)
-10. [Assistant Intelligent (Chatbot)](#10--assistant-intelligent-chatbot)
+10. [Tests d'accueil](#10--tests-daccueil)
 11. [Rapports & Tableaux de Bord](#11--rapports--tableaux-de-bord)
 12. [Sécurité & Administration](#12--sécurité--administration)
 13. [Communication WhatsApp & SMS](#13--communication-whatsapp--sms)
@@ -312,15 +312,15 @@ Pour chaque élève, un échéancier complet :
 
 ---
 
-## 10 — ASSISTANT INTELLIGENT (CHATBOT)
+## 10 — TESTS D'ACCUEIL
 
-Un assistant basé sur l'**intelligence artificielle** pour aider les élèves dans leurs révisions :
+Organisation des **tests d'entrée** des nouveaux candidats :
 
-- **Chat interactif** par matière (Mathématiques, Français, Sciences, Histoire, etc.)
-- **Bibliothèque de documents** de cours uploadés par les enseignants
-- Niveaux ciblés : de la 6ème à la Terminale
-- Suggestions de questions populaires
-- Historique des conversations
+- **Classes de test** propres au module, barème sur 10 ou 20 et moyenne d'admission
+- **Matières avec coefficients**, saisie des notes en grille
+- **Moyennes, classement et décision** (admis / non admis)
+- Résultats exportables en **PDF et Excel**, **bulletins** imprimables
+- Notes **indépendantes** : elles n'entrent jamais dans les moyennes mensuelles ni les compositions
 
 ---
 

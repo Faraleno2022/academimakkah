@@ -61,7 +61,6 @@ LOGGING['handlers']['file']['filename'] = str(LOGS_DIR / 'django.log')
 
 # ── Désactiver les services externes (mode offline) ──
 TWILIO_ENABLED = False
-HF_TOKEN = ''
 
 # ── Validation de mot de passe simplifiée pour usage local ──
 AUTH_PASSWORD_VALIDATORS = []

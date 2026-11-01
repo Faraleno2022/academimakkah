@@ -55,7 +55,7 @@ def robots_txt(request):
         "Disallow: /depenses/",
         "Disallow: /salaires/",
         "Disallow: /notes/",
-        "Disallow: /chatbot/",
+        "Disallow: /test-accueil/",
         "Sitemap: https://www.myschoolgn.space/sitemap.xml",
         "",
     ])
@@ -138,7 +138,7 @@ urlpatterns = [
     path('notes/', include('notes.urls')),
     path('notes/presence/', include('presence.urls')),
     path('abonnements/', include('abonnements.urls')),
-    path('chatbot/', include('chatbot.urls')),
+    path('test-accueil/', include('examen_accueil.urls')),
     path('api/v1/sync/', include('synchronisation.urls')),
 ]
 

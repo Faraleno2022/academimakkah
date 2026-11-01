@@ -150,7 +150,7 @@ INSTALLED_APPS = [
     'notes',
     'presence',
     'abonnements',
-    'chatbot',
+    'examen_accueil',
     'synchronisation.apps.SynchronisationConfig',
     'axes',
 ]
@@ -411,12 +411,6 @@ MYSCHOOL_SYNC_DEVICE_ID = os.environ.get('MYSCHOOL_SYNC_DEVICE_ID', '')
 MYSCHOOL_SYNC_TOKEN = os.environ.get('MYSCHOOL_SYNC_TOKEN', '')
 MYSCHOOL_SYNC_ADMIN_TOKEN = os.environ.get('MYSCHOOL_SYNC_ADMIN_TOKEN', '')
 MYSCHOOL_SYNC_ECOLE_ID = os.environ.get('MYSCHOOL_SYNC_ECOLE_ID', '')
-
-# =================== Configuration IA Chatbot ===================
-# Token HuggingFace pour l'API IA (obtenir sur https://huggingface.co/settings/tokens)
-HF_TOKEN = os.environ.get('HF_TOKEN', '')
-# Modèle à utiliser (DeepSeek via HuggingFace Router)
-HF_MODEL = os.environ.get('HF_MODEL', 'deepseek-ai/DeepSeek-R1')
 
 # =================== Paramètres de sécurité ===================
 BLOCK_SUPERUSER_PUBLIC_LOGIN = False

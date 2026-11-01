@@ -45,7 +45,7 @@ with tempfile.TemporaryDirectory(prefix='myschool-tests-') as scratch, ExitStack
         else:
             from django.test.runner import DiscoverRunner
             labels = args.labels or [
-                'abonnements', 'administration', 'bus', 'chatbot', 'comptes',
+                'abonnements', 'administration', 'bus', 'comptes', 'examen_accueil',
                 'depenses', 'eleves', 'notes', 'paiements', 'presence', 'rapports',
                 'salaires', 'synchronisation', 'utilisateurs', 'ecole_moderne',
                 'test_desktop_updater',

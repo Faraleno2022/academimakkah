@@ -224,13 +224,13 @@ Le systeme affiche automatiquement des alertes pour :
 - Licence arrivant a expiration
 - Erreurs de saisie
 
-### Aide du Chatbot
+### Tests d'accueil
 
-En bas a droite de chaque page, une icone de chatbot permet d'ouvrir l'assistant IA.
-Vous pouvez lui poser des questions comme :
-- "Comment inscrire un eleve ?"
-- "Combien d'eleves sont en CM1 ?"
-- "Quel est le taux de paiement ce mois ?"
+Menu **Test d'accueil** : creez une classe de test (bareme sur 10 ou 20, moyenne d'admission),
+ajoutez ses matieres avec leur coefficient, inscrivez les candidats puis saisissez les notes
+dans la grille. La page **Resultats** donne moyennes, rangs et decisions, exportables en PDF
+ou Excel, et imprime les bulletins. Une matiere non notee compte 0. Ces notes sont
+independantes : elles n'entrent jamais dans les moyennes mensuelles ni dans les compositions.
 
 ---
 

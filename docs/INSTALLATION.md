@@ -90,8 +90,6 @@ TWILIO_ACCOUNT_SID=
 TWILIO_AUTH_TOKEN=
 TWILIO_PHONE_NUMBER=
 
-# OpenAI pour le chatbot (optionnel)
-OPENAI_API_KEY=
 ```
 
 ### 6. Appliquer les migrations

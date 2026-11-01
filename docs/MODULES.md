@@ -338,29 +338,26 @@ Generation de rapports statistiques et de synthese pour la direction et la compt
 
 ---
 
-## Module 10 : Chatbot (`chatbot/`)
+## Module 10 : Tests d'accueil (`examen_accueil/`)
 
 ### Role
-Assistant intelligent integre pour aider les utilisateurs a naviguer dans le systeme et repondre a leurs questions.
+Tests d'entree / de niveau des candidats, entierement separes du module Notes.
 
-### Integration
-- Utilise l'API OpenAI (GPT)
-- Contexte de l'ecole injecte dans les prompts
-- Historique de conversation en session
-- Reponses en francais
-
-### Cas d'usage
-- Aide a la navigation dans le systeme
-- Explication des fonctionnalites
-- Statistiques rapides sur demande
-- Support utilisateur de premier niveau
+### Fonctionnalites
+- Classes de test propres au module (bareme sur 10 ou 20, moyenne d'admission)
+- Matieres avec coefficient, candidats (pas forcement deja eleves)
+- Saisie des notes en grille, moyennes ponderees (matiere non notee = 0), rangs avec ex aequo
+- Resultats PDF/Excel, bulletins PDF (classe entiere ou candidat)
+- Donnees limitees a l'ecole de l'utilisateur, synchronisees (registre version 4)
+- Les notes n'entrent jamais dans les moyennes mensuelles, compositions ou classements scolaires
 
 ### Fichiers cles
 ```
-chatbot/
-  views.py           # Vues de l'interface chatbot
-  urls.py            # Routes
-CHATBOT_REVISION_GUIDE.md  # Documentation detaillee
+examen_accueil/
+  models.py          # ClasseAccueil, MatiereAccueil, CandidatAccueil, NoteAccueil
+  calculs.py         # Moyennes, rangs, statistiques
+  exports.py         # PDF resultats/bulletins, Excel
+  views.py, urls.py  # Interface /test-accueil/
 ```
 
 ---

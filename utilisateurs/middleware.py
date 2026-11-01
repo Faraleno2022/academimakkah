@@ -218,7 +218,7 @@ class MenuPermissionMiddleware:
         ('/abonnements/', 'bus', 'Transport et cantine'),
         ('/notes/', 'notes', 'Notes'),
         ('/presence/', 'notes', 'Présence et notes'),
-        ('/chatbot/', 'notes', 'Notes et chatbot'),
+        ('/test-accueil/', 'notes', "Tests d'accueil"),
         ('/rapports/', 'rapports', 'Rapports'),
         ('/administration/', 'administration', 'Administration'),
     )
