@@ -1,20 +1,12 @@
-{% extends 'base.html' %}
+{% extends 'examen_accueil/_base.html' %}
 
-{% block title %}Notes - {{ classe.nom }}{% endblock %}
-{% block meta_robots %}noindex,nofollow{% endblock %}
+{% block title %}Test d'accueil - Saisie des notes{% endblock %}
+{% block sous_titre %}{% if classe %}Notes sur {{ parametre.note_sur }} · virgule ou point acceptés · une case vide efface la note (la matière comptera 0 dans la moyenne).{% else %}Choisissez une classe pour saisir les notes du test.{% endif %}{% endblock %}
 
-{% block extra_css %}{% include 'examen_accueil/_style.html' %}{% endblock %}
+{% block corps %}
+{% include 'examen_accueil/_choix_classe.html' with avec_tous=True %}
 
-{% block content %}
-<div class="container-fluid py-3">
-    <a href="{% url 'examen_accueil:detail' classe.pk %}" class="btn btn-sm btn-outline-secondary mb-2"><i class="fas fa-arrow-left me-1"></i>{{ classe.nom }}</a>
-    <div class="ta-entete">
-        <h1><i class="fas fa-pen me-2"></i>Saisie des notes - {{ classe.nom }}</h1>
-        <p>Notes sur {{ classe.note_sur }} · virgule ou point acceptés · une case vide efface la note (la matière comptera 0 dans la moyenne).</p>
-    </div>
-
-    {% include 'examen_accueil/_independance.html' %}
-
+{% if classe %}
     {% if erreurs %}
     <div class="alert alert-danger">
         <ul class="mb-0">{% for erreur in erreurs %}<li>{{ erreur }}</li>{% endfor %}</ul>
@@ -23,12 +15,12 @@
 
     {% if not matieres or not lignes %}
     <div class="ta-carte">
-        <p class="mb-2">
-            {% if not matieres and not lignes %}Ajoutez d'abord les matières et les candidats de la classe de test.
-            {% elif not matieres %}Ajoutez d'abord les matières de la classe de test.
-            {% else %}Inscrivez d'abord les candidats de la classe de test.{% endif %}
-        </p>
-        <a href="{% url 'examen_accueil:detail' classe.pk %}" class="btn btn-primary btn-sm">Compléter la classe</a>
+        {% if not matieres %}
+        <p class="mb-2">Ajoutez d'abord les matières du test de cette classe.</p>
+        <a href="{% url 'examen_accueil:matieres' %}?classe={{ classe.pk }}" class="btn btn-primary btn-sm">Gérer les matières</a>
+        {% else %}
+        <p class="mb-0">Aucun élève {% if not tous %}nouvellement inscrit {% endif %}dans cette classe{% if not tous %} : cochez « Inclure les élèves réinscrits » pour les afficher tous{% endif %}.</p>
+        {% endif %}
     </div>
     {% else %}
     <form method="post" class="ta-carte" id="form-notes">
@@ -37,14 +29,14 @@
             <table class="table table-bordered table-sm ta-saisie">
                 <thead class="table-light">
                     <tr>
-                        <th class="ta-nom">Candidat</th>
+                        <th class="ta-nom">Élève</th>
                         {% for matiere in matieres %}<th class="text-center">{{ matiere.nom }}<br><small class="text-muted">coef. {{ matiere.coefficient|floatformat:"-2" }}</small></th>{% endfor %}
                     </tr>
                 </thead>
                 <tbody>
                 {% for ligne in lignes %}
                     <tr>
-                        <td class="ta-nom">{{ ligne.candidat.nom }} {{ ligne.candidat.prenom }}</td>
+                        <td class="ta-nom">{{ ligne.eleve.nom }} {{ ligne.eleve.prenom }} <small class="text-muted">{{ ligne.eleve.matricule }}</small></td>
                         {% for cellule in ligne.cellules %}
                         <td><input type="text" inputmode="decimal" autocomplete="off" class="form-control form-control-sm ta-note" name="{{ cellule.nom }}" value="{{ cellule.valeur }}" aria-label="Note"></td>
                         {% endfor %}
@@ -55,11 +47,11 @@
         </div>
         <div class="d-flex flex-wrap gap-2">
             <button type="submit" class="btn btn-primary"><i class="fas fa-save me-1"></i>Enregistrer les notes</button>
-            <a href="{% url 'examen_accueil:resultats' classe.pk %}" class="btn btn-outline-success"><i class="fas fa-trophy me-1"></i>Voir les résultats</a>
+            <a href="{% url 'examen_accueil:consultation' %}?classe={{ classe.pk }}" class="btn btn-outline-success"><i class="fas fa-eye me-1"></i>Voir les résultats</a>
         </div>
     </form>
     {% endif %}
-</div>
+{% endif %}
 {% endblock %}
 
 {% block extra_js %}

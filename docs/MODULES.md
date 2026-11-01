@@ -341,20 +341,21 @@ Generation de rapports statistiques et de synthese pour la direction et la compt
 ## Module 10 : Tests d'accueil (`examen_accueil/`)
 
 ### Role
-Tests d'entree / de niveau des candidats, entierement separes du module Notes.
+Tests d'entree / de niveau des eleves, sur les classes et eleves de l'ecole, avec des calculs separes du module Notes.
 
 ### Fonctionnalites
-- Classes de test propres au module (bareme sur 10 ou 20, moyenne d'admission)
-- Matieres avec coefficient, candidats (pas forcement deja eleves)
-- Saisie des notes en grille, moyennes ponderees (matiere non notee = 0), rangs avec ex aequo
-- Resultats PDF/Excel, bulletins PDF (classe entiere ou candidat)
+- Sections comme le module Notes : classes, matieres, eleves, saisie, consultation, bulletins
+- Classes et eleves repris du module Eleves (nouveaux inscrits par defaut) ; bareme sur 10 ou 20 et moyenne d'admission par classe
+- Matieres du test avec coefficient, reprise possible (copie sans lien) des matieres du module Notes
+- Saisie des notes en grille, moyennes ponderees (matiere non notee = 0), rangs avec ex aequo ; un eleve note est marque « evalue au test d'accueil »
+- Resultats PDF/Excel, bulletins PDF (classe entiere ou eleve)
 - Donnees limitees a l'ecole de l'utilisateur, synchronisees (registre version 4)
 - Les notes n'entrent jamais dans les moyennes mensuelles, compositions ou classements scolaires
 
 ### Fichiers cles
 ```
 examen_accueil/
-  models.py          # ClasseAccueil, MatiereAccueil, CandidatAccueil, NoteAccueil
+  models.py          # ParametreAccueil, MatiereAccueil, NoteAccueil
   calculs.py         # Moyennes, rangs, statistiques
   exports.py         # PDF resultats/bulletins, Excel
   views.py, urls.py  # Interface /test-accueil/

@@ -1,13 +1,16 @@
-"""Moyennes et classement d'une classe de test d'accueil.
+"""Moyennes et classement du test d'accueil d'une classe.
 
 Calcul autonome : il ne lit que les modèles de ce module et n'appelle aucune
 fonction du module ``notes`` (moyennes mensuelles, compositions, rangs).
-Comme ailleurs dans MySchoolGN, une matière non notée compte 0 : un candidat
-absent à une épreuve ne doit pas être favorisé.
+Seuls les élèves ayant au moins une note au test sont classés ; pour eux, comme
+ailleurs dans MySchoolGN, une matière non notée compte 0 afin qu'un élève
+absent à une épreuve ne soit pas favorisé.
 """
 from decimal import ROUND_HALF_UP, Decimal
 
-from .models import NoteAccueil
+from eleves.models import Eleve
+
+from .models import MatiereAccueil, NoteAccueil, ParametreAccueil
 
 DEUX_DECIMALES = Decimal('0.01')
 
@@ -42,29 +45,35 @@ def mention(moyenne, note_sur):
     return 'Insuffisant'
 
 
-def calculer_resultats(classe):
-    """Résultats de tous les candidats d'une classe de test, triés par rang.
+def eleves_participants(classe):
+    """Élèves (de la classe ou partis depuis) ayant au moins une note au test de la classe."""
+    return (Eleve.objects.filter(notes_test_accueil__matiere__classe=classe)
+            .distinct().order_by('nom', 'prenom'))
 
-    Chaque ligne : candidat, détails par matière (note, coefficient, points),
+
+def calculer_resultats(classe, parametre=None):
+    """Résultats des élèves évalués au test d'accueil de ``classe``, triés par rang.
+
+    Chaque ligne : eleve, détails par matière (note, coefficient, points),
     total des points, moyenne, rang, ex aequo, admis, mention.
     """
-    matieres = list(classe.matieres.all())
-    candidats = list(classe.candidats.all())
+    parametre = parametre or ParametreAccueil.pour(classe)
+    matieres = list(MatiereAccueil.objects.filter(classe=classe))
+    eleves = list(eleves_participants(classe))
     notes = {
-        (candidat_id, matiere_id): note
-        for candidat_id, matiere_id, note in NoteAccueil.objects
-        .filter(matiere__classe=classe, candidat__classe=classe)
-        .values_list('candidat_id', 'matiere_id', 'note')
+        (eleve_id, matiere_id): note
+        for eleve_id, matiere_id, note in NoteAccueil.objects
+        .filter(matiere__classe=classe).values_list('eleve_id', 'matiere_id', 'note')
     }
     total_coefficients = sum((m.coefficient for m in matieres), Decimal('0'))
 
     resultats = []
-    for candidat in candidats:
+    for eleve in eleves:
         details = []
         total_points = Decimal('0')
         nb_notes = 0
         for matiere in matieres:
-            note = notes.get((candidat.id, matiere.id))
+            note = notes.get((eleve.id, matiere.id))
             if note is not None:
                 nb_notes += 1
             points = (note or Decimal('0')) * matiere.coefficient
@@ -73,19 +82,19 @@ def calculer_resultats(classe):
                             'points': arrondir(points)})
         moyenne = arrondir(total_points / total_coefficients) if total_coefficients else None
         resultats.append({
-            'candidat': candidat,
+            'eleve': eleve,
             'details': details,
             'nb_notes': nb_notes,
             'total_points': arrondir(total_points),
             'total_coefficients': total_coefficients,
             'moyenne': moyenne,
-            'admis': moyenne is not None and moyenne >= classe.moyenne_admission,
-            'mention': mention(moyenne, classe.note_sur),
+            'admis': moyenne is not None and moyenne >= parametre.moyenne_admission,
+            'mention': mention(moyenne, parametre.note_sur),
         })
 
     _attribuer_rangs(resultats)
     resultats.sort(key=lambda r: (r['rang'] is None, r['rang'] or 0,
-                                  r['candidat'].nom.upper(), r['candidat'].prenom.upper()))
+                                  r['eleve'].nom.upper(), r['eleve'].prenom.upper()))
     return resultats
 
 
@@ -103,10 +112,10 @@ def _attribuer_rangs(resultats):
     for ligne in resultats:
         ligne.setdefault('rang', None)
         ligne['ex_aequo'] = ligne['rang'] is not None and effectifs.get(ligne['rang'], 0) > 1
-        ligne['rang_texte'] = format_rang(ligne['rang'], ligne['ex_aequo'], ligne['candidat'].sexe)
+        ligne['rang_texte'] = format_rang(ligne['rang'], ligne['ex_aequo'], ligne['eleve'].sexe)
 
 
-def statistiques(classe, resultats):
+def statistiques(resultats):
     moyennes = [r['moyenne'] for r in resultats if r['moyenne'] is not None]
     admis = sum(1 for r in resultats if r['admis'])
     return {

@@ -1,0 +1,18 @@
+<form method="get" class="ta-carte d-flex flex-wrap align-items-end gap-3 py-2">
+    <div>
+        <label class="form-label small mb-1" for="choix-classe">Classe</label>
+        <select name="classe" id="choix-classe" class="form-select" onchange="this.form.submit()">
+            <option value="">-- Choisir une classe --</option>
+            {% for c in classes %}
+            <option value="{{ c.pk }}"{% if classe and c.pk == classe.pk %} selected{% endif %}>{{ c.nom }} ({{ c.annee_scolaire }}){% if request.user.is_superuser %} - {{ c.ecole.nom }}{% endif %}</option>
+            {% endfor %}
+        </select>
+    </div>
+    {% if avec_tous %}
+    <div class="form-check mb-2">
+        <input class="form-check-input" type="checkbox" name="tous" value="1" id="choix-tous" onchange="this.form.submit()"{% if tous %} checked{% endif %}>
+        <label class="form-check-label small" for="choix-tous">Inclure les élèves réinscrits</label>
+    </div>
+    {% endif %}
+    <noscript><button type="submit" class="btn btn-primary btn-sm mb-1">Afficher</button></noscript>
+</form>

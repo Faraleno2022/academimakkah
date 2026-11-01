@@ -226,10 +226,13 @@ Le systeme affiche automatiquement des alertes pour :
 
 ### Tests d'accueil
 
-Menu **Test d'accueil** : creez une classe de test (bareme sur 10 ou 20, moyenne d'admission),
-ajoutez ses matieres avec leur coefficient, inscrivez les candidats puis saisissez les notes
-dans la grille. La page **Resultats** donne moyennes, rangs et decisions, exportables en PDF
-ou Excel, et imprime les bulletins. Une matiere non notee compte 0. Ces notes sont
+Menu **Test d'accueil**, organise comme le module Notes : **Classes**, **Matieres**,
+**Eleves**, **Saisie des notes**, **Consultation** et **Bulletins**. Les classes et les eleves
+sont ceux de l'ecole (module Eleves) ; seuls les nouveaux inscrits sont proposes par defaut.
+Reglez pour chaque classe le bareme (sur 10 ou 20) et la moyenne d'admission, ajoutez les
+matieres du test (ou reprenez celles du module Notes), puis saisissez les notes dans la grille.
+La consultation donne moyennes, rangs et decisions, exportables en PDF ou Excel ; les bulletins
+s'impriment par eleve ou pour la classe. Une matiere non notee compte 0. Ces notes sont
 independantes : elles n'entrent jamais dans les moyennes mensuelles ni dans les compositions.
 
 ---

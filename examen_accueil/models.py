@@ -1,6 +1,8 @@
-"""Tests d'accueil : classes, matières, candidats et notes propres au module.
+"""Tests d'accueil sur les classes et les élèves de l'école.
 
-Ces modèles n'ont aucune relation avec ceux du module ``notes`` : une note de
+Le module reprend les classes (``eleves.Classe``) et les élèves
+(``eleves.Eleve``) déjà enregistrés, mais garde ses propres matières, notes et
+paramètres. Aucune relation avec les modèles du module ``notes`` : une note de
 test d'accueil ne peut pas entrer dans une moyenne mensuelle, une composition
 ou un classement scolaire.
 """
@@ -11,49 +13,52 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
 
-from eleves.models import Ecole
+from eleves.models import Classe, Eleve
 from synchronisation.mixins import SyncTrackedModel
 
+NOTE_SUR_DEFAUT = 20
+MOYENNE_ADMISSION_DEFAUT = Decimal('10')
 
-class ClasseAccueil(SyncTrackedModel):
-    """Classe (ou session) de test d'accueil d'une école."""
+
+class ParametreAccueil(SyncTrackedModel):
+    """Barème, moyenne d'admission et date du test d'accueil d'une classe."""
     BAREME_CHOICES = [(10, 'Sur 10'), (20, 'Sur 20')]
 
-    ecole = models.ForeignKey(Ecole, on_delete=models.CASCADE, related_name='classes_test_accueil')
-    nom = models.CharField(max_length=100, verbose_name="Nom de la classe de test")
-    niveau_vise = models.CharField(max_length=100, blank=True, verbose_name="Niveau visé",
-                                   help_text="Ex : 7ème année, 11ème Sciences")
-    annee_scolaire = models.CharField(max_length=9, verbose_name="Année scolaire", help_text="Format : 2026-2027")
+    classe = models.OneToOneField(Classe, on_delete=models.CASCADE, related_name='parametre_test_accueil')
     date_test = models.DateField(null=True, blank=True, verbose_name="Date du test")
-    note_sur = models.PositiveSmallIntegerField(choices=BAREME_CHOICES, default=20, verbose_name="Notes sur")
+    note_sur = models.PositiveSmallIntegerField(choices=BAREME_CHOICES, default=NOTE_SUR_DEFAUT,
+                                                verbose_name="Notes sur")
     moyenne_admission = models.DecimalField(
-        max_digits=4, decimal_places=2, default=Decimal('10'),
+        max_digits=4, decimal_places=2, default=MOYENNE_ADMISSION_DEFAUT,
         validators=[MinValueValidator(Decimal('0'))], verbose_name="Moyenne d'admission",
     )
     observations = models.TextField(blank=True, verbose_name="Observations")
 
     cree_par = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
-                                 related_name='classes_test_accueil_creees')
+                                 related_name='parametres_test_accueil_crees')
     date_creation = models.DateTimeField(auto_now_add=True)
     date_modification = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = "Classe de test d'accueil"
-        verbose_name_plural = "Classes de test d'accueil"
-        ordering = ['-annee_scolaire', 'nom']
-        unique_together = ['ecole', 'nom', 'annee_scolaire']
+        verbose_name = "Paramètres du test d'accueil"
+        verbose_name_plural = "Paramètres du test d'accueil"
 
     def __str__(self):
-        return f"{self.nom} ({self.annee_scolaire})"
+        return f"Test d'accueil - {self.classe}"
 
     def clean(self):
         if self.moyenne_admission is not None and self.note_sur and self.moyenne_admission > self.note_sur:
             raise ValidationError({'moyenne_admission': f"La moyenne d'admission ne peut pas dépasser {self.note_sur}."})
 
+    @classmethod
+    def pour(cls, classe):
+        """Paramètres enregistrés de la classe, ou valeurs par défaut non enregistrées."""
+        return cls.objects.filter(classe=classe).first() or cls(classe=classe)
+
 
 class MatiereAccueil(SyncTrackedModel):
-    """Matière évaluée au test d'accueil, avec son coefficient."""
-    classe = models.ForeignKey(ClasseAccueil, on_delete=models.CASCADE, related_name='matieres')
+    """Matière évaluée au test d'accueil d'une classe, avec son coefficient."""
+    classe = models.ForeignKey(Classe, on_delete=models.CASCADE, related_name='matieres_test_accueil')
     nom = models.CharField(max_length=100, verbose_name="Matière")
     coefficient = models.DecimalField(
         max_digits=4, decimal_places=2, default=Decimal('1'),
@@ -74,38 +79,9 @@ class MatiereAccueil(SyncTrackedModel):
         return f"{self.nom} (coef. {self.coefficient})"
 
 
-class CandidatAccueil(SyncTrackedModel):
-    """Candidat inscrit au test d'accueil (pas forcément encore élève)."""
-    SEXE_CHOICES = [('M', 'Masculin'), ('F', 'Féminin')]
-
-    classe = models.ForeignKey(ClasseAccueil, on_delete=models.CASCADE, related_name='candidats')
-    nom = models.CharField(max_length=100, verbose_name="Nom")
-    prenom = models.CharField(max_length=150, verbose_name="Prénom(s)")
-    sexe = models.CharField(max_length=1, choices=SEXE_CHOICES, blank=True, verbose_name="Sexe")
-    date_naissance = models.DateField(null=True, blank=True, verbose_name="Date de naissance")
-    lieu_naissance = models.CharField(max_length=100, blank=True, verbose_name="Lieu de naissance")
-    ecole_origine = models.CharField(max_length=150, blank=True, verbose_name="École d'origine")
-    telephone = models.CharField(max_length=30, blank=True, verbose_name="Téléphone du parent")
-
-    date_creation = models.DateTimeField(auto_now_add=True)
-    date_modification = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        verbose_name = "Candidat au test d'accueil"
-        verbose_name_plural = "Candidats au test d'accueil"
-        ordering = ['nom', 'prenom']
-
-    def __str__(self):
-        return self.nom_complet
-
-    @property
-    def nom_complet(self):
-        return f"{self.prenom} {self.nom}".strip()
-
-
 class NoteAccueil(SyncTrackedModel):
-    """Note d'un candidat dans une matière du test d'accueil."""
-    candidat = models.ForeignKey(CandidatAccueil, on_delete=models.CASCADE, related_name='notes')
+    """Note d'un élève dans une matière du test d'accueil."""
+    eleve = models.ForeignKey(Eleve, on_delete=models.CASCADE, related_name='notes_test_accueil')
     matiere = models.ForeignKey(MatiereAccueil, on_delete=models.CASCADE, related_name='notes')
     note = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(Decimal('0'))],
                                verbose_name="Note")
@@ -117,13 +93,13 @@ class NoteAccueil(SyncTrackedModel):
     class Meta:
         verbose_name = "Note de test d'accueil"
         verbose_name_plural = "Notes de test d'accueil"
-        unique_together = ['candidat', 'matiere']
+        unique_together = ['eleve', 'matiere']
 
     def __str__(self):
-        return f"{self.candidat} - {self.matiere.nom} : {self.note}"
+        return f"{self.eleve} - {self.matiere.nom} : {self.note}"
 
     def clean(self):
-        if self.candidat_id and self.matiere_id and self.candidat.classe_id != self.matiere.classe_id:
-            raise ValidationError("Le candidat et la matière doivent appartenir à la même classe de test.")
-        if self.note is not None and self.matiere_id and self.note > self.matiere.classe.note_sur:
-            raise ValidationError({'note': f"La note ne peut pas dépasser {self.matiere.classe.note_sur}."})
+        if self.note is not None and self.matiere_id:
+            note_sur = ParametreAccueil.pour(self.matiere.classe).note_sur
+            if self.note > note_sur:
+                raise ValidationError({'note': f"La note ne peut pas dépasser {note_sur}."})

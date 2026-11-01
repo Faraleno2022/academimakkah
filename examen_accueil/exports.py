@@ -10,6 +10,7 @@ from ecole_moderne.pdf_utils import draw_logo_watermark
 from notes.charte_graphique import get_charte_reportlab
 
 from .calculs import calculer_resultats, statistiques
+from .models import MatiereAccueil, ParametreAccueil
 
 MENTION_INDEPENDANCE = (
     "Résultats du test d'accueil uniquement : ils n'entrent pas dans les "
@@ -30,7 +31,7 @@ def nombre(valeur):
 
 
 def decision(ligne):
-    feminin = ligne['candidat'].sexe == 'F'
+    feminin = ligne['eleve'].sexe == 'F'
     if ligne['admis']:
         return 'ADMISE' if feminin else 'ADMIS'
     return 'NON ADMISE' if feminin else 'NON ADMIS'
@@ -111,14 +112,12 @@ def _filigrane(ecole):
     return dessiner
 
 
-def _infos_classe(classe):
-    elements = [f"Classe de test : <b>{escape(classe.nom)}</b>"]
-    if classe.niveau_vise:
-        elements.append(f"Niveau visé : <b>{escape(classe.niveau_vise)}</b>")
-    elements.append(f"Année scolaire : <b>{classe.annee_scolaire}</b>")
-    if classe.date_test:
-        elements.append(f"Date du test : <b>{classe.date_test:%d/%m/%Y}</b>")
-    elements.append(f"Notes sur <b>{classe.note_sur}</b> - admission à <b>{nombre(classe.moyenne_admission)}</b>")
+def _infos_classe(classe, parametre):
+    elements = [f"Classe : <b>{escape(classe.nom)}</b>",
+                f"Année scolaire : <b>{escape(classe.annee_scolaire)}</b>"]
+    if parametre.date_test:
+        elements.append(f"Date du test : <b>{parametre.date_test:%d/%m/%Y}</b>")
+    elements.append(f"Notes sur <b>{parametre.note_sur}</b> - admission à <b>{nombre(parametre.moyenne_admission)}</b>")
     return " &nbsp;|&nbsp; ".join(elements)
 
 
@@ -131,9 +130,10 @@ def resultats_pdf(classe):
     ecole = classe.ecole
     charte = get_charte_reportlab(ecole)
     styles = _styles()
-    resultats = calculer_resultats(classe)
-    stats = statistiques(classe, resultats)
-    matieres = list(classe.matieres.all())
+    parametre = ParametreAccueil.pour(classe)
+    resultats = calculer_resultats(classe, parametre)
+    stats = statistiques(resultats)
+    matieres = list(MatiereAccueil.objects.filter(classe=classe))
 
     taille = landscape(A4) if len(matieres) > 4 else A4
     buffer = io.BytesIO()
@@ -144,29 +144,30 @@ def resultats_pdf(classe):
 
     histoire = [_entete(ecole, charte, styles, largeur), Spacer(1, 6),
                 Paragraph("RÉSULTATS DU TEST D'ACCUEIL", styles['titre']),
-                Paragraph(_infos_classe(classe), styles['centre']), Spacer(1, 8)]
+                Paragraph(_infos_classe(classe, parametre), styles['centre']), Spacer(1, 8)]
 
-    entetes = ['Rang', 'Nom et prénom(s)', 'Sexe']
+    entetes = ['Rang', 'Matricule', 'Nom et prénom(s)', 'Sexe']
     entetes += [Paragraph(f"<b>{escape(m.nom)}</b><br/>coef. {nombre(m.coefficient)}", styles['entete']) for m in matieres]
     entetes += ['Total', 'Moyenne', 'Décision']
     donnees = [entetes]
     for ligne in resultats:
-        candidat = ligne['candidat']
+        eleve = ligne['eleve']
         donnees.append(
-            [ligne['rang_texte'], Paragraph(escape(f"{candidat.nom} {candidat.prenom}"), styles['cellule']), candidat.sexe or '-']
+            [ligne['rang_texte'], eleve.matricule, Paragraph(escape(f"{eleve.nom} {eleve.prenom}"), styles['cellule']),
+             eleve.sexe or '-']
             + [nombre(d['note']) for d in ligne['details']]
             + [nombre(ligne['total_points']), nombre(ligne['moyenne']), decision(ligne)]
         )
     if not resultats:
-        donnees.append(['', 'Aucun candidat', ''] + [''] * len(matieres) + ['', '', ''])
+        donnees.append(['', '', 'Aucun élève évalué', ''] + [''] * len(matieres) + ['', '', ''])
 
-    largeur_fixe = 1.3 * cm + 1 * cm + 3 * 1.8 * cm
+    largeur_fixe = 1.3 * cm + 2.2 * cm + 1 * cm + 3 * 1.8 * cm
     largeur_nom = min(6 * cm, max(4.5 * cm, (largeur - largeur_fixe) * 0.25)) if matieres else largeur - largeur_fixe
     largeur_matiere = (largeur - largeur_fixe - largeur_nom) / len(matieres) if matieres else 0
     if matieres and largeur_matiere < 1.4 * cm:
         largeur_matiere = 1.4 * cm
         largeur_nom = max(3.5 * cm, largeur - largeur_fixe - largeur_matiere * len(matieres))
-    largeurs = [1.3 * cm, largeur_nom, 1 * cm] + [largeur_matiere] * len(matieres) + [1.8 * cm] * 3
+    largeurs = [1.3 * cm, 2.2 * cm, largeur_nom, 1 * cm] + [largeur_matiere] * len(matieres) + [1.8 * cm] * 3
 
     tableau = Table(donnees, colWidths=largeurs, repeatRows=1)
     style = [
@@ -175,7 +176,7 @@ def resultats_pdf(classe):
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('FONTSIZE', (0, 0), (-1, -1), 8),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('ALIGN', (1, 1), (1, -1), 'LEFT'),
+        ('ALIGN', (2, 1), (2, -1), 'LEFT'),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('GRID', (0, 0), (-1, -1), 0.4, charte['couleur_bordure']),
         ('LEFTPADDING', (0, 0), (-1, 0), 3), ('RIGHTPADDING', (0, 0), (-1, 0), 3),
@@ -203,8 +204,8 @@ def resultats_pdf(classe):
     return buffer.getvalue()
 
 
-def bulletins_pdf(classe, candidats=None):
-    """Un bulletin par page ; ``candidats`` limite l'impression (sinon toute la classe)."""
+def bulletins_pdf(classe, eleves=None):
+    """Un bulletin par page ; ``eleves`` limite l'impression (sinon tous les élèves évalués)."""
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import cm
@@ -213,14 +214,15 @@ def bulletins_pdf(classe, candidats=None):
     ecole = classe.ecole
     charte = get_charte_reportlab(ecole)
     styles = _styles()
-    resultats = calculer_resultats(classe)
+    parametre = ParametreAccueil.pour(classe)
+    resultats = calculer_resultats(classe, parametre)
     effectif = len(resultats)
-    if candidats is not None:
-        ids = {c.pk for c in candidats}
-        resultats = [r for r in resultats if r['candidat'].pk in ids]
+    if eleves is not None:
+        ids = {e.pk for e in eleves}
+        resultats = [r for r in resultats if r['eleve'].pk in ids]
     else:
         # Bulletins par ordre alphabétique, plus simple à distribuer.
-        resultats = sorted(resultats, key=lambda r: (r['candidat'].nom.upper(), r['candidat'].prenom.upper()))
+        resultats = sorted(resultats, key=lambda r: (r['eleve'].nom.upper(), r['eleve'].prenom.upper()))
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=1.5 * cm, rightMargin=1.5 * cm,
@@ -230,18 +232,18 @@ def bulletins_pdf(classe, candidats=None):
     histoire = []
 
     for numero, ligne in enumerate(resultats):
-        candidat = ligne['candidat']
+        eleve = ligne['eleve']
         if numero:
             histoire.append(PageBreak())
         histoire += [_entete(ecole, charte, styles, largeur), Spacer(1, 6),
                      Paragraph("BULLETIN DU TEST D'ACCUEIL", styles['titre']),
-                     Paragraph(_infos_classe(classe), styles['centre']), Spacer(1, 10)]
+                     Paragraph(_infos_classe(classe, parametre), styles['centre']), Spacer(1, 10)]
 
         identite = [
-            ['Nom et prénom(s)', f"{candidat.nom} {candidat.prenom}", 'Sexe', candidat.get_sexe_display() or '-'],
-            ['Date de naissance', f"{candidat.date_naissance:%d/%m/%Y}" if candidat.date_naissance else '-',
-             'Lieu de naissance', candidat.lieu_naissance or '-'],
-            ["École d'origine", candidat.ecole_origine or '-', 'Effectif', str(effectif)],
+            ['Nom et prénom(s)', f"{eleve.nom} {eleve.prenom}", 'Sexe', eleve.get_sexe_display() or '-'],
+            ['Date de naissance', f"{eleve.date_naissance:%d/%m/%Y}" if eleve.date_naissance else '-',
+             'Lieu de naissance', eleve.lieu_naissance or '-'],
+            ['Matricule', eleve.matricule, 'Élèves évalués', str(effectif)],
         ]
         bloc = Table(identite, colWidths=[3.4 * cm, largeur / 2 - 3.4 * cm, 3.2 * cm, largeur / 2 - 3.2 * cm])
         bloc.setStyle(TableStyle([
@@ -254,7 +256,7 @@ def bulletins_pdf(classe, candidats=None):
         ]))
         histoire += [bloc, Spacer(1, 12)]
 
-        notes = [['Matière', 'Coefficient', f'Note / {classe.note_sur}', 'Points']]
+        notes = [['Matière', 'Coefficient', f'Note / {parametre.note_sur}', 'Points']]
         for detail in ligne['details']:
             notes.append([detail['matiere'].nom, nombre(detail['coefficient']),
                           nombre(detail['note']) if detail['note'] is not None else 'Non noté',
@@ -277,7 +279,7 @@ def bulletins_pdf(classe, candidats=None):
 
         couleur = charte['couleur_mention_tb'] if ligne['admis'] else charte['couleur_mention_insuffisant']
         bilan = Table([
-            ['Moyenne', f"{nombre(ligne['moyenne'])} / {classe.note_sur}", 'Rang', f"{ligne['rang_texte']} / {effectif}"],
+            ['Moyenne', f"{nombre(ligne['moyenne'])} / {parametre.note_sur}", 'Rang', f"{ligne['rang_texte']} / {effectif}"],
             ['Mention', ligne['mention'] or '-', 'Décision', decision(ligne)],
         ], colWidths=[largeur * 0.18, largeur * 0.32, largeur * 0.18, largeur * 0.32])
         bilan.setStyle(TableStyle([
@@ -297,7 +299,7 @@ def bulletins_pdf(classe, candidats=None):
 
     if not histoire:
         histoire = [_entete(ecole, charte, styles, largeur), Spacer(1, 20),
-                    Paragraph("Aucun candidat dans cette classe de test.", styles['titre'])]
+                    Paragraph("Aucun élève évalué au test d'accueil dans cette classe.", styles['titre'])]
     doc.build(histoire, onFirstPage=_filigrane(ecole), onLaterPages=_filigrane(ecole))
     return buffer.getvalue()
 
@@ -309,14 +311,15 @@ def resultats_excel(classe):
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
 
-    resultats = calculer_resultats(classe)
-    stats = statistiques(classe, resultats)
-    matieres = list(classe.matieres.all())
+    parametre = ParametreAccueil.pour(classe)
+    resultats = calculer_resultats(classe, parametre)
+    stats = statistiques(resultats)
+    matieres = list(MatiereAccueil.objects.filter(classe=classe))
 
     classeur = Workbook()
     feuille = classeur.active
     feuille.title = "Résultats"
-    nb_colonnes = 3 + len(matieres) + 4
+    nb_colonnes = 4 + len(matieres) + 4
     fin = get_column_letter(nb_colonnes)
 
     feuille.merge_cells(f"A1:{fin}1")
@@ -326,16 +329,14 @@ def resultats_excel(classe):
     feuille['A2'] = f"RÉSULTATS DU TEST D'ACCUEIL - {classe.nom} ({classe.annee_scolaire})"
     feuille['A2'].font = Font(bold=True, size=12)
     feuille.merge_cells(f"A3:{fin}3")
-    details = [f"Notes sur {classe.note_sur}", f"Moyenne d'admission : {nombre(classe.moyenne_admission)}"]
-    if classe.niveau_vise:
-        details.insert(0, f"Niveau visé : {classe.niveau_vise}")
-    if classe.date_test:
-        details.append(f"Date du test : {classe.date_test:%d/%m/%Y}")
+    details = [f"Notes sur {parametre.note_sur}", f"Moyenne d'admission : {nombre(parametre.moyenne_admission)}"]
+    if parametre.date_test:
+        details.append(f"Date du test : {parametre.date_test:%d/%m/%Y}")
     feuille['A3'] = " | ".join(details)
     for cellule in ('A1', 'A2', 'A3'):
         feuille[cellule].alignment = Alignment(horizontal='center')
 
-    entetes = ['Rang', 'Nom', 'Prénom(s)'] + [f"{m.nom} (coef. {nombre(m.coefficient)})" for m in matieres]
+    entetes = ['Rang', 'Matricule', 'Nom', 'Prénom(s)'] + [f"{m.nom} (coef. {nombre(m.coefficient)})" for m in matieres]
     entetes += ['Total points', 'Moyenne', 'Mention', 'Décision']
     remplissage = PatternFill('solid', fgColor='2C3E50')
     bordure = Border(*(Side(style='thin', color='BDC3C7'),) * 4)
@@ -348,8 +349,8 @@ def resultats_excel(classe):
 
     ligne_excel = 6
     for ligne in resultats:
-        candidat = ligne['candidat']
-        valeurs = [ligne['rang_texte'], candidat.nom, candidat.prenom]
+        eleve = ligne['eleve']
+        valeurs = [ligne['rang_texte'], eleve.matricule, eleve.nom, eleve.prenom]
         valeurs += [float(d['note']) if d['note'] is not None else None for d in ligne['details']]
         valeurs += [float(ligne['total_points']),
                     float(ligne['moyenne']) if ligne['moyenne'] is not None else None,
@@ -357,7 +358,7 @@ def resultats_excel(classe):
         for colonne, valeur in enumerate(valeurs, start=1):
             cellule = feuille.cell(row=ligne_excel, column=colonne, value=valeur)
             cellule.border = bordure
-            if colonne > 3:
+            if colonne > 4:
                 cellule.alignment = Alignment(horizontal='center')
         feuille.cell(row=ligne_excel, column=nb_colonnes).font = Font(
             bold=True, color='27AE60' if ligne['admis'] else 'E74C3C')
@@ -369,16 +370,16 @@ def resultats_excel(classe):
         ("Taux d'admission (%)", float(stats['taux_admission'])),
         ('Moyenne de la classe', float(stats['moyenne_classe']) if stats['moyenne_classe'] is not None else None),
     ]:
-        feuille.cell(row=ligne_excel, column=2, value=libelle).font = Font(bold=True)
-        feuille.cell(row=ligne_excel, column=3, value=valeur)
+        feuille.cell(row=ligne_excel, column=3, value=libelle).font = Font(bold=True)
+        feuille.cell(row=ligne_excel, column=4, value=valeur)
         ligne_excel += 1
     feuille.cell(row=ligne_excel + 1, column=1, value=MENTION_INDEPENDANCE).font = Font(italic=True, color='7F8C8D')
 
-    largeurs = [8, 22, 26] + [14] * len(matieres) + [13, 11, 13, 13]
+    largeurs = [8, 14, 22, 26] + [14] * len(matieres) + [13, 11, 13, 13]
     for colonne, largeur in enumerate(largeurs, start=1):
         feuille.column_dimensions[get_column_letter(colonne)].width = largeur
     feuille.row_dimensions[5].height = 32
-    feuille.freeze_panes = 'D6'
+    feuille.freeze_panes = 'E6'
 
     sortie = io.BytesIO()
     classeur.save(sortie)

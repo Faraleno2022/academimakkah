@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+
+{% block meta_robots %}noindex,nofollow{% endblock %}
+
+{% block extra_css %}{% include 'examen_accueil/_style.html' %}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <div class="ta-entete">
+        <h1><i class="fas fa-clipboard-check me-2"></i>Test d'accueil{% if classe %} - {{ classe.nom }}{% endif %}</h1>
+        <p>{% block sous_titre %}Classes et élèves de l'école, matières et notes propres au test d'accueil.{% endblock %}</p>
+    </div>
+
+    <ul class="nav nav-pills ta-nav mb-3">
+        {% for s in sections %}
+        <li class="nav-item"><a class="nav-link{% if s.nom == section %} active{% endif %}" href="{{ s.url }}"><i class="{{ s.icone }} me-1"></i>{{ s.titre }}</a></li>
+        {% endfor %}
+    </ul>
+
+    {% include 'examen_accueil/_independance.html' %}
+
+    {% block corps %}{% endblock %}
+</div>
+{% endblock %}

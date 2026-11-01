@@ -1,34 +1,78 @@
 """Vues du module Test d'accueil.
 
-Toutes les requêtes passent par ``_classes_utilisateur`` : un utilisateur ne
-voit et ne modifie que les classes de test de son école (le superutilisateur
-voit toutes les écoles, comme dans le reste de l'application).
+Organisation calquée sur le module Notes : classes, matières, élèves, saisie
+des notes, consultation et bulletins. Les classes et les élèves sont ceux de
+l'école (application ``eleves``) ; un utilisateur ne voit que ceux de son
+école. Les matières, notes et moyennes restent propres au module.
 """
 from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_POST
 
-from eleves.utils_annee import get_annee_active
+from eleves.models import Classe, Eleve
+from eleves.suivi_listes import annoter_accueil, classes_visibles
 from utilisateurs.permissions import can_manage_notes
-from utilisateurs.utils import filter_by_user_school, user_school
+from utilisateurs.utils import filter_by_user_school
 
 from . import exports
 from .calculs import calculer_resultats, statistiques
-from .forms import CandidatAccueilForm, ClasseAccueilForm, MatiereAccueilForm
-from .models import CandidatAccueil, ClasseAccueil, MatiereAccueil, NoteAccueil
+from .forms import MatiereAccueilForm, ParametreAccueilForm
+from .models import MatiereAccueil, NoteAccueil, ParametreAccueil
+
+SECTIONS = [
+    ('tableau_bord', 'Accueil', 'fas fa-th-large'),
+    ('classes', 'Classes', 'fas fa-school'),
+    ('matieres', 'Matières', 'fas fa-book-open'),
+    ('eleves', 'Élèves', 'fas fa-user-graduate'),
+    ('saisie_notes', 'Saisie des notes', 'fas fa-edit'),
+    ('consultation', 'Consultation', 'fas fa-eye'),
+    ('bulletins', 'Bulletins', 'fas fa-file-alt'),
+]
 
 
-def _classes_utilisateur(user):
-    return filter_by_user_school(ClasseAccueil.objects.select_related('ecole'), user, 'ecole')
+# ---------------------------------------------------------------- utilitaires
+
+def _toutes_classes(user):
+    """Classes de l'école de l'utilisateur, toutes années confondues."""
+    return filter_by_user_school(Classe.objects.select_related('ecole'), user, 'ecole')
 
 
-def _classe(request, pk):
-    return get_object_or_404(_classes_utilisateur(request.user), pk=pk)
+def _classe(request, classe_id):
+    return get_object_or_404(_toutes_classes(request.user), pk=classe_id)
+
+
+def _classe_choisie(request):
+    """Classe passée en ``?classe=`` (ou ``None``)."""
+    try:
+        classe_id = int(request.GET.get('classe') or request.POST.get('classe') or 0)
+    except (TypeError, ValueError):
+        return None
+    return _toutes_classes(request.user).filter(pk=classe_id).first() if classe_id else None
+
+
+def _url_section(nom, classe, **params):
+    url = reverse(f'examen_accueil:{nom}')
+    if classe is not None:
+        params = {'classe': classe.pk, **params}
+    requete = '&'.join(f'{cle}={valeur}' for cle, valeur in params.items() if valeur not in (None, ''))
+    return f'{url}?{requete}' if requete else url
+
+
+def _contexte(request, section, classe=None, **extra):
+    return {
+        'section': section,
+        'sections': [{'nom': nom, 'titre': titre, 'icone': icone, 'url': _url_section(nom, classe)}
+                     for nom, titre, icone in SECTIONS],
+        'classes': classes_visibles(request),
+        'classe': classe,
+        **extra,
+    }
 
 
 def _reponse_fichier(contenu, nom, type_mime, en_ligne=False):
@@ -38,146 +82,178 @@ def _reponse_fichier(contenu, nom, type_mime, en_ligne=False):
     return reponse
 
 
-@can_manage_notes
-def liste_classes(request):
-    ecole = user_school(request.user)
-    classes = _classes_utilisateur(request.user)
-    annees = sorted(set(classes.values_list('annee_scolaire', flat=True)), reverse=True)
-    annee = request.GET.get('annee') or ''
-    if annee:
-        classes = classes.filter(annee_scolaire=annee)
+def eleves_a_evaluer(classe, tous=False):
+    """Élèves de la classe proposés au test.
 
-    if request.method == 'POST':
-        if ecole is None:
-            messages.error(request, "Aucune école n'est associée à votre compte.")
-            return redirect('examen_accueil:liste')
-        form = ClasseAccueilForm(request.POST, ecole=ecole)
-        if form.is_valid():
-            classe = form.save(commit=False)
-            classe.cree_par = request.user
-            classe.save()
-            messages.success(request, f"Classe de test « {classe.nom} » créée. Ajoutez maintenant ses matières.")
-            return redirect('examen_accueil:detail', classe.pk)
-    else:
-        annee_defaut = get_annee_active(request, ecole) if ecole else None
-        form = ClasseAccueilForm(ecole=ecole, initial={'annee_scolaire': annee_defaut or ''})
+    Par défaut : les nouveaux inscrits (concernés par le test d'accueil, comme
+    dans la liste des élèves) et ceux qui ont déjà une note ; ``tous`` ajoute
+    les réinscrits.
+    """
+    eleves = annoter_accueil(Eleve.pedagogiques.filter(classe=classe))
+    if not tous:
+        deja_notes = NoteAccueil.objects.filter(matiere__classe=classe).values('eleve_id')
+        eleves = eleves.filter(Q(accueil_concerne=True) | Q(pk__in=deja_notes))
+    return eleves.order_by('nom', 'prenom')
 
-    classes = classes.annotate(nb_matieres=Count('matieres', distinct=True),
-                               nb_candidats=Count('candidats', distinct=True))
-    lignes = [{'classe': c, 'nb_matieres': c.nb_matieres, 'nb_candidats': c.nb_candidats} for c in classes]
-    return render(request, 'examen_accueil/liste.html', {
-        'lignes': lignes, 'form': form, 'annees': annees, 'annee': annee,
-        'ouvrir_formulaire': request.method == 'POST',
-    })
 
+def classe_notes_correspondante(classe):
+    """Classe du module Notes portant le même nom (même année de préférence)."""
+    from notes.classes_utils import normaliser_nom_classe
+    from notes.models import ClasseNote
+
+    cible = normaliser_nom_classe(classe.nom)
+    candidates = [c for c in ClasseNote.objects.filter(ecole_id=classe.ecole_id)
+                  if normaliser_nom_classe(c.nom) == cible]
+    candidates.sort(key=lambda c: c.annee_scolaire, reverse=True)
+    candidates.sort(key=lambda c: c.annee_scolaire != classe.annee_scolaire)
+    return candidates[0] if candidates else None
+
+
+# ------------------------------------------------------------ tableau de bord
 
 @can_manage_notes
-def detail_classe(request, pk):
-    classe = _classe(request, pk)
-    form_matiere = MatiereAccueilForm(classe=classe, prefix='matiere',
-                                      initial={'ordre': classe.matieres.count() + 1})
-    form_candidat = CandidatAccueilForm(prefix='candidat')
+def tableau_bord(request):
+    classes = classes_visibles(request)
+    resume = classes.aggregate(
+        nb_classes=Count('id', distinct=True),
+        nb_classes_pretes=Count('id', filter=Q(matieres_test_accueil__isnull=False), distinct=True),
+        nb_evalues=Count('matieres_test_accueil__notes__eleve', distinct=True),
+    )
+    return render(request, 'examen_accueil/tableau_bord.html', _contexte(request, 'tableau_bord', resume=resume))
 
-    if request.method == 'POST':
-        if 'ajouter_matiere' in request.POST:
-            form_matiere = MatiereAccueilForm(request.POST, classe=classe, prefix='matiere')
-            if form_matiere.is_valid():
-                matiere = form_matiere.save(commit=False)
+
+# -------------------------------------------------------------------- classes
+
+@can_manage_notes
+def classes(request):
+    lignes = classes_visibles(request).select_related('parametre_test_accueil').annotate(
+        nb_eleves=Count('eleves', filter=Q(eleves__import_verrouille=False), distinct=True),
+        nb_matieres=Count('matieres_test_accueil', distinct=True),
+        nb_evalues=Count('matieres_test_accueil__notes__eleve', distinct=True),
+    )
+    lignes = [{'classe': c, 'parametre': getattr(c, 'parametre_test_accueil', None) or ParametreAccueil(classe=c)}
+              for c in lignes]
+    return render(request, 'examen_accueil/classes.html', _contexte(request, 'classes', lignes=lignes))
+
+
+@can_manage_notes
+def parametres_classe(request, classe_id):
+    classe = _classe(request, classe_id)
+    parametre = ParametreAccueil.pour(classe)
+    form = ParametreAccueilForm(request.POST or None, instance=parametre)
+    if request.method == 'POST' and form.is_valid():
+        note_sur = form.cleaned_data['note_sur']
+        if NoteAccueil.objects.filter(matiere__classe=classe, note__gt=note_sur).exists():
+            form.add_error('note_sur', f"Des notes déjà saisies dépassent {note_sur} : corrigez-les d'abord.")
+        else:
+            parametre = form.save(commit=False)
+            parametre.classe = classe
+            if parametre.pk is None:
+                parametre.cree_par = request.user
+            parametre.save()
+            messages.success(request, f"Paramètres du test d'accueil de {classe.nom} enregistrés.")
+            return redirect('examen_accueil:classes')
+    return render(request, 'examen_accueil/formulaire.html', _contexte(
+        request, 'classes', classe, form=form, titre=f"Paramètres du test d'accueil - {classe.nom}",
+        retour=reverse('examen_accueil:classes')))
+
+
+# ------------------------------------------------------------------- matières
+
+@can_manage_notes
+def matieres(request):
+    classe = _classe_choisie(request)
+    form = None
+    if classe is not None:
+        form = MatiereAccueilForm(classe=classe, initial={'ordre': classe.matieres_test_accueil.count() + 1})
+        if request.method == 'POST':
+            if 'reprendre_notes' in request.POST:
+                return _reprendre_matieres_notes(request, classe)
+            form = MatiereAccueilForm(request.POST, classe=classe)
+            if form.is_valid():
+                matiere = form.save(commit=False)
                 matiere.classe = classe
                 matiere.save()
                 messages.success(request, f"Matière « {matiere.nom} » ajoutée.")
-                return redirect('examen_accueil:detail', classe.pk)
-        elif 'ajouter_candidat' in request.POST:
-            form_candidat = CandidatAccueilForm(request.POST, prefix='candidat')
-            if form_candidat.is_valid():
-                candidat = form_candidat.save(commit=False)
-                candidat.classe = classe
-                candidat.save()
-                messages.success(request, f"Candidat « {candidat.nom_complet} » ajouté.")
-                return redirect(f"{request.path}#candidats")
-
-    return render(request, 'examen_accueil/detail.html', {
-        'classe': classe,
-        'matieres': classe.matieres.all(),
-        'candidats': classe.candidats.all(),
-        'nb_notes': NoteAccueil.objects.filter(matiere__classe=classe).count(),
-        'form_matiere': form_matiere,
-        'form_candidat': form_candidat,
-    })
+                return redirect(_url_section('matieres', classe))
+    liste = list(MatiereAccueil.objects.filter(classe=classe).annotate(nb_notes=Count('notes'))) if classe else []
+    return render(request, 'examen_accueil/matieres.html', _contexte(
+        request, 'matieres', classe, form=form, matieres=liste,
+        total_coefficients=sum((m.coefficient for m in liste), Decimal('0')),
+        classe_notes=classe_notes_correspondante(classe) if classe else None))
 
 
-@can_manage_notes
-def modifier_classe(request, pk):
-    classe = _classe(request, pk)
-    form = ClasseAccueilForm(request.POST or None, instance=classe, ecole=classe.ecole)
-    if request.method == 'POST' and form.is_valid():
-        form.save()
-        messages.success(request, "Classe de test mise à jour.")
-        return redirect('examen_accueil:detail', classe.pk)
-    return render(request, 'examen_accueil/formulaire.html', {
-        'form': form, 'classe': classe, 'titre': f"Modifier la classe « {classe.nom} »",
-    })
+def _reprendre_matieres_notes(request, classe):
+    """Copie (sans lien) les matières et coefficients de la classe du module Notes."""
+    classe_notes = classe_notes_correspondante(classe)
+    if classe_notes is None:
+        messages.warning(request, "Aucune classe du module Notes ne correspond à cette classe.")
+        return redirect(_url_section('matieres', classe))
+    existantes = {nom.lower() for nom in classe.matieres_test_accueil.values_list('nom', flat=True)}
+    ordre = classe.matieres_test_accueil.count()
+    ajoutees = 0
+    for matiere in classe_notes.matieres.filter(actif=True).order_by('nom'):
+        if matiere.nom.strip().lower() in existantes:
+            continue
+        ordre += 1
+        MatiereAccueil.objects.create(classe=classe, nom=matiere.nom.strip(),
+                                      coefficient=matiere.coefficient or Decimal('1'), ordre=ordre)
+        existantes.add(matiere.nom.strip().lower())
+        ajoutees += 1
+    if ajoutees:
+        messages.success(request, f"{ajoutees} matière(s) reprise(s) du module Notes. Ajustez les coefficients si besoin.")
+    else:
+        messages.info(request, "Toutes les matières du module Notes sont déjà présentes.")
+    return redirect(_url_section('matieres', classe))
 
 
-@can_manage_notes
-@require_POST
-def supprimer_classe(request, pk):
-    classe = _classe(request, pk)
-    nom = classe.nom
-    classe.delete()
-    messages.success(request, f"Classe de test « {nom} » supprimée avec ses matières, candidats et notes.")
-    return redirect('examen_accueil:liste')
+def _matiere(request, pk):
+    return get_object_or_404(
+        filter_by_user_school(MatiereAccueil.objects.select_related('classe'), request.user, 'classe__ecole'), pk=pk)
 
 
 @can_manage_notes
 def modifier_matiere(request, pk):
-    matiere = get_object_or_404(
-        filter_by_user_school(MatiereAccueil.objects.select_related('classe'), request.user, 'classe__ecole'), pk=pk)
+    matiere = _matiere(request, pk)
     form = MatiereAccueilForm(request.POST or None, instance=matiere, classe=matiere.classe)
     if request.method == 'POST' and form.is_valid():
         form.save()
         messages.success(request, "Matière mise à jour.")
-        return redirect('examen_accueil:detail', matiere.classe_id)
-    return render(request, 'examen_accueil/formulaire.html', {
-        'form': form, 'classe': matiere.classe, 'titre': f"Modifier la matière « {matiere.nom} »",
-    })
+        return redirect(_url_section('matieres', matiere.classe))
+    return render(request, 'examen_accueil/formulaire.html', _contexte(
+        request, 'matieres', matiere.classe, form=form, titre=f"Modifier la matière « {matiere.nom} »",
+        retour=_url_section('matieres', matiere.classe)))
 
 
 @can_manage_notes
 @require_POST
 def supprimer_matiere(request, pk):
-    matiere = get_object_or_404(
-        filter_by_user_school(MatiereAccueil.objects.all(), request.user, 'classe__ecole'), pk=pk)
-    classe_id = matiere.classe_id
+    matiere = _matiere(request, pk)
+    classe = matiere.classe
     matiere.delete()
-    messages.success(request, "Matière supprimée (ses notes ont été effacées).")
-    return redirect('examen_accueil:detail', classe_id)
+    messages.success(request, "Matière supprimée (ses notes de test ont été effacées).")
+    return redirect(_url_section('matieres', classe))
 
 
-@can_manage_notes
-def modifier_candidat(request, pk):
-    candidat = get_object_or_404(
-        filter_by_user_school(CandidatAccueil.objects.select_related('classe'), request.user, 'classe__ecole'), pk=pk)
-    form = CandidatAccueilForm(request.POST or None, instance=candidat)
-    if request.method == 'POST' and form.is_valid():
-        form.save()
-        messages.success(request, "Candidat mis à jour.")
-        return redirect('examen_accueil:detail', candidat.classe_id)
-    return render(request, 'examen_accueil/formulaire.html', {
-        'form': form, 'classe': candidat.classe, 'titre': f"Modifier le candidat « {candidat.nom_complet} »",
-    })
-
+# --------------------------------------------------------------------- élèves
 
 @can_manage_notes
-@require_POST
-def supprimer_candidat(request, pk):
-    candidat = get_object_or_404(
-        filter_by_user_school(CandidatAccueil.objects.all(), request.user, 'classe__ecole'), pk=pk)
-    classe_id = candidat.classe_id
-    candidat.delete()
-    messages.success(request, "Candidat supprimé.")
-    return redirect('examen_accueil:detail', classe_id)
+def eleves(request):
+    classe = _classe_choisie(request)
+    tous = request.GET.get('tous') == '1'
+    lignes, nb_matieres = [], 0
+    if classe is not None:
+        nb_matieres = classe.matieres_test_accueil.count()
+        resultats = {r['eleve'].pk: r for r in calculer_resultats(classe)}
+        for eleve in eleves_a_evaluer(classe, tous):
+            lignes.append({'eleve': eleve, 'resultat': resultats.pop(eleve.pk, None)})
+        # Élèves notés puis sortis de la classe : leurs résultats restent visibles.
+        lignes += [{'eleve': r['eleve'], 'resultat': r, 'ailleurs': True} for r in resultats.values()]
+    return render(request, 'examen_accueil/eleves.html', _contexte(
+        request, 'eleves', classe, lignes=lignes, tous=tous, nb_matieres=nb_matieres))
 
+
+# --------------------------------------------------------------------- saisie
 
 def _lire_note(brute, note_sur):
     """Valeur saisie → (Decimal | None, erreur | None). Accepte la virgule."""
@@ -194,104 +270,129 @@ def _lire_note(brute, note_sur):
 
 
 @can_manage_notes
-def saisie_notes(request, pk):
-    classe = _classe(request, pk)
-    matieres = list(classe.matieres.all())
-    candidats = list(classe.candidats.all())
-    existantes = {(n.candidat_id, n.matiere_id): n for n in NoteAccueil.objects.filter(matiere__classe=classe)}
+def saisie_notes(request):
+    classe = _classe_choisie(request)
+    tous = (request.GET.get('tous') or request.POST.get('tous')) == '1'
+    contexte = _contexte(request, 'saisie_notes', classe, tous=tous)
+    if classe is None:
+        return render(request, 'examen_accueil/saisie_notes.html', contexte)
+
+    parametre = ParametreAccueil.pour(classe)
+    matieres_classe = list(classe.matieres_test_accueil.all())
+    liste = list(eleves_a_evaluer(classe, tous))
+    existantes = {(n.eleve_id, n.matiere_id): n for n in NoteAccueil.objects.filter(matiere__classe=classe)}
     saisies = {}
     erreurs = []
 
     if request.method == 'POST':
         a_enregistrer, a_supprimer = [], []
-        for candidat in candidats:
-            for matiere in matieres:
-                cle = f"note_{candidat.pk}_{matiere.pk}"
+        for eleve in liste:
+            for matiere in matieres_classe:
+                cle = f"note_{eleve.pk}_{matiere.pk}"
                 if cle not in request.POST:
                     continue
                 brute = request.POST[cle]
-                saisies[(candidat.pk, matiere.pk)] = brute
-                valeur, erreur = _lire_note(brute, classe.note_sur)
+                saisies[(eleve.pk, matiere.pk)] = brute
+                valeur, erreur = _lire_note(brute, parametre.note_sur)
                 if erreur:
-                    erreurs.append(f"{candidat.nom_complet} - {matiere.nom} : {erreur}")
+                    erreurs.append(f"{eleve.nom_complet} - {matiere.nom} : {erreur}")
                     continue
-                existante = existantes.get((candidat.pk, matiere.pk))
+                existante = existantes.get((eleve.pk, matiere.pk))
                 if valeur is None:
                     if existante:
                         a_supprimer.append(existante.pk)
                 elif existante is None or existante.note != valeur:
-                    a_enregistrer.append((candidat, matiere, valeur, existante))
+                    a_enregistrer.append((eleve, matiere, valeur, existante))
 
         if erreurs:
             messages.error(request, "Aucune note n'a été enregistrée : corrigez les valeurs signalées.")
         else:
             with transaction.atomic():
-                for candidat, matiere, valeur, existante in a_enregistrer:
-                    note = existante or NoteAccueil(candidat=candidat, matiere=matiere)
+                for eleve, matiere, valeur, existante in a_enregistrer:
+                    note = existante or NoteAccueil(eleve=eleve, matiere=matiere)
                     note.note = valeur
                     note.saisi_par = request.user
                     note.save()
                 for note in NoteAccueil.objects.filter(pk__in=a_supprimer):
                     note.delete()
+                # Même indicateur que la liste des élèves : « évalué au test d'accueil ».
+                for eleve in {e for e, _, _, _ in a_enregistrer if not e.evaluation_accueil_effectuee}:
+                    eleve.evaluation_accueil_effectuee = True
+                    eleve.save(update_fields=['evaluation_accueil_effectuee', 'date_modification'])
             messages.success(request, f"Notes enregistrées ({len(a_enregistrer)} modifiée(s), "
                                       f"{len(a_supprimer)} effacée(s)).")
-            return redirect('examen_accueil:saisie_notes', classe.pk)
+            return redirect(_url_section('saisie_notes', classe, tous='1' if tous else ''))
 
     lignes = []
-    for candidat in candidats:
+    for eleve in liste:
         cellules = []
-        for matiere in matieres:
-            cle = (candidat.pk, matiere.pk)
+        for matiere in matieres_classe:
+            cle = (eleve.pk, matiere.pk)
             if cle in saisies:
                 valeur = saisies[cle]
             else:
                 note = existantes.get(cle)
                 valeur = exports.nombre(note.note) if note else ''
-            cellules.append({'nom': f"note_{candidat.pk}_{matiere.pk}", 'valeur': valeur})
-        lignes.append({'candidat': candidat, 'cellules': cellules})
+            cellules.append({'nom': f"note_{eleve.pk}_{matiere.pk}", 'valeur': valeur})
+        lignes.append({'eleve': eleve, 'cellules': cellules})
 
-    return render(request, 'examen_accueil/saisie_notes.html', {
-        'classe': classe, 'matieres': matieres, 'lignes': lignes, 'erreurs': erreurs,
-    })
+    contexte.update(parametre=parametre, matieres=matieres_classe, lignes=lignes, erreurs=erreurs)
+    return render(request, 'examen_accueil/saisie_notes.html', contexte)
+
+
+# ---------------------------------------------------------------- consultation
+
+@can_manage_notes
+def consultation(request):
+    classe = _classe_choisie(request)
+    contexte = _contexte(request, 'consultation', classe)
+    if classe is not None:
+        parametre = ParametreAccueil.pour(classe)
+        lignes = calculer_resultats(classe, parametre)
+        contexte.update(parametre=parametre, matieres=classe.matieres_test_accueil.all(), lignes=lignes,
+                        stats=statistiques(lignes))
+    return render(request, 'examen_accueil/consultation.html', contexte)
 
 
 @can_manage_notes
-def resultats(request, pk):
-    classe = _classe(request, pk)
-    lignes = calculer_resultats(classe)
-    return render(request, 'examen_accueil/resultats.html', {
-        'classe': classe, 'matieres': classe.matieres.all(), 'lignes': lignes,
-        'stats': statistiques(classe, lignes),
-    })
-
-
-@can_manage_notes
-def resultats_pdf(request, pk):
-    classe = _classe(request, pk)
+def resultats_pdf(request, classe_id):
+    classe = _classe(request, classe_id)
     return _reponse_fichier(exports.resultats_pdf(classe), exports.nom_fichier(classe, 'resultats_test_accueil', 'pdf'),
                             'application/pdf', en_ligne=True)
 
 
 @can_manage_notes
-def resultats_excel(request, pk):
-    classe = _classe(request, pk)
+def resultats_excel(request, classe_id):
+    classe = _classe(request, classe_id)
     return _reponse_fichier(
         exports.resultats_excel(classe), exports.nom_fichier(classe, 'resultats_test_accueil', 'xlsx'),
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
+# ------------------------------------------------------------------ bulletins
+
 @can_manage_notes
-def bulletins_pdf(request, pk):
-    classe = _classe(request, pk)
+def bulletins(request):
+    classe = _classe_choisie(request)
+    contexte = _contexte(request, 'bulletins', classe)
+    if classe is not None:
+        lignes = calculer_resultats(classe)
+        contexte.update(lignes=sorted(lignes, key=lambda r: (r['eleve'].nom.upper(), r['eleve'].prenom.upper())),
+                        parametre=ParametreAccueil.pour(classe))
+    return render(request, 'examen_accueil/bulletins.html', contexte)
+
+
+@can_manage_notes
+def bulletins_pdf(request, classe_id):
+    classe = _classe(request, classe_id)
     return _reponse_fichier(exports.bulletins_pdf(classe), exports.nom_fichier(classe, 'bulletins_test_accueil', 'pdf'),
                             'application/pdf', en_ligne=True)
 
 
 @can_manage_notes
-def bulletin_candidat_pdf(request, pk):
-    candidat = get_object_or_404(
-        filter_by_user_school(CandidatAccueil.objects.select_related('classe__ecole'), request.user, 'classe__ecole'),
-        pk=pk)
-    contenu = exports.bulletins_pdf(candidat.classe, candidats=[candidat])
-    nom = f"bulletin_test_accueil_{exports.slugify(candidat.nom_complet) or candidat.pk}.pdf"
+def bulletin_eleve_pdf(request, classe_id, eleve_id):
+    classe = _classe(request, classe_id)
+    eleve = get_object_or_404(Eleve.objects.filter(notes_test_accueil__matiere__classe=classe).distinct(), pk=eleve_id)
+    contenu = exports.bulletins_pdf(classe, eleves=[eleve])
+    nom = f"bulletin_test_accueil_{exports.slugify(eleve.nom_complet) or eleve.pk}.pdf"
     return _reponse_fichier(contenu, nom, 'application/pdf', en_ligne=True)

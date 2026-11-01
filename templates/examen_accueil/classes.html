@@ -1,0 +1,44 @@
+{% extends 'examen_accueil/_base.html' %}
+
+{% block title %}Test d'accueil - Classes{% endblock %}
+{% block sous_titre %}Classes de l'école pour l'année en cours. Elles se créent dans le module Élèves.{% endblock %}
+
+{% block corps %}
+<div class="ta-carte">
+    {% if lignes %}
+    <div class="table-responsive">
+        <table class="table table-hover table-sm align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Classe</th><th>Niveau</th><th class="text-center">Élèves</th><th class="text-center">Matières</th>
+                    <th class="text-center">Évalués</th><th class="text-center">Barème</th><th class="text-center">Admission</th>
+                    <th>Date du test</th><th></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for ligne in lignes %}
+                <tr>
+                    <td class="fw-semibold">{{ ligne.classe.nom }} <small class="text-muted">({{ ligne.classe.annee_scolaire }})</small>{% if request.user.is_superuser %}<br><small class="text-muted">{{ ligne.classe.ecole.nom }}</small>{% endif %}</td>
+                    <td>{{ ligne.classe.get_niveau_display }}</td>
+                    <td class="text-center">{{ ligne.classe.nb_eleves }}</td>
+                    <td class="text-center">{% if ligne.classe.nb_matieres %}{{ ligne.classe.nb_matieres }}{% else %}<span class="badge bg-warning text-dark">Aucune</span>{% endif %}</td>
+                    <td class="text-center">{{ ligne.classe.nb_evalues }}</td>
+                    <td class="text-center">/ {{ ligne.parametre.note_sur }}</td>
+                    <td class="text-center">{{ ligne.parametre.moyenne_admission|floatformat:"-2" }}</td>
+                    <td>{% if ligne.parametre.date_test %}{{ ligne.parametre.date_test|date:"d/m/Y" }}{% else %}-{% endif %}</td>
+                    <td class="text-end text-nowrap">
+                        <a href="{% url 'examen_accueil:parametres_classe' ligne.classe.pk %}" class="btn btn-sm btn-outline-primary" title="Paramètres du test"><i class="fas fa-cog"></i></a>
+                        <a href="{% url 'examen_accueil:matieres' %}?classe={{ ligne.classe.pk }}" class="btn btn-sm btn-outline-success" title="Matières"><i class="fas fa-book-open"></i></a>
+                        <a href="{% url 'examen_accueil:saisie_notes' %}?classe={{ ligne.classe.pk }}" class="btn btn-sm btn-outline-warning" title="Saisir les notes"><i class="fas fa-edit"></i></a>
+                        <a href="{% url 'examen_accueil:consultation' %}?classe={{ ligne.classe.pk }}" class="btn btn-sm btn-outline-secondary" title="Résultats"><i class="fas fa-eye"></i></a>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="text-muted mb-0">Aucune classe pour l'année en cours. Créez les classes dans le module Élèves.</p>
+    {% endif %}
+</div>
+{% endblock %}

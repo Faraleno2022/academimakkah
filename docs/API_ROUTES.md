@@ -174,14 +174,20 @@ Fichier : `ecole_moderne/urls.py`
 
 | Methode | URL | Vue | Description |
 |---------|-----|-----|-------------|
-| GET/POST | `/test-accueil/` | `liste_classes` | Liste et creation des classes de test |
-| GET/POST | `/test-accueil/classe/<id>/` | `detail_classe` | Matieres et candidats d'une classe de test |
-| GET/POST | `/test-accueil/classe/<id>/notes/` | `saisie_notes` | Saisie des notes (grille candidats x matieres) |
-| GET | `/test-accueil/classe/<id>/resultats/` | `resultats` | Moyennes, rangs, admission |
-| GET | `/test-accueil/classe/<id>/resultats/pdf/` | `resultats_pdf` | Resultats PDF |
-| GET | `/test-accueil/classe/<id>/resultats/excel/` | `resultats_excel` | Resultats Excel |
-| GET | `/test-accueil/classe/<id>/bulletins/` | `bulletins_pdf` | Bulletins de toute la classe (PDF) |
-| GET | `/test-accueil/candidat/<id>/bulletin/` | `bulletin_candidat_pdf` | Bulletin d'un candidat (PDF) |
+| GET | `/test-accueil/` | `tableau_bord` | Tableau de bord du module |
+| GET | `/test-accueil/classes/` | `classes` | Classes de l'ecole et parametres du test |
+| GET/POST | `/test-accueil/classes/<id>/parametres/` | `parametres_classe` | Bareme, moyenne d'admission, date du test |
+| GET/POST | `/test-accueil/matieres/?classe=<id>` | `matieres` | Matieres et coefficients (reprise possible du module Notes) |
+| GET/POST | `/test-accueil/matieres/<id>/modifier/` | `modifier_matiere` | Modifier une matiere |
+| POST | `/test-accueil/matieres/<id>/supprimer/` | `supprimer_matiere` | Supprimer une matiere et ses notes |
+| GET | `/test-accueil/eleves/?classe=<id>` | `eleves` | Eleves de la classe et situation au test |
+| GET/POST | `/test-accueil/saisie/?classe=<id>` | `saisie_notes` | Saisie des notes (grille eleves x matieres) |
+| GET | `/test-accueil/consultation/?classe=<id>` | `consultation` | Moyennes, rangs, admission |
+| GET | `/test-accueil/consultation/<id>/pdf/` | `resultats_pdf` | Resultats PDF |
+| GET | `/test-accueil/consultation/<id>/excel/` | `resultats_excel` | Resultats Excel |
+| GET | `/test-accueil/bulletins/?classe=<id>` | `bulletins` | Liste des bulletins |
+| GET | `/test-accueil/bulletins/<id>/pdf/` | `bulletins_pdf` | Bulletins de toute la classe (PDF) |
+| GET | `/test-accueil/bulletins/<id>/eleve/<id>/pdf/` | `bulletin_eleve_pdf` | Bulletin d'un eleve (PDF) |
 
 ---
 

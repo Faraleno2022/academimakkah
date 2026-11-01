@@ -95,11 +95,12 @@ MODELES_REGISTRE_3 = [
 ]
 SYNC_MODEL_LABELS += MODELES_REGISTRE_3
 
-# Version 4 : module Test d'accueil (parents avant enfants).
+# Version 4 : module Test d'accueil sur les classes et élèves de l'école
+# (parents avant enfants). Remplace la première forme du module (1.3.28, non
+# diffusée) qui avait ses propres classes et candidats.
 MODELES_REGISTRE_4 = [
-    'examen_accueil.ClasseAccueil',
+    'examen_accueil.ParametreAccueil',
     'examen_accueil.MatiereAccueil',
-    'examen_accueil.CandidatAccueil',
     'examen_accueil.NoteAccueil',
 ]
 SYNC_MODEL_LABELS += MODELES_REGISTRE_4
@@ -135,7 +136,8 @@ def version_registre(valeur):
 CLES_NATURELLES = {
     'presence.PresenceJournaliere': ('eleve', 'date'),
     'notes.RemiseDevoir': ('devoir', 'eleve'),
-    'examen_accueil.NoteAccueil': ('candidat', 'matiere'),
+    'examen_accueil.ParametreAccueil': ('classe',),
+    'examen_accueil.NoteAccueil': ('eleve', 'matiere'),
     # Modes et types créés par défaut sur un poste avant sa liaison au serveur.
     'paiements.ModePaiement': ('nom',),
     'paiements.TypePaiement': ('nom',),

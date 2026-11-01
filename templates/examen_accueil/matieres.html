@@ -1,0 +1,67 @@
+{% extends 'examen_accueil/_base.html' %}
+
+{% block title %}Test d'accueil - Matières{% endblock %}
+{% block sous_titre %}Matières évaluées au test et leurs coefficients, par classe.{% endblock %}
+
+{% block corps %}
+{% include 'examen_accueil/_choix_classe.html' %}
+
+{% if classe %}
+<div class="row g-3">
+    <div class="col-lg-7">
+        <div class="ta-carte">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                <h2 class="h5 mb-0">Matières de {{ classe.nom }}</h2>
+                {% if classe_notes %}
+                <form method="post" class="m-0">
+                    {% csrf_token %}
+                    {# Champ caché : base.html désactive les boutons à l'envoi, leur nom ne serait pas transmis. #}
+                    <input type="hidden" name="reprendre_notes" value="1">
+                    <button type="submit" class="btn btn-sm btn-outline-primary" title="Copie les matières et coefficients de la classe {{ classe_notes.nom }} du module Notes, sans lien entre les deux">
+                        <i class="fas fa-copy me-1"></i>Reprendre les matières du module Notes
+                    </button>
+                </form>
+                {% endif %}
+            </div>
+            {% if matieres %}
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light"><tr><th>Ordre</th><th>Matière</th><th class="text-center">Coefficient</th><th class="text-center">Notes saisies</th><th></th></tr></thead>
+                    <tbody>
+                    {% for matiere in matieres %}
+                        <tr>
+                            <td>{{ matiere.ordre }}</td>
+                            <td class="fw-semibold">{{ matiere.nom }}</td>
+                            <td class="text-center">{{ matiere.coefficient|floatformat:"-2" }}</td>
+                            <td class="text-center">{{ matiere.nb_notes }}</td>
+                            <td class="text-end text-nowrap">
+                                <a href="{% url 'examen_accueil:modifier_matiere' matiere.pk %}" class="btn btn-sm btn-outline-primary" title="Modifier"><i class="fas fa-pen"></i></a>
+                                <form method="post" action="{% url 'examen_accueil:supprimer_matiere' matiere.pk %}" class="d-inline" onsubmit="return confirm('Supprimer la matière {{ matiere.nom|escapejs }} et ses notes de test ?');">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Supprimer"><i class="fas fa-trash"></i></button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                    <tfoot><tr class="table-light"><th></th><th>Total des coefficients</th><th class="text-center">{{ total_coefficients|floatformat:"-2" }}</th><th colspan="2"></th></tr></tfoot>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted mb-0">Aucune matière pour le test de cette classe.</p>
+            {% endif %}
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="ta-carte">
+            <h2 class="h5 mb-3">Ajouter une matière</h2>
+            <form method="post" novalidate>
+                {% csrf_token %}
+                {% include 'examen_accueil/_champs.html' with form=form %}
+                <button type="submit" class="btn btn-primary mt-3"><i class="fas fa-plus me-1"></i>Ajouter</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

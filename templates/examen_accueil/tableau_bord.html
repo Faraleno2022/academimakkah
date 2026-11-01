@@ -1,0 +1,38 @@
+{% extends 'examen_accueil/_base.html' %}
+
+{% block title %}Test d'accueil{% endblock %}
+
+{% block corps %}
+<div class="row g-2 mb-3 text-center">
+    <div class="col-4"><div class="ta-carte p-2 mb-0"><div class="small text-muted">Classes de l'année</div><div class="h5 mb-0">{{ resume.nb_classes }}</div></div></div>
+    <div class="col-4"><div class="ta-carte p-2 mb-0"><div class="small text-muted">Classes avec matières</div><div class="h5 mb-0">{{ resume.nb_classes_pretes }}</div></div></div>
+    <div class="col-4"><div class="ta-carte p-2 mb-0"><div class="small text-muted">Élèves évalués</div><div class="h5 mb-0">{{ resume.nb_evalues }}</div></div></div>
+</div>
+
+<div class="row g-4">
+    <div class="col-md-6 col-lg-4">
+        <a href="{% url 'examen_accueil:classes' %}" class="ta-tuile"><i class="fas fa-school"></i>
+            <h3>Gérer les classes</h3><p>Les classes de l'école : barème, moyenne d'admission et date du test.</p></a>
+    </div>
+    <div class="col-md-6 col-lg-4">
+        <a href="{% url 'examen_accueil:matieres' %}" class="ta-tuile"><i class="fas fa-book-open"></i>
+            <h3>Gérer les matières</h3><p>Matières du test et coefficients par classe, reprises du module Notes si besoin.</p></a>
+    </div>
+    <div class="col-md-6 col-lg-4">
+        <a href="{% url 'examen_accueil:eleves' %}" class="ta-tuile"><i class="fas fa-user-graduate"></i>
+            <h3>Gérer les élèves</h3><p>Les élèves inscrits de chaque classe et leur situation au test.</p></a>
+    </div>
+    <div class="col-md-6 col-lg-4">
+        <a href="{% url 'examen_accueil:saisie_notes' %}" class="ta-tuile"><i class="fas fa-edit"></i>
+            <h3>Saisir les notes</h3><p>Grille élèves × matières, enregistrée en une fois.</p></a>
+    </div>
+    <div class="col-md-6 col-lg-4">
+        <a href="{% url 'examen_accueil:consultation' %}" class="ta-tuile"><i class="fas fa-eye"></i>
+            <h3>Consulter les résultats</h3><p>Moyennes, rangs et décisions, export PDF et Excel.</p></a>
+    </div>
+    <div class="col-md-6 col-lg-4">
+        <a href="{% url 'examen_accueil:bulletins' %}" class="ta-tuile"><i class="fas fa-file-alt"></i>
+            <h3>Bulletins</h3><p>Bulletins du test d'accueil, par élève ou pour toute la classe.</p></a>
+    </div>
+</div>
+{% endblock %}
