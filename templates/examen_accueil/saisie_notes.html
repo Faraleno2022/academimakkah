@@ -15,6 +15,19 @@
 
     {% if matieres %}
     <div class="ta-carte">
+        <h2 class="h6 mb-2"><i class="fas fa-print me-1"></i>Fiche de notes pour les enseignants</h2>
+        <p class="small text-muted mb-2">Fiche à imprimer : la liste des élèves avec une colonne de note vide, une page par matière, à remettre aux enseignants qui corrigent le test.</p>
+        <form method="get" action="{% url 'examen_accueil:fiche_notes' classe.pk %}" target="_blank" class="d-flex flex-wrap align-items-center gap-2">
+            {% if tous %}<input type="hidden" name="tous" value="1">{% endif %}
+            <select name="matiere" class="form-select form-select-sm" style="max-width: 280px;" aria-label="Matière de la fiche">
+                <option value="">Toutes les matières (une page chacune)</option>
+                {% for matiere in matieres %}<option value="{{ matiere.pk }}">{{ matiere.nom }}</option>{% endfor %}
+            </select>
+            <button type="submit" class="btn btn-outline-primary btn-sm"><i class="fas fa-file-pdf me-1"></i>Télécharger la fiche</button>
+        </form>
+    </div>
+
+    <div class="ta-carte">
         <h2 class="h6 mb-2"><i class="fas fa-file-import me-1"></i>Importer les notes depuis Excel</h2>
         <p class="small text-muted mb-2">Téléchargez le modèle (élèves et notes déjà saisies), remplissez-le puis importez-le. Les élèves sont reconnus par leur matricule et les matières par le nom de leur colonne ; une case vide ne change pas la note existante. En cas d'erreur, aucune note n'est enregistrée.</p>
         <form method="post" enctype="multipart/form-data" action="{% url 'examen_accueil:importer_notes' classe.pk %}" class="d-flex flex-wrap align-items-center gap-2">

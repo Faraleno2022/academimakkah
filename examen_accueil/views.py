@@ -297,6 +297,26 @@ def modele_notes(request, classe_id):
 
 
 @can_manage_notes
+def fiche_notes(request, classe_id):
+    """Fiche vierge pour les enseignants : toutes les matières, ou celle passée en ``?matiere=``."""
+    classe = _classe(request, classe_id)
+    tous = request.GET.get('tous') == '1'
+    matieres = classe.matieres_test_accueil.all()
+    matiere_id = request.GET.get('matiere', '')
+    if matiere_id:
+        matieres = [get_object_or_404(matieres, pk=matiere_id if matiere_id.isdigit() else 0)]
+    else:
+        matieres = list(matieres)
+    if not matieres:
+        messages.warning(request, "Ajoutez d'abord les matières du test de cette classe.")
+        return redirect(_url_section('matieres', classe))
+    contenu = exports.fiche_notes_pdf(classe, list(eleves_a_evaluer(classe, tous)), matieres)
+    suffixe = f"_{exports.slugify(matieres[0].nom)}" if matiere_id else ''
+    nom = exports.nom_fichier(classe, f'fiche_notes_test_accueil{suffixe}', 'pdf')
+    return _reponse_fichier(contenu, nom, 'application/pdf', en_ligne=True)
+
+
+@can_manage_notes
 @require_POST
 def importer_notes(request, classe_id):
     """Notes d'un fichier Excel : tout ou rien, comme la saisie ; une case vide ne change rien."""

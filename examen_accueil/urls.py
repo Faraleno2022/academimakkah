@@ -14,6 +14,7 @@ urlpatterns = [
     path('eleves/', views.eleves, name='eleves'),
     path('saisie/', views.saisie_notes, name='saisie_notes'),
     path('saisie/<int:classe_id>/modele/', views.modele_notes, name='modele_notes'),
+    path('saisie/<int:classe_id>/fiche/', views.fiche_notes, name='fiche_notes'),
     path('saisie/<int:classe_id>/importer/', views.importer_notes, name='importer_notes'),
     path('consultation/', views.consultation, name='consultation'),
     path('consultation/<int:classe_id>/pdf/', views.resultats_pdf, name='resultats_pdf'),

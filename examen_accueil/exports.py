@@ -273,6 +273,74 @@ def resultats_pdf(classe):
     return buffer.getvalue()
 
 
+def fiche_notes_pdf(classe, eleves, matieres):
+    """Fiche vierge à remettre aux enseignants : une page par matière, une ligne par élève."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    ecole = classe.ecole
+    charte = get_charte_reportlab(ecole)
+    styles = _styles()
+    parametre = ParametreAccueil.pour(classe)
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=1.2 * cm, rightMargin=1.2 * cm,
+                            topMargin=1 * cm, bottomMargin=1.2 * cm,
+                            title=f"Fiche de notes du test d'accueil - {classe.nom}")
+    largeur = A4[0] - doc.leftMargin - doc.rightMargin
+    largeurs = [1 * cm, 2.6 * cm, None, 1.1 * cm, 2.4 * cm, 4.2 * cm]
+    largeurs[2] = largeur - sum(l for l in largeurs if l)
+
+    histoire = []
+    for index, matiere in enumerate(matieres):
+        if index:
+            histoire.append(PageBreak())
+        infos = [f"Classe : <b>{escape(classe.nom)}</b>", f"Année scolaire : <b>{escape(classe.annee_scolaire)}</b>",
+                 f"Matière : <b>{escape(matiere.nom)}</b>"]
+        if parametre.avec_coefficients:
+            infos.append(f"Coefficient : <b>{nombre(matiere.coefficient)}</b>")
+        infos.append(f"Notes sur <b>{parametre.note_sur}</b>")
+        date_test = f"{parametre.date_test:%d/%m/%Y}" if parametre.date_test else "____ / ____ / ________"
+        histoire += [
+            _entete(ecole, charte, styles, largeur), Spacer(1, 6),
+            Paragraph("FICHE DE NOTES DU TEST D'ACCUEIL", styles['titre']),
+            Paragraph(" &nbsp;|&nbsp; ".join(infos), styles['centre']), Spacer(1, 6),
+            Paragraph(f"Enseignant(e) : ______________________________________ &nbsp;&nbsp; "
+                      f"Date du test : {date_test} &nbsp;&nbsp; Effectif : <b>{len(eleves)}</b>", styles['normal']),
+            Spacer(1, 8),
+        ]
+        donnees = [['N°', 'Matricule', 'Nom et prénom(s)', 'Sexe', f"Note / {parametre.note_sur}", 'Observation']]
+        donnees += [[numero, eleve.matricule, Paragraph(escape(f"{eleve.nom} {eleve.prenom}"), styles['cellule']),
+                     eleve.sexe or '', '', ''] for numero, eleve in enumerate(eleves, start=1)]
+        if not eleves:
+            donnees.append(['', '', 'Aucun élève', '', '', ''])
+        tableau = Table(donnees, colWidths=largeurs, repeatRows=1,
+                        rowHeights=[0.8 * cm] + [0.75 * cm] * (len(donnees) - 1))
+        tableau.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), charte['couleur_primaire']),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('ALIGN', (2, 1), (2, -1), 'LEFT'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('GRID', (0, 0), (-1, -1), 0.5, charte['couleur_bordure']),
+            ('LINEBEFORE', (4, 0), (4, -1), 1.2, charte['couleur_primaire']),
+            ('LINEAFTER', (4, 0), (4, -1), 1.2, charte['couleur_primaire']),
+        ]))
+        histoire += [
+            tableau, Spacer(1, 18),
+            Table([["Signature de l'enseignant(e)", "Visa du Directeur"]], colWidths=[largeur / 2] * 2,
+                  style=[('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'), ('ALIGN', (0, 0), (-1, -1), 'CENTER')]),
+            Spacer(1, 30), Paragraph(MENTION_INDEPENDANCE, styles['note']),
+        ]
+
+    doc.build(histoire, onFirstPage=_filigrane(ecole), onLaterPages=_filigrane(ecole))
+    return buffer.getvalue()
+
+
 def bulletins_pdf(classe, eleves=None):
     """Un bulletin par page ; ``eleves`` limite l'impression (sinon tous les élèves évalués)."""
     from reportlab.lib import colors

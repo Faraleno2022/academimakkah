@@ -550,13 +550,32 @@ class ImportNotesTests(TestCase):
         self.assertIn("Aucune colonne", ' '.join(str(m) for m in reponse.context['messages']))
         self.assertEqual(NoteAccueil.objects.count(), 1)
 
+    def test_fiche_de_notes_pour_les_enseignants(self):
+        url = reverse('examen_accueil:fiche_notes', args=[self.classe.pk])
+        self.assertContains(self.client.get(f"{reverse('examen_accueil:saisie_notes')}?classe={self.classe.pk}"), url)
+
+        toutes = self.client.get(url)
+        self.assertEqual(toutes['Content-Type'], 'application/pdf')
+        self.assertTrue(toutes.content.startswith(b'%PDF'))
+        self.assertIn(b'/Count 2', toutes.content)   # une page par matière
+
+        une = self.client.get(url, {'matiere': self.maths.pk})
+        self.assertIn(b'/Count 1', une.content)
+        self.assertIn('fiche_notes_test_accueil_mathematiques', une['Content-Disposition'])
+        self.assertEqual(self.client.get(url, {'matiere': 'x'}).status_code, 404)
+
+        MatiereAccueil.objects.filter(classe=self.classe).delete()
+        self.assertRedirects(self.client.get(url),
+                             f"{reverse('examen_accueil:matieres')}?classe={self.classe.pk}")
+
     def test_import_reserve_a_l_ecole(self):
         autre = creer_ecole('6')
         self.client.force_login(creer_utilisateur('directeur_autre', autre))
         fichier = self.classeur([(self.aissatou.matricule, '', '', 18, 10)])
         self.assertEqual(self.client.post(self.url_import, {'fichier': fichier}).status_code, 404)
-        self.assertEqual(self.client.get(reverse('examen_accueil:modele_notes', args=[self.classe.pk])).status_code,
-                         404)
+        for nom in ('modele_notes', 'fiche_notes'):
+            self.assertEqual(self.client.get(reverse(f'examen_accueil:{nom}', args=[self.classe.pk])).status_code,
+                             404, nom)
 
 
 class SynchronisationTests(TestCase):
