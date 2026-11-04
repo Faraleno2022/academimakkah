@@ -469,3 +469,67 @@ def resultats_excel(classe):
     sortie = io.BytesIO()
     classeur.save(sortie)
     return sortie.getvalue()
+
+
+def modele_saisie_excel(classe, eleves):
+    """Feuille à remplir : un élève par ligne, une matière par colonne, notes actuelles pré-remplies."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    from .models import NoteAccueil
+
+    parametre = ParametreAccueil.pour(classe)
+    matieres = list(MatiereAccueil.objects.filter(classe=classe))
+    existantes = {(n.eleve_id, n.matiere_id): n.note for n in NoteAccueil.objects.filter(matiere__classe=classe)}
+
+    classeur = Workbook()
+    feuille = classeur.active
+    feuille.title = "Notes"
+    nb_colonnes = 3 + len(matieres)
+    fin = get_column_letter(nb_colonnes)
+
+    feuille.merge_cells(f"A1:{fin}1")
+    feuille['A1'] = f"TEST D'ACCUEIL - {classe.nom} ({classe.annee_scolaire}) - notes sur {parametre.note_sur}"
+    feuille['A1'].font = Font(bold=True, size=12)
+    feuille.merge_cells(f"A2:{fin}2")
+    feuille['A2'] = ("Remplissez les notes puis importez ce fichier. Une case vide ne change pas la note "
+                     "existante. Ne modifiez pas les colonnes Matricule, Nom et Prénom(s).")
+    feuille['A2'].font = Font(italic=True, color='7F8C8D')
+
+    entetes = ['Matricule', 'Nom', 'Prénom(s)'] + [m.nom for m in matieres]
+    remplissage = PatternFill('solid', fgColor='2C3E50')
+    bordure = Border(*(Side(style='thin', color='BDC3C7'),) * 4)
+    for colonne, titre in enumerate(entetes, start=1):
+        cellule = feuille.cell(row=4, column=colonne, value=titre)
+        cellule.font = Font(bold=True, color='FFFFFF')
+        cellule.fill = remplissage
+        cellule.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        cellule.border = bordure
+
+    for numero, eleve in enumerate(eleves, start=5):
+        valeurs = [eleve.matricule, eleve.nom, eleve.prenom]
+        valeurs += [float(existantes[(eleve.pk, m.pk)]) if (eleve.pk, m.pk) in existantes else None
+                    for m in matieres]
+        for colonne, valeur in enumerate(valeurs, start=1):
+            cellule = feuille.cell(row=numero, column=colonne, value=valeur)
+            cellule.border = bordure
+            if colonne > 3:
+                cellule.alignment = Alignment(horizontal='center')
+
+    if matieres and eleves:
+        controle = DataValidation(type='decimal', operator='between', formula1='0',
+                                  formula2=str(parametre.note_sur), allow_blank=True, showErrorMessage=True,
+                                  error=f"Note entre 0 et {parametre.note_sur}.")
+        controle.add(f"D5:{fin}{4 + len(eleves)}")
+        feuille.add_data_validation(controle)
+
+    for colonne, largeur in enumerate([16, 22, 26] + [14] * len(matieres), start=1):
+        feuille.column_dimensions[get_column_letter(colonne)].width = largeur
+    feuille.row_dimensions[4].height = 32
+    feuille.freeze_panes = 'D5'
+
+    sortie = io.BytesIO()
+    classeur.save(sortie)
+    return sortie.getvalue()

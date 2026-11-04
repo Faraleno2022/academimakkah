@@ -461,6 +461,104 @@ class IndependanceNotesScolairesTests(TestCase):
                     self.assertNotEqual(cible._meta.app_label, 'examen_accueil', f'{modele.__name__}.{champ.name}')
 
 
+@override_settings(MIDDLEWARE=MIDDLEWARE_SANS_LICENCE)
+class ImportNotesTests(TestCase):
+    """Modèle Excel téléchargé depuis la saisie, rempli puis réimporté."""
+
+    def setUp(self):
+        self.ecole = creer_ecole('5')
+        self.user = creer_utilisateur('directeur_import', self.ecole)
+        self.client.force_login(self.user)
+        self.classe, self.francais, self.maths = creer_test(self.ecole, {
+            ('CAMARA', 'Aissatou', 'F'): (14, None), ('DIALLO', 'Ibrahima', 'M'): (None, None),
+        })
+        self.aissatou, self.ibrahima = Eleve.objects.filter(classe=self.classe).order_by('nom')
+        self.url_import = reverse('examen_accueil:importer_notes', args=[self.classe.pk])
+
+    def classeur(self, lignes, entetes=('Matricule', 'Nom', 'Prénom(s)', 'Français (coef. 2)', 'MATHEMATIQUES')):
+        from openpyxl import Workbook
+
+        classeur = Workbook()
+        feuille = classeur.active
+        feuille.append(['Notes du test'])
+        feuille.append(list(entetes))
+        for ligne in lignes:
+            feuille.append(list(ligne))
+        fichier = io.BytesIO()
+        classeur.save(fichier)
+        fichier.seek(0)
+        fichier.name = 'notes.xlsx'
+        return fichier
+
+    def note(self, eleve, matiere):
+        note = NoteAccueil.objects.filter(eleve=eleve, matiere=matiere).first()
+        return note.note if note else None
+
+    def test_modele_puis_import(self):
+        reponse = self.client.get(reverse('examen_accueil:modele_notes', args=[self.classe.pk]))
+        self.assertIn('spreadsheetml', reponse['Content-Type'])
+        from openpyxl import load_workbook
+        feuille = load_workbook(io.BytesIO(reponse.content)).active
+        self.assertEqual([c.value for c in feuille[4]], ['Matricule', 'Nom', 'Prénom(s)', 'Français', 'Mathématiques'])
+        self.assertEqual([c.value for c in feuille[5]],
+                         [self.aissatou.matricule, self.aissatou.nom, self.aissatou.prenom, 14, None])
+
+        # Le modèle rempli se réimporte tel quel ; une case vide garde la note existante.
+        feuille['E5'] = 12.5
+        feuille['D6'] = '9,75'
+        feuille['E6'] = 11
+        fichier = io.BytesIO()
+        feuille.parent.save(fichier)
+        fichier.seek(0)
+        fichier.name = 'modele.xlsx'
+        reponse = self.client.post(self.url_import, {'fichier': fichier})
+        self.assertRedirects(reponse, f"{reverse('examen_accueil:saisie_notes')}?classe={self.classe.pk}")
+        self.assertEqual([self.note(self.aissatou, self.francais), self.note(self.aissatou, self.maths),
+                          self.note(self.ibrahima, self.francais), self.note(self.ibrahima, self.maths)],
+                         [Decimal('14'), Decimal('12.5'), Decimal('9.75'), Decimal('11')])
+        self.ibrahima.refresh_from_db()
+        self.assertTrue(self.ibrahima.evaluation_accueil_effectuee)
+        self.assertEqual(NoteAccueil.objects.get(eleve=self.ibrahima, matiere=self.maths).saisi_par, self.user)
+
+    def test_eleve_reconnu_par_nom_sans_matricule(self):
+        fichier = self.classeur([('', 'diallo', 'IBRAHIMA', 8, 16)])
+        self.client.post(self.url_import, {'fichier': fichier})
+        self.assertEqual((self.note(self.ibrahima, self.francais), self.note(self.ibrahima, self.maths)),
+                         (Decimal('8'), Decimal('16')))
+
+    def test_erreur_annule_tout_l_import(self):
+        fichier = self.classeur([
+            (self.aissatou.matricule, '', '', 18, 10),
+            (self.ibrahima.matricule, '', '', 25, 10),       # hors barème
+            ('INCONNU-1', 'BAH', 'Mamadou', 10, 10),         # pas dans la classe
+        ])
+        reponse = self.client.post(self.url_import, {'fichier': fichier}, follow=True)
+        texte = ' '.join(str(m) for m in reponse.context['messages'])
+        self.assertIn('Import annulé', texte)
+        self.assertIn('hors du barème', texte)
+        self.assertIn('introuvable', texte)
+        self.assertEqual(self.note(self.aissatou, self.francais), Decimal('14'))
+        self.assertEqual(NoteAccueil.objects.count(), 1)
+
+    def test_fichier_invalide_ou_sans_matiere(self):
+        faux = io.BytesIO(b'pas un classeur')
+        faux.name = 'notes.xlsx'
+        reponse = self.client.post(self.url_import, {'fichier': faux}, follow=True)
+        self.assertIn("pas un classeur Excel", ' '.join(str(m) for m in reponse.context['messages']))
+        fichier = self.classeur([(self.aissatou.matricule, 10)], entetes=('Matricule', 'Histoire'))
+        reponse = self.client.post(self.url_import, {'fichier': fichier}, follow=True)
+        self.assertIn("Aucune colonne", ' '.join(str(m) for m in reponse.context['messages']))
+        self.assertEqual(NoteAccueil.objects.count(), 1)
+
+    def test_import_reserve_a_l_ecole(self):
+        autre = creer_ecole('6')
+        self.client.force_login(creer_utilisateur('directeur_autre', autre))
+        fichier = self.classeur([(self.aissatou.matricule, '', '', 18, 10)])
+        self.assertEqual(self.client.post(self.url_import, {'fichier': fichier}).status_code, 404)
+        self.assertEqual(self.client.get(reverse('examen_accueil:modele_notes', args=[self.classe.pk])).status_code,
+                         404)
+
+
 class SynchronisationTests(TestCase):
     def test_modeles_synchronises_et_rattaches_a_l_ecole(self):
         from synchronisation.registry import MODELES_REGISTRE_4, SYNC_MODEL_SET

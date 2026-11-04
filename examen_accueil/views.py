@@ -20,7 +20,7 @@ from eleves.suivi_listes import annoter_accueil, classes_visibles
 from utilisateurs.permissions import can_manage_notes
 from utilisateurs.utils import filter_by_user_school
 
-from . import exports
+from . import exports, import_notes
 from .calculs import calculer_resultats, statistiques
 from .forms import MatiereAccueilForm, ParametreAccueilForm
 from .models import MatiereAccueil, NoteAccueil, ParametreAccueil
@@ -271,6 +271,73 @@ def _lire_note(brute, note_sur):
     return valeur.quantize(Decimal('0.01')), None
 
 
+def _enregistrer_notes(user, a_enregistrer, a_supprimer=()):
+    """``a_enregistrer`` : [(eleve, matiere, valeur, note existante | None)]."""
+    with transaction.atomic():
+        for eleve, matiere, valeur, existante in a_enregistrer:
+            note = existante or NoteAccueil(eleve=eleve, matiere=matiere)
+            note.note = valeur
+            note.saisi_par = user
+            note.save()
+        for note in NoteAccueil.objects.filter(pk__in=a_supprimer):
+            note.delete()
+        # Même indicateur que la liste des élèves : « évalué au test d'accueil ».
+        for eleve in {e for e, _, _, _ in a_enregistrer if not e.evaluation_accueil_effectuee}:
+            eleve.evaluation_accueil_effectuee = True
+            eleve.save(update_fields=['evaluation_accueil_effectuee', 'date_modification'])
+
+
+@can_manage_notes
+def modele_notes(request, classe_id):
+    classe = _classe(request, classe_id)
+    tous = request.GET.get('tous') == '1'
+    contenu = exports.modele_saisie_excel(classe, list(eleves_a_evaluer(classe, tous)))
+    return _reponse_fichier(contenu, exports.nom_fichier(classe, 'modele_notes_test_accueil', 'xlsx'),
+                            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@can_manage_notes
+@require_POST
+def importer_notes(request, classe_id):
+    """Notes d'un fichier Excel : tout ou rien, comme la saisie ; une case vide ne change rien."""
+    classe = _classe(request, classe_id)
+    tous = request.POST.get('tous') == '1'
+    retour = redirect(_url_section('saisie_notes', classe, tous='1' if tous else ''))
+    fichier = request.FILES.get('fichier')
+    if fichier is None:
+        messages.error(request, "Choisissez le fichier Excel à importer.")
+        return retour
+    if not fichier.name.lower().endswith('.xlsx'):
+        messages.error(request, "Format non pris en charge : enregistrez le fichier au format Excel (.xlsx).")
+        return retour
+
+    note_sur = ParametreAccueil.pour(classe).note_sur
+    # Tous les élèves de la classe : le fichier peut contenir des réinscrits.
+    notes, erreurs, avertissements = import_notes.lire_fichier(
+        fichier, list(eleves_a_evaluer(classe, tous=True)), list(classe.matieres_test_accueil.all()),
+        lambda texte: _lire_note(texte, note_sur))
+    for avertissement in avertissements:
+        messages.warning(request, avertissement)
+    if erreurs:
+        affichees = erreurs[:15]
+        if len(erreurs) > len(affichees):
+            affichees.append(f"… et {len(erreurs) - len(affichees)} autre(s) erreur(s).")
+        messages.error(request, "Import annulé, aucune note enregistrée : " + " | ".join(affichees))
+        return retour
+
+    existantes = {(n.eleve_id, n.matiere_id): n for n in NoteAccueil.objects.filter(matiere__classe=classe)}
+    a_enregistrer = []
+    for (eleve, matiere), valeur in notes.items():
+        existante = existantes.get((eleve.pk, matiere.pk))
+        if existante is None or existante.note != valeur:
+            a_enregistrer.append((eleve, matiere, valeur, existante))
+    _enregistrer_notes(request.user, a_enregistrer)
+    nb_eleves = len({eleve.pk for eleve, _ in notes})
+    messages.success(request, f"Import terminé : {len(notes)} note(s) lue(s) pour {nb_eleves} élève(s), "
+                              f"{len(a_enregistrer)} enregistrée(s) ou modifiée(s).")
+    return retour
+
+
 @can_manage_notes
 def saisie_notes(request):
     classe = _classe_choisie(request)
@@ -309,18 +376,7 @@ def saisie_notes(request):
         if erreurs:
             messages.error(request, "Aucune note n'a été enregistrée : corrigez les valeurs signalées.")
         else:
-            with transaction.atomic():
-                for eleve, matiere, valeur, existante in a_enregistrer:
-                    note = existante or NoteAccueil(eleve=eleve, matiere=matiere)
-                    note.note = valeur
-                    note.saisi_par = request.user
-                    note.save()
-                for note in NoteAccueil.objects.filter(pk__in=a_supprimer):
-                    note.delete()
-                # Même indicateur que la liste des élèves : « évalué au test d'accueil ».
-                for eleve in {e for e, _, _, _ in a_enregistrer if not e.evaluation_accueil_effectuee}:
-                    eleve.evaluation_accueil_effectuee = True
-                    eleve.save(update_fields=['evaluation_accueil_effectuee', 'date_modification'])
+            _enregistrer_notes(request.user, a_enregistrer, a_supprimer)
             messages.success(request, f"Notes enregistrées ({len(a_enregistrer)} modifiée(s), "
                                       f"{len(a_supprimer)} effacée(s)).")
             return redirect(_url_section('saisie_notes', classe, tous='1' if tous else ''))
