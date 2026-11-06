@@ -508,3 +508,22 @@ class CreationNouvelleAnneeTest(TestCase):
         self.assertEqual([(p.mois, p.annee) for p in periodes], [(6, 2026)])
         classes = self.client.get(reverse('notes:saisir_notes')).context['classes']
         self.assertEqual({c.annee_scolaire for c in classes}, {'2025-2026'})
+
+    def test_eleve_importe_en_attente_de_paiement_passe_aussi(self):
+        Eleve.objects.filter(pk=self.eleve.pk).update(statut='ATTENTE_PAIEMENT', import_verrouille=True)
+        apercu = self.client.get(reverse('eleves:nouvelle_annee_apercu'))
+        self.assertEqual(apercu.context['nb_total_eleves'], 1)
+        self._creer_annee()
+        self.eleve.refresh_from_db()
+        self.assertEqual((self.eleve.classe.nom, self.eleve.classe.annee_scolaire), ('2ÈME ANNÉE A', '2026-2027'))
+        self.assertEqual(self.eleve.statut, 'ATTENTE_PAIEMENT')
+        self._choisir_annee('2026-2027')
+        self.assertIsNone(self.client.get(reverse('eleves:liste_eleves')).context['passage_en_attente'])
+
+    def test_liste_signale_les_eleves_restes_dans_l_annee_precedente(self):
+        Classe.objects.create(ecole=self.ecole, nom='1ÈRE ANNÉE A', niveau='PRIMAIRE_1',
+                              annee_scolaire='2026-2027')
+        self._choisir_annee('2026-2027')
+        liste = self.client.get(reverse('eleves:liste_eleves'))
+        self.assertEqual(liste.context['passage_en_attente']['nb'], 1)
+        self.assertContains(liste, 'Compléter le passage')

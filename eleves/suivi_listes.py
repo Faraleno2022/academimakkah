@@ -25,6 +25,23 @@ def eleves_visibles(request):
     ).filter(classe__in=classes_visibles(request))
 
 
+def passage_en_attente(request):
+    """Élèves restés dans l'année précédant l'année active (passage bloqué ou
+    non lancé) : sans cet avertissement, la nouvelle année paraît vide."""
+    ecole = user_school(request.user)
+    annee = get_annee_active(request, ecole) if ecole else None
+    try:
+        debut, fin = (int(x) for x in str(annee).split('-'))
+    except (TypeError, ValueError):
+        return None
+    precedente = f"{debut - 1}-{fin - 1}"
+    nb = Eleve.objects.filter(
+        classe__ecole=ecole, classe__annee_scolaire=precedente,
+        statut__in=('ACTIF', 'ATTENTE_PAIEMENT'),
+    ).count()
+    return {'annee': precedente, 'annee_active': annee, 'nb': nb} if nb else None
+
+
 def annoter_accueil(eleves):
     admission = EcheancierPaiement.objects.filter(
         eleve_id=OuterRef('pk'), annee_scolaire=OuterRef('classe__annee_scolaire')

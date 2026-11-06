@@ -27,6 +27,11 @@ from .utils_annee import get_annee_active, get_statut_creation_nouvelle_annee, S
 
 logger = logging.getLogger(__name__)
 
+# Élèves présents en classe : un élève importé verrouillé en attente de son
+# premier paiement (ATTENTE_PAIEMENT) passe lui aussi dans la nouvelle année,
+# sinon il resterait seul dans l'année écoulée.
+STATUTS_EN_CLASSE = ('ACTIF', 'ATTENTE_PAIEMENT')
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  UTILITAIRE : MOYENNE ANNUELLE POUR PASSAGE
@@ -115,7 +120,7 @@ def gestion_annees(request):
                  .values('annee_scolaire')
                  .annotate(
                      nb_classes=Count('id', distinct=True),
-                     nb_eleves=Count('eleves', filter=Q(eleves__statut='ACTIF')),
+                     nb_eleves=Count('eleves', filter=Q(eleves__statut__in=STATUTS_EN_CLASSE)),
                  )
                  .order_by('-annee_scolaire'))
 
@@ -452,7 +457,7 @@ def nouvelle_annee_apercu(request):
     preview_classes = []
     for cls in classes_actuelles:
         sup_label = _classe_superieure_label(cls.nom)
-        nb_eleves = cls.eleves.filter(statut='ACTIF').count()
+        nb_eleves = cls.eleves.filter(statut__in=STATUTS_EN_CLASSE).count()
         preview_classes.append({
             'classe': cls,
             'nb_eleves': nb_eleves,
@@ -480,7 +485,7 @@ def nouvelle_annee_apercu(request):
     for cls in classes_actuelles:
         base, _ = _extraire_base_et_lettre(cls.nom)
         if base in CLASSES_TERMINALES:
-            for eleve in cls.eleves.filter(statut='ACTIF').order_by('nom', 'prenom'):
+            for eleve in cls.eleves.filter(statut__in=STATUTS_EN_CLASSE).order_by('nom', 'prenom'):
                 eleves_terminale.append({
                     'eleve': eleve,
                     'classe_nom': cls.nom,
@@ -493,7 +498,7 @@ def nouvelle_annee_apercu(request):
         for cls in classes_actuelles:
             base, _ = _extraire_base_et_lettre(cls.nom)
             if base == base_classe:
-                for eleve in cls.eleves.filter(statut='ACTIF').order_by('nom', 'prenom'):
+                for eleve in cls.eleves.filter(statut__in=STATUTS_EN_CLASSE).order_by('nom', 'prenom'):
                     eleves_de_ce_niveau.append({
                         'eleve': eleve,
                         'classe_nom': cls.nom,
@@ -529,7 +534,7 @@ def nouvelle_annee_apercu(request):
         maternelle = detecter_niveau_scolaire(cls.nom) == 'MATERNELLE'
         superieure = _trouver_classe_cible(cls.nom, index_destinations)
         classe_passage = superieure.nom if superieure else cls.nom
-        for eleve in cls.eleves.filter(statut='ACTIF').order_by('nom', 'prenom'):
+        for eleve in cls.eleves.filter(statut__in=STATUTS_EN_CLASSE).order_by('nom', 'prenom'):
             if maternelle:
                 moyenne, sur, admis = None, 10, True
             else:
@@ -1068,7 +1073,7 @@ def nouvelle_annee_creer(request):
             'echecs': [],
             'erreurs_tarifs': [],
             'total': Eleve.objects.filter(
-                classe__ecole=ecole, classe__annee_scolaire=annee_courante, statut='ACTIF',
+                classe__ecole=ecole, classe__annee_scolaire=annee_courante, statut__in=STATUTS_EN_CLASSE,
             ).count(),
         }
         try:
@@ -1107,7 +1112,7 @@ def nouvelle_annee_creer(request):
         }
 
         restants = (Eleve.objects
-                    .filter(classe__ecole=ecole, classe__annee_scolaire=annee_courante, statut='ACTIF')
+                    .filter(classe__ecole=ecole, classe__annee_scolaire=annee_courante, statut__in=STATUTS_EN_CLASSE)
                     .exclude(pk__in=etat['echecs']))
         lot = list(restants.select_related('classe').order_by('pk')[:TAILLE_LOT_PASSAGE])
 
@@ -1116,9 +1121,9 @@ def nouvelle_annee_creer(request):
             try:
                 with transaction.atomic():
                     _passer_eleve(request, eleve, ctx, resultats)
-                    if eleve.statut == 'ACTIF' and eleve.classe.annee_scolaire != annee_nouvelle:
+                    if eleve.statut in STATUTS_EN_CLASSE and eleve.classe.annee_scolaire != annee_nouvelle:
                         raise ValueError("Aucune classe de destination trouvée dans la nouvelle année.")
-                    if (eleve.statut == 'ACTIF'
+                    if (eleve.statut in STATUTS_EN_CLASSE
                             and eleve.classe.annee_scolaire == annee_nouvelle
                             and _creer_echeancier(request, eleve, ecole, annee_nouvelle)):
                         resultats['echeanciers_crees'] += 1
@@ -1154,7 +1159,7 @@ def nouvelle_annee_creer(request):
             eleve__classe__ecole=ecole, annee_scolaire=annee_nouvelle,
         ).values_list('eleve_id', flat=True))
         for eleve in (Eleve.objects
-                      .filter(classe__ecole=ecole, classe__annee_scolaire=annee_nouvelle, statut='ACTIF')
+                      .filter(classe__ecole=ecole, classe__annee_scolaire=annee_nouvelle, statut__in=STATUTS_EN_CLASSE)
                       .exclude(pk__in=deja).select_related('classe')):
             try:
                 with transaction.atomic():

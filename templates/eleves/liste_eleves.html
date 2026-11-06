@@ -29,6 +29,19 @@
 {% endblock %}
 
 {% block content %}
+    {% if passage_en_attente %}
+    <div class="alert alert-warning d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <div>
+            <i class="fas fa-exclamation-triangle me-1"></i>
+            <strong>{{ passage_en_attente.nb }} élève(s)</strong> sont encore dans l'année
+            <strong>{{ passage_en_attente.annee }}</strong> : leur passage en {{ passage_en_attente.annee_active }}
+            n'a pas été fait ou a été bloqué (tarif manquant, par exemple).
+        </div>
+        <a class="btn btn-warning btn-sm" href="{% url 'eleves:nouvelle_annee_apercu' %}?annee_courante={{ passage_en_attente.annee|urlencode }}">
+            Compléter le passage
+        </a>
+    </div>
+    {% endif %}
     <!-- Zone dynamique: stats + résultats -->
     <div id="zone-eleves">
         {% include 'eleves/partials/_liste_eleves_zone.html' %}

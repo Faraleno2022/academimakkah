@@ -44,7 +44,7 @@ from utilisateurs.utils import (
     user_school,
 )
 from .utils_annee import get_annee_active
-from .suivi_listes import annoter_accueil, classes_visibles, eleves_visibles
+from .suivi_listes import annoter_accueil, classes_visibles, eleves_visibles, passage_en_attente
 from .couleurs_cartes import palette_carte
 from django.views.decorators.cache import cache_page
 from django.views.decorators.vary import vary_on_cookie
@@ -159,6 +159,7 @@ def liste_eleves(request):
         return response
 
     # Rendu complet de la page
+    context['passage_en_attente'] = passage_en_attente(request)
     response = render(request, 'eleves/liste_eleves.html', context)
     # Headers anti-cache pour s'assurer que la liste est toujours fraîche
     response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
