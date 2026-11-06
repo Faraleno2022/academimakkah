@@ -97,9 +97,18 @@
                                 <a class="btn btn-outline-primary btn-sm mb-1" href="{% url 'eleves:nouvelle_annee_apercu' %}?annee_courante={{ a.annee|urlencode }}">Compléter le passage</a>
                             {% endif %}
                             {% if a.peut_annuler %}
+                                {% if annulation_autorisee %}
                                 <a class="btn btn-outline-danger btn-sm mb-1" href="{% url 'eleves:annuler_annee' a.annee %}">
                                     <i class="fas fa-undo me-1"></i>Annuler cette année
                                 </a>
+                                {% else %}
+                                <span class="d-inline-block mb-1" title="Réservé à l'administrateur ou au directeur de l'école">
+                                    <button type="button" class="btn btn-outline-secondary btn-sm" disabled>
+                                        <i class="fas fa-lock me-1"></i>Annuler cette année
+                                    </button>
+                                    <span class="d-block small text-muted">Administrateur ou directeur uniquement</span>
+                                </span>
+                                {% endif %}
                             {% endif %}
                             {% if a.est_active %}
                                 <span class="text-muted small">— année courante —</span>

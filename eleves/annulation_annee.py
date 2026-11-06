@@ -30,6 +30,17 @@ logger = logging.getLogger(__name__)
 TAILLE_LOT_ANNULATION = 100
 
 
+ROLES_ANNULATION = ('ADMIN', 'DIRECTEUR')
+
+
+def peut_annuler_annee(user):
+    """Administrateur ou directeur de l'école (et superutilisateur)."""
+    if user_is_admin(user):
+        return True
+    profil = getattr(user, 'profil', None)
+    return getattr(profil, 'role', None) in ROLES_ANNULATION
+
+
 def _annee_precedente(annee):
     try:
         debut, fin = annee.split('-')
@@ -202,8 +213,9 @@ def _finaliser(request, ecole, annee, annee_prec):
 def annuler_annee(request, annee):
     """Confirmation (GET) puis annulation par lots (POST) de l'année ``annee``."""
     ecole = user_school(request.user)
-    if not ecole or not user_is_admin(request.user):
-        messages.error(request, "Seul un administrateur de l'école peut annuler une année scolaire.")
+    if not ecole or not peut_annuler_annee(request.user):
+        messages.error(request, "Seul un administrateur ou le directeur de l'école "
+                                "peut annuler une année scolaire.")
         return redirect('eleves:gestion_annees')
 
     ctx = _contexte(ecole, annee)

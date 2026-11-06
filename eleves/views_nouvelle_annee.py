@@ -22,7 +22,7 @@ from datetime import date as _date_type, timedelta
 from dateutil.relativedelta import relativedelta
 
 from .models import Ecole, Classe, Eleve, HistoriqueEleve
-from .annulation_annee import _annee_precedente
+from .annulation_annee import _annee_precedente, peut_annuler_annee
 from utilisateurs.utils import user_school, user_is_admin
 from .utils_annee import (
     get_annee_active, get_statut_creation_nouvelle_annee, SESSION_ANNEE_ACTIVE,
@@ -140,7 +140,7 @@ def gestion_annees(request):
     annees_connues = {a['annee_scolaire'] for a in annees_qs}
 
     annees = []
-    est_admin = user_is_admin(request.user)
+    annulation_autorisee = peut_annuler_annee(request.user)
     for a in annees_qs:
         annees.append({
             'annee': a['annee_scolaire'],
@@ -151,7 +151,7 @@ def gestion_annees(request):
             'passage_a_completer': (a['nb_eleves'] > 0
                 and _annee_suivante(a['annee_scolaire']) in annees_connues),
             # Année créée par erreur : on peut revenir à la précédente.
-            'peut_annuler': (est_admin and a == annees_qs[0]
+            'peut_annuler': (a == annees_qs[0]
                 and _annee_precedente(a['annee_scolaire']) in annees_connues),
         })
 
@@ -161,6 +161,7 @@ def gestion_annees(request):
         'annee_active': annee_active,
         'nouvelle_annee_status': get_statut_creation_nouvelle_annee(ecole),
         'titre_page': 'Gestion des années scolaires',
+        'annulation_autorisee': annulation_autorisee,
     }
     return render(request, 'eleves/gestion_annees.html', context)
 

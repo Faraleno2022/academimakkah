@@ -636,6 +636,32 @@ class CreationNouvelleAnneeTest(TestCase):
         from eleves.utils_annee import SESSION_ANNEE_ACTIVE
         self.assertEqual(self.client.session[SESSION_ANNEE_ACTIVE], '2026-2027')
 
+    def _connecter_role(self, role):
+        user = get_user_model().objects.create_user(f'role-{role.lower()}', f'{role}@p.gn', 'x')
+        profil = user.profil
+        profil.ecole, profil.role, profil.is_validated, profil.actif = self.ecole, role, True, True
+        profil.save()
+        self.client.force_login(user)
+
+    def test_annulation_ouverte_au_directeur_et_signalee_aux_autres_roles(self):
+        self._creer_annee(dupliquer_grilles='1')
+        self._creer_annee_suivante_par_erreur()
+        url = reverse('eleves:annuler_annee', args=['2027-2028'])
+
+        self._connecter_role('SECRETAIRE')
+        page = self.client.get(reverse('eleves:gestion_annees'))
+        self.assertFalse(page.context['annulation_autorisee'])
+        self.assertContains(page, 'Administrateur ou directeur uniquement')
+        self.assertNotContains(page, url)
+        self.assertRedirects(self.client.get(url), reverse('eleves:gestion_annees'),
+                             fetch_redirect_response=False)
+
+        self._connecter_role('DIRECTEUR')
+        page = self.client.get(reverse('eleves:gestion_annees'))
+        self.assertTrue(page.context['annulation_autorisee'])
+        self.assertContains(page, url)
+        self.assertEqual(self.client.get(url).status_code, 200)
+
     def test_annulation_par_lots(self):
         from unittest.mock import patch
         self._eleve_sans_moyenne()
