@@ -102,6 +102,14 @@ def _est_admis(moyenne, sur):
     return moyenne >= seuil
 
 
+def _admis_au_passage(moyenne, sur):
+    """Admission proposée au passage. Sans aucun classement (« non évalué »),
+    l'élève passe comme en maternelle : sinon une école qui ne calcule pas
+    ses classements ferait redoubler tous ses élèves. La direction peut le
+    retenir en décochant sa case dans l'aperçu."""
+    return moyenne is None or _est_admis(moyenne, sur)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  GESTION DES ANNÉES SCOLAIRES
 # ══════════════════════════════════════════════════════════════════════════════
@@ -539,7 +547,7 @@ def nouvelle_annee_apercu(request):
                 moyenne, sur, admis = None, 10, True
             else:
                 moyenne, sur = _get_moyenne_annuelle(eleve, annee_courante)
-                admis = _est_admis(moyenne, sur)
+                admis = _admis_au_passage(moyenne, sur)
             item = {
                 'eleve': eleve,
                 'classe_nom': cls.nom,
@@ -548,6 +556,7 @@ def nouvelle_annee_apercu(request):
                 'seuil': 5.0 if sur == 10 else 10.0,
                 'admis': admis,
                 'maternelle': maternelle,
+                'non_evalue': not maternelle and moyenne is None,
                 'sans_superieure': superieure is None,
                 'cle_passage': cles_classes[classe_passage],
                 'cle_maintien': cles_classes[cls.nom],
@@ -562,9 +571,6 @@ def nouvelle_annee_apercu(request):
         {'nom': c.nom, 'cle': cles_classes[c.nom], 'eleves': repartition[c.nom]}
         for c in destinations
     ]
-    # Les admis décochés dans l'aperçu redoublent : la création compare les
-    # cases reçues à cette liste, pour ne pas retenir un élève inscrit depuis.
-    request.session[_cle_session_apercu(ecole, annee_nouvelle)] = eleves_admis_affiches
 
     context = {
         'ecole': ecole,
@@ -579,6 +585,10 @@ def nouvelle_annee_apercu(request):
         'eleves_examens': eleves_examens,
         'eleves_non_admis': eleves_non_admis,
         'classes_nouvelles': classes_nouvelles,
+        # Les admis décochés redoublent : la création compare les cases reçues
+        # à cette liste envoyée avec le formulaire (un élève inscrit depuis
+        # l'aperçu n'est donc pas retenu par erreur).
+        'eleves_admis_affiches': ','.join(eleves_admis_affiches),
         'nb_eleves_repartis': sum(len(c['eleves']) for c in classes_nouvelles),
         'titre_page': f'Nouvelle Année Scolaire {annee_nouvelle}',
     }
@@ -604,10 +614,6 @@ _COMPTEURS = (
 
 def _cle_session_passage(ecole, annee_nouvelle):
     return f'passage_annee_{ecole.pk}_{annee_nouvelle}'
-
-
-def _cle_session_apercu(ecole, annee_nouvelle):
-    return f'apercu_passage_{ecole.pk}_{annee_nouvelle}'
 
 
 def _dupliquer_structure(request, ecole, annee_courante, annee_nouvelle, options, resultats):
@@ -885,7 +891,7 @@ def _passer_eleve(request, eleve, ctx, resultats):
 
     if detecter_niveau_scolaire(ancienne_classe.nom) != 'MATERNELLE':
         moyenne, sur = _get_moyenne_annuelle(eleve, annee_courante)
-        admis = _est_admis(moyenne, sur)
+        admis = _admis_au_passage(moyenne, sur)
         par_convention = eleve_id_str in ctx['eleves_convention']
     else:
         admis, par_convention, moyenne, sur = True, False, None, 10
@@ -1047,13 +1053,8 @@ def nouvelle_annee_creer(request):
         eleves_retenus = []
         if (request.POST.get('confirmation_passage') == '1'
                 and request.POST.get('faire_passer_eleves') == '1'):
-            affiches = request.session.get(_cle_session_apercu(ecole, annee_nouvelle))
-            if affiches is None:
-                messages.error(request, "L'aperçu a expiré : vérifiez à nouveau la liste des élèves "
-                                        "avant de créer l'année.")
-                from django.urls import reverse
-                return redirect(reverse('eleves:nouvelle_annee_apercu')
-                                + f'?annee_courante={annee_courante}')
+            affiches = [pk.strip() for pk in request.POST.get('eleves_admis_affiches', '').split(',')
+                        if pk.strip().isdigit()]
             confirmes = set(request.POST.getlist('eleves_confirmes'))
             eleves_retenus = [pk for pk in affiches if pk not in confirmes]
 
@@ -1171,7 +1172,6 @@ def nouvelle_annee_creer(request):
 
     echecs = etat['echecs']
     request.session.pop(cle, None)
-    request.session.pop(_cle_session_apercu(ecole, annee_nouvelle), None)
     request.session[SESSION_ANNEE_ACTIVE] = (
         annee_courante if echecs and len(echecs) == etat['total'] else annee_nouvelle
     )

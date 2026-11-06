@@ -359,6 +359,7 @@ class CreationNouvelleAnneeTest(TestCase):
         self.assertContains(response, 'name="eleves_confirmes" value="%d"' % self.eleve.pk)
         self.assertContains(response, 'name="eleves_convention" value="%d"' % faible.pk)
         self.assertContains(response, 'name="confirmation_passage" value="1"')
+        self.assertContains(response, 'name="eleves_admis_affiches" value="%d"' % self.eleve.pk)
 
     def test_seuls_les_eleves_coches_passent_en_classe_superieure(self):
         faible = self._eleve_sans_moyenne()
@@ -374,8 +375,9 @@ class CreationNouvelleAnneeTest(TestCase):
             total_points=Decimal('9'), total_coefficients=Decimal('1'),
             rang=1, rang_formate='1er/3', effectif=3,
         )
-        self.client.get(reverse('eleves:nouvelle_annee_apercu'))
+        apercu = self.client.get(reverse('eleves:nouvelle_annee_apercu'))
         response = self._creer_annee(confirmation_passage='1',
+                                     eleves_admis_affiches=apercu.context['eleves_admis_affiches'],
                                      eleves_confirmes=[str(self.eleve.pk)],
                                      eleves_convention=[str(faible.pk)])
         self.assertEqual(response.status_code, 302)
@@ -388,7 +390,7 @@ class CreationNouvelleAnneeTest(TestCase):
         self.assertTrue(any('1 élève(s) promu(s) par convention' in m for m in messages), messages)
 
     def test_inscrit_apres_l_apercu_n_est_pas_retenu(self):
-        self.client.get(reverse('eleves:nouvelle_annee_apercu'))
+        affiches = self.client.get(reverse('eleves:nouvelle_annee_apercu')).context['eleves_admis_affiches']
         tardif = Eleve.objects.create(
             matricule='PAS-005', prenom='Ibrahima', nom='Touré', sexe='M',
             date_naissance=date(2018, 5, 5), classe=Classe.objects.get(nom='2ÈME ANNÉE A'),
@@ -408,16 +410,34 @@ class CreationNouvelleAnneeTest(TestCase):
             frais_inscription=200000, frais_reinscription=80000,
             tranche_1=300000, tranche_2=250000, tranche_3=150000,
         )
-        self._creer_annee(confirmation_passage='1', eleves_confirmes=[str(self.eleve.pk)])
+        self._creer_annee(confirmation_passage='1', eleves_admis_affiches=affiches,
+                          eleves_confirmes=[str(self.eleve.pk)])
         tardif.refresh_from_db()
         self.assertEqual((tardif.classe.nom, tardif.classe.annee_scolaire), ('3ÈME ANNÉE A', '2026-2027'))
 
-    def test_confirmation_sans_apercu_en_session_est_refusee(self):
-        response = self._creer_annee(confirmation_passage='1', eleves_confirmes=[str(self.eleve.pk)])
-        self.assertIn('annee_courante=2025-2026', response.url)
+    def test_confirmation_ne_depend_pas_de_la_session(self):
+        """Plusieurs processus web ne partagent pas la session : la liste de
+        l'aperçu est envoyée avec le formulaire (avant : « aperçu expiré »)."""
+        response = self._creer_annee(confirmation_passage='1',
+                                     eleves_admis_affiches=str(self.eleve.pk))
+        self.assertEqual(response.status_code, 302)
         self.eleve.refresh_from_db()
-        self.assertEqual(self.eleve.classe_id, self.classe_1.pk)
-        self.assertFalse(Classe.objects.filter(annee_scolaire='2026-2027').exists())
+        # Affiché admis mais décoché : il redouble dans la nouvelle année.
+        self.assertEqual((self.eleve.classe.nom, self.eleve.classe.annee_scolaire),
+                         ('1ÈRE ANNÉE A', '2026-2027'))
+
+    def test_eleve_non_evalue_passe_par_defaut(self):
+        Classement.objects.filter(eleve=self.eleve).delete()
+        apercu = self.client.get(reverse('eleves:nouvelle_annee_apercu'))
+        self.assertEqual(apercu.context['eleves_admis_affiches'], str(self.eleve.pk))
+        self.assertEqual(apercu.context['eleves_non_admis'], [])
+        self.assertContains(apercu, 'cb-confirme cb-non-evalue" checked')
+        self._creer_annee(confirmation_passage='1',
+                          eleves_admis_affiches=apercu.context['eleves_admis_affiches'],
+                          eleves_confirmes=[str(self.eleve.pk)])
+        self.eleve.refresh_from_db()
+        self.assertEqual((self.eleve.classe.nom, self.eleve.classe.annee_scolaire),
+                         ('2ÈME ANNÉE A', '2026-2027'))
 
     # ── Les autres modules après la création de l'année ──────────────────────
 

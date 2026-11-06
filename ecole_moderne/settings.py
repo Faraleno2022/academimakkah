@@ -312,9 +312,11 @@ CACHES = {
     }
 }
 
-# Sessions stockées en DB + cache (1 requête DB au lieu de 2 par session)
-SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"
-SESSION_CACHE_ALIAS = "default"
+# Sessions en base uniquement. Le cache par défaut est propre à chaque processus
+# (LocMemCache) : avec plusieurs processus web (PythonAnywhere), « cached_db »
+# servait une copie périmée de la session à un autre processus — année active
+# perdue, aperçu de nouvelle année « expiré », création par lots interrompue.
+SESSION_ENGINE = "django.contrib.sessions.backends.db"
 SESSION_COOKIE_AGE = 86400 * 7   # 7 jours (évite reconnexions fréquentes)
 
 # =================== Auth & mots de passe ===================

@@ -369,6 +369,7 @@
         {% if classes_nouvelles and nb_eleves_repartis %}
         <!-- Liste des élèves dans les classes de la nouvelle année -->
         <input type="hidden" name="confirmation_passage" value="1">
+        <input type="hidden" name="eleves_admis_affiches" value="{{ eleves_admis_affiches }}">
         <div class="col-12 mt-4" id="section-repartition">
             <div class="card shadow-sm border-success">
                 <div class="card-header text-white d-flex justify-content-between align-items-center flex-wrap gap-2" style="background: linear-gradient(135deg, #2e7d32, #43a047);">
@@ -381,6 +382,7 @@
                         Chaque élève apparaît dans la classe qu'il rejoindra en <strong>{{ annee_nouvelle }}</strong>.
                         <strong>Case cochée = passage en classe supérieure confirmé.</strong>
                         <br>Les élèves admis sont cochés : décochez ceux qui doivent <em>redoubler</em>.
+                        Les élèves <em>non évalués</em> (aucun classement calculé) sont cochés aussi.
                         Les élèves sans la moyenne ne sont pas cochés : cochez ceux promus
                         <strong>par convention entre la direction et les parents</strong>.
                         L'élève se déplace aussitôt dans sa nouvelle classe.
@@ -390,6 +392,10 @@
                         <button type="button" class="btn btn-sm btn-outline-success"
                                 onclick="cocherPassage('.cb-confirme', true)">
                             <i class="fas fa-check-double me-1"></i>Confirmer tous les admis
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary"
+                                onclick="cocherPassage('.cb-non-evalue', false)">
+                            <i class="fas fa-user-clock me-1"></i>Retenir les non évalués
                         </button>
                         {% if eleves_non_admis %}
                         <button type="button" class="btn btn-sm btn-outline-warning"
@@ -424,7 +430,7 @@
                                                     <td class="text-center" style="width:36px;">
                                                         {% if item.admis %}
                                                         <input type="checkbox" name="eleves_confirmes" value="{{ item.eleve.id }}"
-                                                               class="form-check-input cb-passage cb-confirme" checked
+                                                               class="form-check-input cb-passage cb-confirme{% if item.non_evalue %} cb-non-evalue{% endif %}" checked
                                                                onchange="majLignePassage(this)"
                                                                title="Passage confirmé" style="width:1.2em;height:1.2em;">
                                                         {% else %}
