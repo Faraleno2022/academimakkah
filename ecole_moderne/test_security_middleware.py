@@ -51,6 +51,50 @@ class PathTraversalDetectionTests(SimpleTestCase):
         self.assertTrue(self.middleware.detect_path_traversal(request))
 
 
+class FauxPositifsAttaqueTests(SimpleTestCase):
+    """Une détection bloque l'IP (souvent toute l'école) pendant 24 h : les
+    actions normales ne doivent jamais être prises pour une attaque."""
+
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.middleware = SecurityMiddleware(lambda request: None)
+
+    def _attaque(self, request):
+        return (self.middleware.detect_xss(request)
+                or self.middleware.detect_sql_injection(request))
+
+    def test_parametres_normaux_ne_bloquent_pas(self):
+        for url in (
+            "/paiements/ajax/calculer-remise/?montant=500000&remise_id=2",
+            "/eleves/ajax/rechercher-responsable-telephone/?telephone=622613559",
+            "/notes/saisir/?classe_id=1&matiere_id=2&evaluation_id=3",
+            "/eleves/12/ticket-bus-pdf/?abonnement=4",
+            "/eleves/liste/?q=Diallo&annee=2026-2027",
+        ):
+            self.assertFalse(self._attaque(self.factory.get(url)), url)
+
+    def test_textes_saisis_normaux_ne_bloquent_pas(self):
+        for valeur in ("Kaloum; Conakry", "Bon élève -- à encourager",
+                       "l'élève est absent; prévenir le parent", "2027-2028",
+                       "Mention = Bien", "Condition=payer avant le 5"):
+            request = self.factory.post("/eleves/ajouter/", {"observation": valeur})
+            self.assertFalse(self._attaque(request), valeur)
+
+    def test_vraies_attaques_toujours_detectees(self):
+        for url in (
+            "/eleves/?q=x' OR 1=1",
+            "/eleves/?q=1 UNION SELECT password FROM auth_user",
+            "/eleves/?q=x'; DROP TABLE eleves_eleve",
+            "/eleves/?q=admin'--",
+            "/eleves/?q=%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E",
+            "/eleves/?q=<script>alert(1)</script>",
+            "/eleves/?next=javascript:alert(1)",
+        ):
+            self.assertTrue(self._attaque(self.factory.get(url)), url)
+        request = self.factory.post("/eleves/ajouter/", {"nom": "<svg onload=alert(1)>"})
+        self.assertTrue(self._attaque(request))
+
+
 class ClientIpDetectionTests(SimpleTestCase):
     """Derriere le repartiteur PythonAnywhere, tous les visiteurs partagent
     la meme IP tant que X-Real-IP n'est pas prioritaire sur les autres

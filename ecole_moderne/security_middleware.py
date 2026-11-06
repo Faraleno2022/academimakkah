@@ -13,7 +13,7 @@ from django.shortcuts import redirect
 from django.core.exceptions import TooManyFieldsSent
 from django.core.mail import mail_admins
 import re
-from urllib.parse import unquote
+from urllib.parse import unquote, unquote_plus
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +22,17 @@ class SecurityMiddleware(MiddlewareMixin):
     Middleware de sécurité avancé pour protéger contre diverses attaques
     """
     
-    # Patterns d'attaques SQL Injection (plus stricts pour éviter les faux positifs)
+    # Patterns d'attaques SQL Injection. Une détection bloque l'IP 24 h, et
+    # toute l'école partage souvent la même IP : un « ; » ou un « -- » seul
+    # (adresse « Kaloum; Conakry », observation, période « 2026--2027 »)
+    # ne suffit donc pas, il faut la forme d'une vraie injection.
     SQL_INJECTION_PATTERNS = [
-        # Commentaires/terminaisons SQL dangereuses
-        r"(--|;|/\*|\*/|%2D%2D|%3B)",
+        # Apostrophe qui ferme une chaîne puis commentaire SQL : ' -- , '# , '/*
+        r"['\"]\s*(--|#|/\*)",
+        # Seconde instruction enchaînée : ; DROP / ; SELECT ...
+        r";\s*\b(select|insert|update|delete|drop|alter|create|truncate|exec|shutdown)\b",
         # UNION SELECT (avec mots-clés)
-        r"\bunion\b\s+\bselect\b",
+        r"\bunion\b(\s+all)?\s+\bselect\b",
         # EXEC sp (procédures stockées)
         r"\bexec\b(\s|\+)+(s|x)p\w+",
         # Opérations DML/DDL complètes
@@ -42,7 +47,10 @@ class SecurityMiddleware(MiddlewareMixin):
     XSS_PATTERNS = [
         r"<script[^>]*>.*?</script>",
         r"javascript:",
-        r"on\w+\s*=",
+        # Gestionnaire d'événement dans une balise (<img onerror=...>). Sans la
+        # balise, des paramètres normaux comme ?montant=, ?telephone=,
+        # ?abonnement= ou ?evaluation_id= étaient pris pour une attaque.
+        r"<[^>]*\bon[a-z]+\s*=",
         r"<iframe[^>]*>.*?</iframe>",
         r"<object[^>]*>.*?</object>",
         r"<embed[^>]*>.*?</embed>",
@@ -260,7 +268,7 @@ class SecurityMiddleware(MiddlewareMixin):
     def detect_sql_injection(self, request):
         """Détecte les tentatives d'injection SQL (requêtes et POST), sans pénaliser les apostrophes normales)"""
         # Vérifier dans la query string uniquement (pas tout le chemin)
-        query = (request.META.get('QUERY_STRING') or '').lower()
+        query = unquote_plus(request.META.get('QUERY_STRING') or '').lower()
         for pattern in self.SQL_INJECTION_PATTERNS:
             if re.search(pattern, query, re.IGNORECASE):
                 return True
@@ -293,7 +301,7 @@ class SecurityMiddleware(MiddlewareMixin):
     def detect_xss(self, request):
         """Détecte les tentatives XSS"""
         # Vérifier dans l'URL
-        full_path = request.get_full_path().lower()
+        full_path = unquote_plus(request.get_full_path()).lower()
         for pattern in self.XSS_PATTERNS:
             if re.search(pattern, full_path, re.IGNORECASE):
                 return True
