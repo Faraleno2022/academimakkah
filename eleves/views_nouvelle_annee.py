@@ -22,8 +22,12 @@ from datetime import date as _date_type, timedelta
 from dateutil.relativedelta import relativedelta
 
 from .models import Ecole, Classe, Eleve, HistoriqueEleve
+from .annulation_annee import _annee_precedente
 from utilisateurs.utils import user_school, user_is_admin
-from .utils_annee import get_annee_active, get_statut_creation_nouvelle_annee, SESSION_ANNEE_ACTIVE
+from .utils_annee import (
+    get_annee_active, get_statut_creation_nouvelle_annee, SESSION_ANNEE_ACTIVE,
+    creation_annee_trop_tot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +140,7 @@ def gestion_annees(request):
     annees_connues = {a['annee_scolaire'] for a in annees_qs}
 
     annees = []
+    est_admin = user_is_admin(request.user)
     for a in annees_qs:
         annees.append({
             'annee': a['annee_scolaire'],
@@ -145,6 +150,9 @@ def gestion_annees(request):
             'est_recente': a == annees_qs[0],
             'passage_a_completer': (a['nb_eleves'] > 0
                 and _annee_suivante(a['annee_scolaire']) in annees_connues),
+            # Année créée par erreur : on peut revenir à la précédente.
+            'peut_annuler': (est_admin and a == annees_qs[0]
+                and _annee_precedente(a['annee_scolaire']) in annees_connues),
         })
 
     context = {
@@ -577,6 +585,7 @@ def nouvelle_annee_apercu(request):
         'annee_courante': annee_courante,
         'annee_nouvelle': annee_nouvelle,
         'deja_existante': deja_existante,
+        'ouverture_creation': creation_annee_trop_tot(annee_nouvelle),
         'preview_classes': preview_classes,
         'grilles': grilles,
         'preview_notes': preview_notes,
@@ -1039,6 +1048,11 @@ def nouvelle_annee_creer(request):
     if not Classe.objects.filter(ecole=ecole, annee_scolaire=annee_courante).exists():
         messages.error(request, "L'année de départ n'existe pas pour cet établissement.")
         return redirect('eleves:nouvelle_annee_apercu')
+    ouverture = creation_annee_trop_tot(annee_nouvelle)
+    if ouverture:
+        messages.error(request, f"L'année {annee_nouvelle} ne peut être préparée qu'à partir du "
+                                f"{ouverture:%d/%m/%Y}. Les élèves restent en {annee_courante}.")
+        return redirect('eleves:gestion_annees')
 
     cle = _cle_session_passage(ecole, annee_nouvelle)
     etat = request.session.get(cle)

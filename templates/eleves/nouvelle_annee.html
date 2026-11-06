@@ -31,6 +31,17 @@
         </div>
     </div>
 
+    {% if ouverture_creation %}
+    <div class="alert alert-danger d-flex align-items-center gap-2">
+        <i class="fas fa-ban fa-lg"></i>
+        <div>
+            <strong>Trop tôt :</strong> l'année <strong>{{ annee_nouvelle }}</strong> ne peut être préparée
+            qu'à partir du <strong>{{ ouverture_creation|date:"d/m/Y" }}</strong>.
+            Les élèves de {{ annee_courante }} restent dans leurs classes.
+        </div>
+    </div>
+    {% endif %}
+
     {% if deja_existante %}
     <div class="alert alert-warning d-flex align-items-center gap-2">
         <i class="fas fa-exclamation-triangle fa-lg"></i>
@@ -497,7 +508,8 @@
                         {% endif %}
                     </p>
                 </div>
-                <button type="submit" id="btn-lancer" class="btn btn-danger btn-lg px-4">
+                <button type="submit" id="btn-lancer" class="btn btn-danger btn-lg px-4"
+                        {% if ouverture_creation %}disabled{% endif %}>
                     <i class="fas fa-play-circle me-2"></i>
                     Oui, créer {{ annee_nouvelle }}
                 </button>

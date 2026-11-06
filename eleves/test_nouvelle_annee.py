@@ -547,3 +547,123 @@ class CreationNouvelleAnneeTest(TestCase):
         liste = self.client.get(reverse('eleves:liste_eleves'))
         self.assertEqual(liste.context['passage_en_attente']['nb'], 1)
         self.assertContains(liste, 'Compléter le passage')
+
+    # ── Année créée par erreur ───────────────────────────────────────────────
+
+    def _creer_annee_suivante_par_erreur(self):
+        """Ancien comportement : 2027-2028 créée juste après 2026-2027."""
+        from unittest.mock import patch
+        with patch('eleves.views_nouvelle_annee.creation_annee_trop_tot', return_value=None):
+            return self.client.post(reverse('eleves:nouvelle_annee_creer'), {
+                'annee_courante': '2026-2027', 'annee_nouvelle': '2027-2028',
+                'faire_passer_eleves': '1', 'dupliquer_grilles': '1',
+                'reconduire_affectations': '1', 'dupliquer_notes_classes': '1',
+            })
+
+    def test_annee_suivante_ne_peut_pas_etre_creee_des_maintenant(self):
+        from unittest.mock import patch
+        from eleves.utils_annee import creation_annee_trop_tot
+
+        class _Date(date):
+            @classmethod
+            def today(cls):
+                return date(2026, 11, 6)
+
+        self.assertEqual(creation_annee_trop_tot('2027-2028', today=date(2026, 11, 6)), date(2027, 3, 1))
+        self.assertIsNone(creation_annee_trop_tot('2027-2028', today=date(2027, 3, 1)))
+        self._creer_annee(dupliquer_grilles='1')
+        with patch('eleves.utils_annee.date', _Date):
+            apercu = self.client.get(reverse('eleves:nouvelle_annee_apercu'))
+            self.assertEqual(apercu.context['annee_nouvelle'], '2027-2028')
+            self.assertContains(apercu, 'Trop tôt')
+            response = self.client.post(reverse('eleves:nouvelle_annee_creer'), {
+                'annee_courante': '2026-2027', 'annee_nouvelle': '2027-2028', 'faire_passer_eleves': '1',
+            })
+        self.assertRedirects(response, reverse('eleves:gestion_annees'), fetch_redirect_response=False)
+        self.assertFalse(Classe.objects.filter(annee_scolaire='2027-2028').exists())
+        self.eleve.refresh_from_db()
+        self.assertEqual(self.eleve.classe.annee_scolaire, '2026-2027')
+
+    def test_annulation_ramene_chacun_dans_sa_classe_de_l_annee_precedente(self):
+        from salaires.models import AffectationClasse, Enseignant, TypeEnseignant
+        from eleves.models import HistoriqueEleve
+        fode = self._eleve_sans_moyenne()  # redouble en 2026-2027, passe (non évalué) en 2027-2028
+        enseignant = Enseignant.objects.create(
+            nom='Maître', prenoms='Test', ecole=self.ecole, type_enseignant=TypeEnseignant.PRIMAIRE,
+            statut='ACTIF', salaire_fixe=Decimal('1000000'), heures_mensuelles=Decimal('160'),
+            date_embauche=date(2025, 1, 1), cree_par=self.admin,
+        )
+        AffectationClasse.objects.create(enseignant=enseignant, classe=self.classe_1,
+                                         date_debut=date(2025, 9, 1))
+        self._creer_annee(dupliquer_grilles='1', reconduire_affectations='1', dupliquer_notes_classes='1')
+        echeancier_2026 = EcheancierPaiement.objects.get(eleve=self.eleve, annee_scolaire='2026-2027')
+        # Élève de 2026-2027 sorti en fin de cycle par le passage erroné.
+        sorti = Eleve.objects.create(
+            matricule='PAS-009', prenom='Mamadou', nom='Diallo', sexe='M', date_naissance=date(2008, 1, 1),
+            classe=Classe.objects.get(nom='2ÈME ANNÉE A', annee_scolaire='2026-2027'),
+            responsable_principal=self.eleve.responsable_principal, statut='TRANSFERE',
+        )
+        self._creer_annee_suivante_par_erreur()
+        HistoriqueEleve.objects.create(
+            eleve=sorti, action='FIN_CYCLE',
+            description="Fin de cycle — sorti(e) du système lors du passage à l'année 2027-2028. Classe: X",
+        )
+        self.eleve.refresh_from_db()
+        fode.refresh_from_db()
+        self.assertEqual(self.eleve.classe.annee_scolaire, '2027-2028')
+        self.assertEqual((fode.classe.nom, fode.classe.annee_scolaire), ('2ÈME ANNÉE A', '2027-2028'))
+
+        annees = {a['annee']: a for a in self.client.get(reverse('eleves:gestion_annees')).context['annees']}
+        self.assertTrue(annees['2027-2028']['peut_annuler'])
+        self.assertFalse(annees['2026-2027']['peut_annuler'])
+        url = reverse('eleves:annuler_annee', args=['2027-2028'])
+        page = self.client.get(url)
+        self.assertEqual((page.context['nb_eleves'], page.context['nb_sortis']), (2, 1))
+        self.client.post(url, {'confirmation': 'oui'})
+        self.assertTrue(Classe.objects.filter(annee_scolaire='2027-2028').exists())
+
+        response = self.client.post(url, {'confirmation': '2027-2028'})
+        self.assertRedirects(response, reverse('eleves:gestion_annees'), fetch_redirect_response=False)
+        for modele in (Classe, GrilleTarifaire, EcheancierPaiement, ClasseNote):
+            self.assertFalse(modele.objects.filter(annee_scolaire='2027-2028').exists(), modele)
+        for eleve, classe in ((self.eleve, '2ÈME ANNÉE A'), (fode, '1ÈRE ANNÉE A'), (sorti, '2ÈME ANNÉE A')):
+            eleve.refresh_from_db()
+            self.assertEqual((eleve.classe.nom, eleve.classe.annee_scolaire, eleve.statut),
+                             (classe, '2026-2027', 'ACTIF'))
+        self.assertTrue(EcheancierPaiement.objects.filter(pk=echeancier_2026.pk).exists())
+        active = AffectationClasse.objects.get(enseignant=enseignant, actif=True)
+        self.assertEqual((active.classe.annee_scolaire, active.date_fin), ('2026-2027', None))
+        from eleves.utils_annee import SESSION_ANNEE_ACTIVE
+        self.assertEqual(self.client.session[SESSION_ANNEE_ACTIVE], '2026-2027')
+
+    def test_annulation_par_lots(self):
+        from unittest.mock import patch
+        self._eleve_sans_moyenne()
+        self._creer_annee(dupliquer_grilles='1')
+        self._creer_annee_suivante_par_erreur()
+        url = reverse('eleves:annuler_annee', args=['2027-2028'])
+        with patch('eleves.annulation_annee.TAILLE_LOT_ANNULATION', 1):
+            premier = self.client.post(url, {'confirmation': '2027-2028', 'total': '2'})
+            self.assertTemplateUsed(premier, 'eleves/annuler_annee_progression.html')
+            self.assertEqual(Eleve.objects.filter(classe__annee_scolaire='2027-2028').count(), 1)
+            self.client.post(url, {'confirmation': '2027-2028', 'total': '2'})
+        self.assertFalse(Classe.objects.filter(annee_scolaire='2027-2028').exists())
+        self.assertEqual(Eleve.objects.filter(classe__annee_scolaire='2026-2027').count(), 2)
+
+    def test_annulation_refusee_si_un_paiement_existe_dans_l_annee(self):
+        from paiements.models import ModePaiement, Paiement, TypePaiement
+        self._creer_annee(dupliquer_grilles='1')
+        self._creer_annee_suivante_par_erreur()
+        Paiement.objects.bulk_create([Paiement(
+            eleve=self.eleve, numero_recu='P-2027', montant=100000, annee_scolaire='2027-2028',
+            date_paiement=date(2026, 11, 6), statut='VALIDE',
+            mode_paiement=ModePaiement.objects.create(nom='ESPECES'),
+            type_paiement=TypePaiement.objects.create(nom='Scolarité'))])
+        url = reverse('eleves:annuler_annee', args=['2027-2028'])
+        self.assertContains(self.client.get(url), 'Annulation impossible')
+        self.client.post(url, {'confirmation': '2027-2028'})
+        self.eleve.refresh_from_db()
+        self.assertEqual(self.eleve.classe.annee_scolaire, '2027-2028')
+        # Seule l'année la plus récente peut être annulée.
+        self.client.post(reverse('eleves:annuler_annee', args=['2026-2027']), {'confirmation': '2026-2027'})
+        self.assertTrue(Classe.objects.filter(annee_scolaire='2026-2027').exists())

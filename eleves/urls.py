@@ -15,6 +15,7 @@ from .views_nouvelle_annee import (
     gestion_annees,
     changer_annee_active,
 )
+from .annulation_annee import annuler_annee
 
 app_name = 'eleves'
 
@@ -46,6 +47,7 @@ urlpatterns = [
     # Nouvelle année scolaire
     path('annees/', gestion_annees, name='gestion_annees'),
     path('annees/changer/', changer_annee_active, name='changer_annee_active'),
+    path('annees/<str:annee>/annuler/', annuler_annee, name='annuler_annee'),
     path('nouvelle-annee/', nouvelle_annee_apercu, name='nouvelle_annee_apercu'),
     path('nouvelle-annee/creer/', nouvelle_annee_creer, name='nouvelle_annee_creer'),
 

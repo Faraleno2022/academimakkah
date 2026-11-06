@@ -83,6 +83,28 @@ def annee_suivante(annee: str) -> str:
         return annee
 
 
+# Une année se prépare au plus six mois avant sa rentrée (à partir du 1er mars
+# pour une rentrée le 1er septembre). Sans cette limite, un second clic sur
+# « Nouvelle année scolaire » juste après une création faisait passer de
+# nouveau tous les élèves vers l'année d'après (non évalués = admis).
+DELAI_PREPARATION_MOIS = 6
+
+
+def date_ouverture_annee(annee):
+    """Premier jour où l'année ``annee`` peut être créée ; None si mal formée."""
+    from dateutil.relativedelta import relativedelta
+    bornes = bornes_annee_scolaire(annee)
+    return bornes[0] - relativedelta(months=DELAI_PREPARATION_MOIS) if bornes else None
+
+
+def creation_annee_trop_tot(annee, today=None):
+    """Date d'ouverture si l'année ``annee`` ne peut pas encore être créée, sinon None."""
+    ouverture = date_ouverture_annee(annee)
+    if ouverture and (today or date.today()) < ouverture:
+        return ouverture
+    return None
+
+
 def date_fin_annee_scolaire(annee: str):
     """Retourne la date de fin configuree pour une annee scolaire."""
     try:
