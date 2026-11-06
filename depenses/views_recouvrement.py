@@ -26,6 +26,7 @@ from eleves.models import Eleve
 from ecole_moderne.security_decorators import require_school_object
 from utilisateurs.permissions import can_add_expenses, can_modify_expenses, can_delete_expenses, can_delete_subscriptions
 from utilisateurs.utils import user_is_superadmin, user_school, filter_by_user_school
+from eleves.utils_annee import bornes_annee_active, filtrer_par_annee_active, get_annee_active, q_mois_annee_scolaire
 
 from .models_recouvrement import (
     DepenseCuisine, DepenseDocument, Versement, AbonnementInformatique
@@ -56,14 +57,15 @@ def tableau_bord_general(request):
             qs = qs.none() if ecole is None else qs.filter(cree_par__profil__ecole=ecole)
         return qs
 
-    depenses_qs = _depenses_qs()
-    cuisine_qs = _base_qs_module('cuisine', user)
-    document_qs = _base_qs_module('document', user)
-    versement_qs = _base_qs_module('versement', user)
+    depenses_qs = filtrer_par_annee_active(_depenses_qs(), request, 'date_facture')
+    cuisine_qs = _qs_module_annee('cuisine', request)
+    document_qs = _qs_module_annee('document', request)
+    versement_qs = _qs_module_annee('versement', request)
 
     informatique_qs = AbonnementInformatique.objects.all()
     if not user_is_superadmin(user):
         informatique_qs = filter_by_user_school(informatique_qs, user, 'eleve__classe__ecole')
+    informatique_qs = _abonnements_informatique_annee(informatique_qs, request)
 
     logistique_qs = BienEtablissement.objects.filter(actif=True)
     if not user_is_superadmin(user):
@@ -72,6 +74,8 @@ def tableau_bord_general(request):
     bibliotheque_qs = Livre.objects.all()
     if not user_is_superadmin(user):
         bibliotheque_qs = bibliotheque_qs.none() if ecole is None else bibliotheque_qs.filter(cree_par__profil__ecole=ecole)
+
+    salaires_qs = _salaires_payes_annee(request)
 
     montant_total_general = (
         (depenses_qs.aggregate(t=Sum('montant_ttc'))['t'] or Decimal('0')) +
@@ -134,14 +138,15 @@ def tableau_bord_general(request):
             'titre': 'Salaires enseignants', 'icone': 'fa-chalkboard-teacher', 'couleur': 'success',
             'description': 'Suivi des salaires payés par enseignant et par mois.',
             'href': reverse('depenses:dashboard_salaires'),
-            'total': _salaires_payes_qs(user).count(),
-            'montant': _salaires_payes_qs(user).aggregate(t=Sum('salaire_net'))['t'] or Decimal('0'),
+            'total': salaires_qs.count(),
+            'montant': salaires_qs.aggregate(t=Sum('salaire_net'))['t'] or Decimal('0'),
         },
     ]
 
     context = {
         'cartes': cartes,
         'montant_total_general': montant_total_general,
+        'annee_scolaire': get_annee_active(request, ecole) if ecole else None,
     }
     return render(request, 'depenses/tableau_bord.html', context)
 
@@ -189,12 +194,25 @@ def _base_qs_module(cle, user):
     return qs
 
 
+def _qs_module_annee(cle, request):
+    """Enregistrements du module datés dans l'année scolaire active."""
+    return filtrer_par_annee_active(_base_qs_module(cle, request.user), request, 'date')
+
+
+def _abonnements_informatique_annee(qs, request):
+    """Abonnements dont la validité chevauche l'année scolaire active."""
+    bornes = bornes_annee_active(request)
+    if not bornes:
+        return qs
+    return qs.filter(date_debut__lte=bornes[1], date_fin__gte=bornes[0])
+
+
 @login_required
 def liste_module_simple(request, cle):
     if cle not in MODULES_SIMPLES:
         raise Http404()
     cfg = MODULES_SIMPLES[cle]
-    qs = _base_qs_module(cle, request.user).order_by('-date', '-date_creation')
+    qs = _qs_module_annee(cle, request).order_by('-date', '-date_creation')
 
     q = (request.GET.get('q') or '').strip()
     if q:
@@ -286,7 +304,7 @@ def dashboard_module_simple(request, cle):
     if cle not in MODULES_SIMPLES:
         raise Http404()
     cfg = MODULES_SIMPLES[cle]
-    qs = _base_qs_module(cle, request.user)
+    qs = _qs_module_annee(cle, request)
 
     total_count = qs.count()
     total_montant = qs.aggregate(total=Sum('montant'))['total'] or Decimal('0')
@@ -315,7 +333,7 @@ def export_module_simple_excel(request, cle):
     if cle not in MODULES_SIMPLES:
         raise Http404()
     cfg = MODULES_SIMPLES[cle]
-    qs = _base_qs_module(cle, request.user).order_by('-date')
+    qs = _qs_module_annee(cle, request).order_by('-date')
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -353,7 +371,7 @@ def export_module_simple_pdf(request, cle):
     if cle not in MODULES_SIMPLES:
         raise Http404()
     cfg = MODULES_SIMPLES[cle]
-    qs = _base_qs_module(cle, request.user).order_by('-date')
+    qs = _qs_module_annee(cle, request).order_by('-date')
 
     from reportlab.lib.pagesizes import A4
     from reportlab.lib import colors
@@ -413,6 +431,7 @@ def liste_abonnements_informatique(request):
     qs = AbonnementInformatique.objects.select_related('eleve', 'eleve__classe', 'eleve__classe__ecole')
     if not user_is_superadmin(request.user):
         qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
+    qs = _abonnements_informatique_annee(qs, request)
 
     q = (request.GET.get('q') or '').strip()
     if q:
@@ -533,6 +552,7 @@ def dashboard_informatique(request):
     qs = AbonnementInformatique.objects.select_related('eleve', 'eleve__classe')
     if not user_is_superadmin(request.user):
         qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
+    qs = _abonnements_informatique_annee(qs, request)
 
     today = timezone.localdate()
     total = qs.count()
@@ -779,6 +799,13 @@ def _salaires_payes_qs(user):
     return qs
 
 
+def _salaires_payes_annee(request):
+    """Salaires payés des mois de l'année scolaire active."""
+    annee = get_annee_active(request, user_school(request.user))
+    qs = _salaires_payes_qs(request.user)
+    return qs.filter(q_mois_annee_scolaire(annee, 'periode__')) if annee else qs
+
+
 def _enseignants_scope_qs(user):
     """Liste des enseignants visibles par l'utilisateur (scoping par école).
 
@@ -796,20 +823,27 @@ def _enseignants_scope_qs(user):
     return qs
 
 
-def _mois_disponibles(user):
-    """Liste des mois (annee, mois) ayant une période de salaire créée pour
-    l'école de l'utilisateur, complétée par le mois en cours s'il est absent,
-    triée du plus récent au plus ancien."""
+def _mois_disponibles(request):
+    """Liste des mois (annee, mois) de l'année scolaire active ayant une
+    période de salaire créée pour l'école de l'utilisateur, complétée par le
+    mois en cours s'il appartient à cette année, du plus récent au plus ancien."""
     from salaires.models import PeriodeSalaire
 
+    user = request.user
     qs = PeriodeSalaire.objects.all()
     if not user_is_superadmin(user):
         ecole = user_school(user)
         qs = qs.none() if ecole is None else qs.filter(ecole=ecole)
+    bornes = bornes_annee_active(request)
+    if bornes:
+        qs = qs.filter(q_mois_annee_scolaire(f"{bornes[0].year}-{bornes[1].year}"))
 
     cles = set(qs.values_list('annee', 'mois').distinct())
     today = timezone.localdate()
-    cles.add((today.year, today.month))
+    if not bornes or bornes[0] <= today <= bornes[1]:
+        cles.add((today.year, today.month))
+    elif not cles:
+        cles.add((bornes[1].year, 6))
 
     mois_tries = sorted(cles, reverse=True)
     return [
@@ -873,7 +907,7 @@ def _construire_lignes_salaires_mois(user, annee, mois, niveau=None):
     return lignes
 
 
-def _construire_pivot_salaires(user):
+def _construire_pivot_salaires(request):
     """Construit le tableau croisé enseignant x mois des salaires payés.
 
     Retourne (periodes, lignes, totaux_par_periode, totaux_par_niveau) où :
@@ -884,7 +918,7 @@ def _construire_pivot_salaires(user):
     """
     from salaires.models import Enseignant, AffectationClasse
 
-    qs = _salaires_payes_qs(user).order_by('periode__annee', 'periode__mois')
+    qs = _salaires_payes_annee(request).order_by('periode__annee', 'periode__mois')
 
     enseignant_ids = set(qs.values_list('enseignant_id', flat=True))
     affectations_par_enseignant = {}
@@ -940,12 +974,15 @@ def dashboard_salaires(request):
     enregistré."""
     today = timezone.localdate()
 
-    mois_disponibles = _mois_disponibles(request.user)
+    mois_disponibles = _mois_disponibles(request)
+    # Par défaut le mois en cours, ou le plus récent de l'année consultée.
+    defaut = next((m for m in mois_disponibles
+                   if (m['annee'], m['mois']) == (today.year, today.month)), mois_disponibles[0])
     try:
-        annee_sel = int(request.GET.get('annee') or today.year)
-        mois_sel = int(request.GET.get('mois') or today.month)
+        annee_sel = int(request.GET.get('annee') or defaut['annee'])
+        mois_sel = int(request.GET.get('mois') or defaut['mois'])
     except (TypeError, ValueError):
-        annee_sel, mois_sel = today.year, today.month
+        annee_sel, mois_sel = defaut['annee'], defaut['mois']
     niveau_sel = request.GET.get('niveau') or ''
 
     lignes = _construire_lignes_salaires_mois(request.user, annee_sel, mois_sel, niveau_sel or None)
@@ -969,7 +1006,7 @@ def dashboard_salaires(request):
     ]
 
     # Tendance sur les mois payés (historique global, non filtré par mois sélectionné).
-    periodes, _lignes_pivot, totaux_par_periode, _t = _construire_pivot_salaires(request.user)
+    periodes, _lignes_pivot, totaux_par_periode, _t = _construire_pivot_salaires(request)
     evolution_mensuelle = [
         {'libelle': p['libelle'], 'montant': totaux_par_periode.get((p['annee'], p['mois']), Decimal('0'))}
         for p in periodes

@@ -1,5 +1,5 @@
 """Création d'une nouvelle année scolaire (/eleves/nouvelle-annee/creer/)."""
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.conf import settings
@@ -333,3 +333,178 @@ class CreationNouvelleAnneeTest(TestCase):
         self.assertEqual(nouveau.solde_restant, 680000)
         self.assertTrue(nouveau.est_reinscription)
         self.assertEqual(Paiement.objects.count(), 1)
+
+    def _eleve_sans_moyenne(self):
+        eleve = Eleve.objects.create(
+            matricule='PAS-003', prenom='Fodé', nom='Bangoura', sexe='M',
+            date_naissance=date(2018, 3, 3), classe=self.classe_1,
+            date_inscription=date(2025, 9, 1), responsable_principal=self.eleve.responsable_principal,
+            statut='ACTIF',
+        )
+        Classement.objects.create(
+            eleve=eleve, classe=self.classe_note, periode='ANNUEL_TRIM',
+            annee_scolaire='2025-2026', moyenne_generale=Decimal('3'),
+            total_points=Decimal('3'), total_coefficients=Decimal('1'),
+            rang=2, rang_formate='2e/2', effectif=2,
+        )
+        return eleve
+
+    def test_apercu_affiche_les_eleves_dans_leurs_classes_de_la_nouvelle_annee(self):
+        faible = self._eleve_sans_moyenne()
+        response = self.client.get(reverse('eleves:nouvelle_annee_apercu'))
+        par_classe = {c['nom']: [i['eleve'].pk for i in c['eleves']]
+                      for c in response.context['classes_nouvelles']}
+        self.assertEqual(par_classe['2ÈME ANNÉE A'], [self.eleve.pk])
+        self.assertEqual(par_classe['1ÈRE ANNÉE A'], [faible.pk])
+        self.assertContains(response, 'name="eleves_confirmes" value="%d"' % self.eleve.pk)
+        self.assertContains(response, 'name="eleves_convention" value="%d"' % faible.pk)
+        self.assertContains(response, 'name="confirmation_passage" value="1"')
+
+    def test_seuls_les_eleves_coches_passent_en_classe_superieure(self):
+        faible = self._eleve_sans_moyenne()
+        admis_decoche = Eleve.objects.create(
+            matricule='PAS-004', prenom='Mariama', nom='Sylla', sexe='F',
+            date_naissance=date(2018, 4, 4), classe=self.classe_1,
+            date_inscription=date(2025, 9, 1), responsable_principal=self.eleve.responsable_principal,
+            statut='ACTIF',
+        )
+        Classement.objects.create(
+            eleve=admis_decoche, classe=self.classe_note, periode='ANNUEL_TRIM',
+            annee_scolaire='2025-2026', moyenne_generale=Decimal('9'),
+            total_points=Decimal('9'), total_coefficients=Decimal('1'),
+            rang=1, rang_formate='1er/3', effectif=3,
+        )
+        self.client.get(reverse('eleves:nouvelle_annee_apercu'))
+        response = self._creer_annee(confirmation_passage='1',
+                                     eleves_confirmes=[str(self.eleve.pk)],
+                                     eleves_convention=[str(faible.pk)])
+        self.assertEqual(response.status_code, 302)
+        for eleve, classe in [(self.eleve, '2ÈME ANNÉE A'), (faible, '2ÈME ANNÉE A'),
+                              (admis_decoche, '1ÈRE ANNÉE A')]:
+            eleve.refresh_from_db()
+            self.assertEqual((eleve.classe.nom, eleve.classe.annee_scolaire), (classe, '2026-2027'))
+        messages = [str(m) for m in response.wsgi_request._messages]
+        self.assertTrue(any('1 élève(s) redoublant(s)' in m for m in messages), messages)
+        self.assertTrue(any('1 élève(s) promu(s) par convention' in m for m in messages), messages)
+
+    def test_inscrit_apres_l_apercu_n_est_pas_retenu(self):
+        self.client.get(reverse('eleves:nouvelle_annee_apercu'))
+        tardif = Eleve.objects.create(
+            matricule='PAS-005', prenom='Ibrahima', nom='Touré', sexe='M',
+            date_naissance=date(2018, 5, 5), classe=Classe.objects.get(nom='2ÈME ANNÉE A'),
+            date_inscription=date(2026, 6, 1), responsable_principal=self.eleve.responsable_principal,
+            statut='ACTIF',
+        )
+        Classement.objects.create(
+            eleve=tardif, classe=self.classe_note, periode='ANNUEL_TRIM',
+            annee_scolaire='2025-2026', moyenne_generale=Decimal('7'),
+            total_points=Decimal('7'), total_coefficients=Decimal('1'),
+            rang=1, rang_formate='1er/1', effectif=1,
+        )
+        Classe.objects.create(ecole=self.ecole, nom='3ÈME ANNÉE A', niveau='PRIMAIRE_3',
+                              annee_scolaire='2025-2026')
+        GrilleTarifaire.objects.create(
+            ecole=self.ecole, niveau='PRIMAIRE_3', annee_scolaire='2026-2027',
+            frais_inscription=200000, frais_reinscription=80000,
+            tranche_1=300000, tranche_2=250000, tranche_3=150000,
+        )
+        self._creer_annee(confirmation_passage='1', eleves_confirmes=[str(self.eleve.pk)])
+        tardif.refresh_from_db()
+        self.assertEqual((tardif.classe.nom, tardif.classe.annee_scolaire), ('3ÈME ANNÉE A', '2026-2027'))
+
+    def test_confirmation_sans_apercu_en_session_est_refusee(self):
+        response = self._creer_annee(confirmation_passage='1', eleves_confirmes=[str(self.eleve.pk)])
+        self.assertIn('annee_courante=2025-2026', response.url)
+        self.eleve.refresh_from_db()
+        self.assertEqual(self.eleve.classe_id, self.classe_1.pk)
+        self.assertFalse(Classe.objects.filter(annee_scolaire='2026-2027').exists())
+
+    # ── Les autres modules après la création de l'année ──────────────────────
+
+    def _choisir_annee(self, annee):
+        from eleves.utils_annee import SESSION_ANNEE_ACTIVE
+        session = self.client.session
+        session[SESSION_ANNEE_ACTIVE] = annee
+        session.save()
+
+    def test_enseignant_reconduit_dans_la_classe_de_la_nouvelle_annee(self):
+        from salaires.models import AffectationClasse, Enseignant, PeriodeSalaire, TypeEnseignant
+        from salaires.services import classe_principale, effectif_classe_principale
+        self._eleve_sans_moyenne()  # redouble : reste en 1ère année A
+        enseignant = Enseignant.objects.create(
+            nom='Maître', prenoms='Test', ecole=self.ecole, type_enseignant=TypeEnseignant.PRIMAIRE,
+            statut='ACTIF', salaire_fixe=Decimal('1000000'), heures_mensuelles=Decimal('160'),
+            date_embauche=date(2025, 1, 1), cree_par=self.admin,
+        )
+        ancienne = AffectationClasse.objects.create(
+            enseignant=enseignant, classe=self.classe_1, date_debut=date(2025, 9, 1),
+        )
+        self._creer_annee(reconduire_affectations='1')
+
+        ancienne.refresh_from_db()
+        self.assertEqual((ancienne.actif, ancienne.date_fin), (False, date(2026, 8, 31)))
+        nouvelle = AffectationClasse.objects.get(enseignant=enseignant, actif=True)
+        self.assertEqual((nouvelle.classe.nom, nouvelle.classe.annee_scolaire), ('1ÈRE ANNÉE A', '2026-2027'))
+        self.assertEqual(nouvelle.date_debut, date(2026, 9, 1))
+
+        octobre = PeriodeSalaire.objects.create(mois=10, annee=2026, ecole=self.ecole,
+                                                nombre_semaines=Decimal('4'), cree_par=self.admin)
+        juin = PeriodeSalaire.objects.create(mois=6, annee=2026, ecole=self.ecole,
+                                             nombre_semaines=Decimal('4'), cree_par=self.admin)
+        self.assertEqual(classe_principale(enseignant, octobre), nouvelle.classe)
+        self.assertEqual(effectif_classe_principale(enseignant, octobre), 1)
+        self.assertEqual(classe_principale(enseignant, juin), self.classe_1)
+
+    def test_recouvrement_et_bibliotheque_restent_dans_leur_annee(self):
+        from depenses.models_bibliotheque import CategorieLivre, Emprunt, Livre
+        from depenses.models_recouvrement import DepenseCuisine
+        DepenseCuisine.objects.create(date=date(2026, 3, 10), designation='Riz 2025-2026',
+                                      montant=100000, cree_par=self.admin)
+        DepenseCuisine.objects.create(date=date(2026, 10, 5), designation='Riz 2026-2027',
+                                      montant=30000, cree_par=self.admin)
+        livre = Livre.objects.create(
+            code_livre='LIV-AN-1', titre='Livre', auteur='Auteur',
+            categorie=CategorieLivre.objects.create(nom='Romans', code='ROM-AN'),
+            emplacement='A', nombre_exemplaires=3, exemplaires_disponibles=1,
+            statut='DISPONIBLE', cree_par=self.admin,
+        )
+        emprunts = {}
+        for numero, jour, rendu in [('RENDU', date(2026, 3, 1), date(2026, 3, 10)),
+                                    ('A-RENDRE', date(2026, 5, 2), None),
+                                    ('NOUVEAU', date(2026, 10, 1), None)]:
+            emprunts[numero] = Emprunt.objects.create(
+                numero_emprunt=numero, livre=livre, eleve=self.eleve, date_emprunt=jour,
+                date_retour_prevue=jour + timedelta(days=14), date_retour_effectif=rendu,
+                statut='RETOURNE' if rendu else 'EN_COURS', cree_par=self.admin,
+            )
+        self._creer_annee()
+
+        cuisine = reverse('depenses:liste_module_simple', args=['cuisine'])
+        emprunts_url = reverse('depenses:liste_emprunts')
+        self.assertEqual(self.client.get(cuisine).context['total_montant'], 30000)
+        self.assertEqual({e.numero_emprunt for e in self.client.get(emprunts_url).context['emprunts']},
+                         {'A-RENDRE', 'NOUVEAU'})
+        self.assertEqual(self.client.get(reverse('depenses:tableau_bord')).status_code, 200)
+
+        self._choisir_annee('2025-2026')
+        self.assertEqual(self.client.get(cuisine).context['total_montant'], 100000)
+        self.assertEqual({e.numero_emprunt for e in self.client.get(emprunts_url).context['emprunts']},
+                         {'RENDU', 'A-RENDRE'})
+
+    def test_salaires_et_notes_listent_l_annee_active(self):
+        from salaires.models import PeriodeSalaire
+        for mois, annee in [(6, 2026), (10, 2026)]:
+            PeriodeSalaire.objects.create(mois=mois, annee=annee, ecole=self.ecole,
+                                          nombre_semaines=Decimal('4'), cree_par=self.admin)
+        self._creer_annee(dupliquer_notes_classes='1')
+
+        periodes = self.client.get(reverse('salaires:gestion_periodes')).context['periodes']
+        self.assertEqual([(p.mois, p.annee) for p in periodes], [(10, 2026)])
+        classes = self.client.get(reverse('notes:saisir_notes')).context['classes']
+        self.assertEqual({c.annee_scolaire for c in classes}, {'2026-2027'})
+
+        self._choisir_annee('2025-2026')
+        periodes = self.client.get(reverse('salaires:gestion_periodes')).context['periodes']
+        self.assertEqual([(p.mois, p.annee) for p in periodes], [(6, 2026)])
+        classes = self.client.get(reverse('notes:saisir_notes')).context['classes']
+        self.assertEqual({c.annee_scolaire for c in classes}, {'2025-2026'})

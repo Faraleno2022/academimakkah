@@ -18,7 +18,7 @@ from django.db import transaction
 from django.db.models import Count
 
 from decimal import Decimal
-from datetime import date as _date_type
+from datetime import date as _date_type, timedelta
 from dateutil.relativedelta import relativedelta
 
 from .models import Ecole, Classe, Eleve, HistoriqueEleve
@@ -505,27 +505,61 @@ def nouvelle_annee_apercu(request):
                 'eleves': eleves_de_ce_niveau,
             })
 
-    # Élèves sans la moyenne (non admis) — hors maternelle/garderie/terminale
+    # Répartition des élèves (hors Terminale) dans les classes de la nouvelle
+    # année, selon la même règle que le passage : les admis vont en classe
+    # supérieure, les autres restent dans une classe du même nom. Les classes
+    # étant dupliquées par nom, celles de l'année courante servent d'index.
     from notes.calculs_moyennes import detecter_niveau_scolaire
+    destinations = list(classes_actuelles)
+    noms_destinations = {c.nom for c in destinations}
+    for c in Classe.objects.filter(ecole=ecole, annee_scolaire=annee_nouvelle).order_by('niveau', 'nom'):
+        if c.nom not in noms_destinations:
+            destinations.append(c)
+            noms_destinations.add(c.nom)
+    index_destinations = _construire_index_classes(destinations)
+    cles_classes = {c.nom: f'nc{i}' for i, c in enumerate(destinations)}
+    repartition = {c.nom: [] for c in destinations}
+
     eleves_non_admis = []
-    classes_skip = CLASSES_TERMINALES | {'GARDERIE', 'TOUTE PETITE SECTION', 'TOUT PETITE SECTION',
-                                          'TPS', 'PETITE SECTION', 'PS', 'MOYENNE SECTION', 'MS',
-                                          'GRANDE SECTION', 'GS'}
+    eleves_admis_affiches = []
     for cls in classes_actuelles:
         base, _ = _extraire_base_et_lettre(cls.nom)
-        niveau_scol = detecter_niveau_scolaire(cls.nom)
-        if base in CLASSES_TERMINALES or niveau_scol == 'MATERNELLE':
+        if base in CLASSES_TERMINALES:
             continue
+        maternelle = detecter_niveau_scolaire(cls.nom) == 'MATERNELLE'
+        superieure = _trouver_classe_cible(cls.nom, index_destinations)
+        classe_passage = superieure.nom if superieure else cls.nom
         for eleve in cls.eleves.filter(statut='ACTIF').order_by('nom', 'prenom'):
-            moyenne, sur = _get_moyenne_annuelle(eleve, annee_courante)
-            if not _est_admis(moyenne, sur):
-                eleves_non_admis.append({
-                    'eleve': eleve,
-                    'classe_nom': cls.nom,
-                    'moyenne': moyenne,
-                    'sur': sur,
-                    'seuil': 5.0 if sur == 10 else 10.0,
-                })
+            if maternelle:
+                moyenne, sur, admis = None, 10, True
+            else:
+                moyenne, sur = _get_moyenne_annuelle(eleve, annee_courante)
+                admis = _est_admis(moyenne, sur)
+            item = {
+                'eleve': eleve,
+                'classe_nom': cls.nom,
+                'moyenne': moyenne,
+                'sur': sur,
+                'seuil': 5.0 if sur == 10 else 10.0,
+                'admis': admis,
+                'maternelle': maternelle,
+                'sans_superieure': superieure is None,
+                'cle_passage': cles_classes[classe_passage],
+                'cle_maintien': cles_classes[cls.nom],
+            }
+            repartition[classe_passage if admis else cls.nom].append(item)
+            if admis:
+                eleves_admis_affiches.append(str(eleve.pk))
+            else:
+                eleves_non_admis.append(item)
+
+    classes_nouvelles = [
+        {'nom': c.nom, 'cle': cles_classes[c.nom], 'eleves': repartition[c.nom]}
+        for c in destinations
+    ]
+    # Les admis décochés dans l'aperçu redoublent : la création compare les
+    # cases reçues à cette liste, pour ne pas retenir un élève inscrit depuis.
+    request.session[_cle_session_apercu(ecole, annee_nouvelle)] = eleves_admis_affiches
 
     context = {
         'ecole': ecole,
@@ -539,6 +573,8 @@ def nouvelle_annee_apercu(request):
         'eleves_terminale': eleves_terminale,
         'eleves_examens': eleves_examens,
         'eleves_non_admis': eleves_non_admis,
+        'classes_nouvelles': classes_nouvelles,
+        'nb_eleves_repartis': sum(len(c['eleves']) for c in classes_nouvelles),
         'titre_page': f'Nouvelle Année Scolaire {annee_nouvelle}',
     }
     return render(request, 'eleves/nouvelle_annee.html', context)
@@ -557,11 +593,16 @@ _COMPTEURS = (
     'classes_notes_creees', 'matieres_creees', 'eleves_passes',
     'eleves_conserves', 'eleves_diplomes', 'eleves_sortis', 'eleves_cep',
     'eleves_bepc', 'eleves_convention', 'eleves_redoublants', 'echeanciers_crees',
+    'affectations_reconduites',
 )
 
 
 def _cle_session_passage(ecole, annee_nouvelle):
     return f'passage_annee_{ecole.pk}_{annee_nouvelle}'
+
+
+def _cle_session_apercu(ecole, annee_nouvelle):
+    return f'apercu_passage_{ecole.pk}_{annee_nouvelle}'
 
 
 def _dupliquer_structure(request, ecole, annee_courante, annee_nouvelle, options, resultats):
@@ -653,6 +694,9 @@ def _dupliquer_structure(request, ecole, annee_courante, annee_nouvelle, options
             if created:
                 resultats['grilles_bus_creees'] += 1
 
+    if options.get('reconduire_affectations'):
+        _reconduire_affectations(ecole, annee_courante, annee_nouvelle, resultats)
+
     if options['dupliquer_notes_classes']:
         from notes.models import ClasseNote, MatiereNote
         for cn in ClasseNote.objects.filter(ecole=ecole, annee_scolaire=annee_courante, actif=True):
@@ -685,6 +729,55 @@ def _dupliquer_structure(request, ecole, annee_courante, annee_nouvelle, options
                     )
                     if m_created:
                         resultats['matieres_creees'] += 1
+
+
+def _reconduire_affectations(ecole, annee_courante, annee_nouvelle, resultats):
+    """Les enseignants gardent leurs classes dans la nouvelle année.
+
+    Chaque affectation en cours sur une classe de l'année écoulée est close la
+    veille de la rentrée (31 août) et reprise sur la classe du même nom de la
+    nouvelle année : la paie de chaque mois compte alors l'effectif et les
+    cours de la bonne classe, et l'historique de l'année écoulée est conservé.
+    """
+    from django.core.exceptions import ValidationError
+    from django.db.models import Q
+    from salaires.models import AffectationClasse, StatutEnseignant
+    from .utils_annee import bornes_annee_scolaire
+
+    rentree = bornes_annee_scolaire(annee_nouvelle)[0]
+    nouvelles = {c.nom: c for c in Classe.objects.filter(ecole=ecole, annee_scolaire=annee_nouvelle)}
+    affectations = (AffectationClasse.objects
+                    .select_related('classe', 'enseignant')
+                    .filter(classe__ecole=ecole, classe__annee_scolaire=annee_courante, actif=True)
+                    .filter(Q(date_fin__isnull=True) | Q(date_fin__gte=rentree))
+                    .exclude(enseignant__statut=StatutEnseignant.DEMISSIONNAIRE))
+    for affectation in affectations:
+        cible = nouvelles.get(affectation.classe.nom)
+        if cible is None:
+            continue
+        try:
+            with transaction.atomic():
+                if affectation.date_debut >= rentree:
+                    # Saisie après la rentrée sur l'ancienne classe : simple correction.
+                    affectation.classe = cible
+                    affectation.save()
+                else:
+                    affectation.actif = False
+                    affectation.date_fin = rentree - timedelta(days=1)
+                    affectation.save()
+                    AffectationClasse.objects.create(
+                        enseignant=affectation.enseignant,
+                        classe=cible,
+                        heures_par_semaine=affectation.heures_par_semaine,
+                        taux_horaire=affectation.taux_horaire,
+                        matiere=affectation.matiere,
+                        date_debut=rentree,
+                        actif=True,
+                    )
+        except ValidationError as exc:
+            logger.warning(f"Affectation {affectation.pk} non reconduite : {exc}")
+            continue
+        resultats['affectations_reconduites'] += 1
 
 
 def _creer_echeancier(request, eleve, ecole, annee_nouvelle, *, reinscription=True):
@@ -791,6 +884,9 @@ def _passer_eleve(request, eleve, ctx, resultats):
         par_convention = eleve_id_str in ctx['eleves_convention']
     else:
         admis, par_convention, moyenne, sur = True, False, None, 10
+    retenu = admis and eleve_id_str in ctx['eleves_retenus']
+    if retenu:
+        admis = False
 
     eleve._current_user = request.user
     eleve._passage_nouvelle_annee = True
@@ -811,13 +907,14 @@ def _passer_eleve(request, eleve, ctx, resultats):
         if nouvelle_meme:
             affecter(nouvelle_meme)
             moy_txt = f"{moyenne}/{sur}" if moyenne is not None else "non évaluée"
+            decision_txt = ", décision de la direction" if retenu else ""
             HistoriqueEleve.objects.create(
                 eleve=eleve,
                 action='CHANGEMENT_CLASSE',
                 description=(
                     f"Redoublant — année {annee_nouvelle}: "
                     f"maintenu(e) en {ancienne_classe.nom} "
-                    f"(moyenne: {moy_txt})"
+                    f"(moyenne: {moy_txt}{decision_txt})"
                 ),
                 utilisateur=request.user,
             )
@@ -885,6 +982,7 @@ def _message_final(annee_nouvelle, resultats):
         ('configs_paiement_creees', "{} config(s) paiement copiée(s)"),
         ('grilles_creees', "{} grille(s) tarifaire(s) copiée(s)"),
         ('grilles_bus_creees', "{} grille(s) bus copiée(s)"),
+        ('affectations_reconduites', "{} affectation(s) d'enseignant reconduite(s)"),
         ('eleves_passes', "{} élève(s) passé(s) en classe supérieure"),
         ('eleves_conserves', "{} élève(s) conservé(s) dans leur classe"),
         ('eleves_cep', "{} élève(s) titulaire(s) du CEP"),
@@ -940,16 +1038,32 @@ def nouvelle_annee_creer(request):
                                     "les élèves déjà passés ne seront pas traités deux fois.")
             return redirect('eleves:nouvelle_annee_apercu')
     else:
+        # Liste de confirmation de l'aperçu : un admis décoché redouble.
+        eleves_retenus = []
+        if (request.POST.get('confirmation_passage') == '1'
+                and request.POST.get('faire_passer_eleves') == '1'):
+            affiches = request.session.get(_cle_session_apercu(ecole, annee_nouvelle))
+            if affiches is None:
+                messages.error(request, "L'aperçu a expiré : vérifiez à nouveau la liste des élèves "
+                                        "avant de créer l'année.")
+                from django.urls import reverse
+                return redirect(reverse('eleves:nouvelle_annee_apercu')
+                                + f'?annee_courante={annee_courante}')
+            confirmes = set(request.POST.getlist('eleves_confirmes'))
+            eleves_retenus = [pk for pk in affiches if pk not in confirmes]
+
         # Premier envoi : mémoriser les choix pour les lots suivants.
         etat = {
             'annee_courante': annee_courante,
             'dupliquer_grilles': request.POST.get('dupliquer_grilles') == '1',
             'dupliquer_notes_classes': request.POST.get('dupliquer_notes_classes') == '1',
+            'reconduire_affectations': request.POST.get('reconduire_affectations') == '1',
             'faire_passer_eleves': request.POST.get('faire_passer_eleves') == '1',
             'eleves_bac': request.POST.getlist('eleves_bac'),
             'eleves_cep': request.POST.getlist('eleves_cep'),
             'eleves_bepc': request.POST.getlist('eleves_bepc'),
             'eleves_convention': request.POST.getlist('eleves_convention'),
+            'eleves_retenus': eleves_retenus,
             'resultats': {c: 0 for c in _COMPTEURS},
             'echecs': [],
             'erreurs_tarifs': [],
@@ -989,6 +1103,7 @@ def nouvelle_annee_creer(request):
             'eleves_cep': set(etat['eleves_cep']),
             'eleves_bepc': set(etat['eleves_bepc']),
             'eleves_convention': set(etat['eleves_convention']),
+            'eleves_retenus': set(etat.get('eleves_retenus', [])),
         }
 
         restants = (Eleve.objects
@@ -1051,6 +1166,7 @@ def nouvelle_annee_creer(request):
 
     echecs = etat['echecs']
     request.session.pop(cle, None)
+    request.session.pop(_cle_session_apercu(ecole, annee_nouvelle), None)
     request.session[SESSION_ANNEE_ACTIVE] = (
         annee_courante if echecs and len(echecs) == etat['total'] else annee_nouvelle
     )

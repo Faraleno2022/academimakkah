@@ -33,7 +33,7 @@ from .calculs_intelligent import (
     obtenir_appreciation_intelligente,
     formater_rang_intelligent,
 )
-from .classes_utils import trouver_classe_eleve
+from .classes_utils import classes_notes_annee_active, trouver_classe_eleve
 from .charte_graphique import get_charte_reportlab
 
 # Import centralisé du filigrane - chargé une seule fois
@@ -4701,6 +4701,7 @@ def statistiques(request):
         classes = ClasseNote.objects.filter(ecole=ecole, actif=True).order_by('nom')
     else:
         classes = ClasseNote.objects.filter(actif=True).order_by('nom')
+    classes = classes_notes_annee_active(classes, request)
     
     # Classe sélectionnée
     classe_id = request.GET.get('classe_id')
@@ -5032,6 +5033,7 @@ def gerer_classes(request):
         classes = ClasseNote.objects.filter(ecole=ecole).order_by('-date_creation')
     else:
         classes = ClasseNote.objects.all().order_by('-date_creation')
+    classes = classes_notes_annee_active(classes, request)
     
     # Statistiques
     total_classes = classes.count()
@@ -5169,6 +5171,7 @@ def gerer_matieres(request):
         classes = ClasseNote.objects.filter(ecole=ecole, actif=True).order_by('niveau', 'nom')
     else:
         classes = ClasseNote.objects.filter(actif=True).order_by('niveau', 'nom')
+    classes = classes_notes_annee_active(classes, request)
     
     # Filtres
     classe_id = request.GET.get('classe_id')
@@ -5401,6 +5404,7 @@ def gerer_eleves(request):
     classes_notes = filter_by_user_school(
         ClasseNote.objects.filter(actif=True), request.user, 'ecole'
     ).order_by('niveau', 'nom')
+    classes_notes = classes_notes_annee_active(classes_notes, request)
     
     # Filtres
     classe_id = request.GET.get('classe_id')
@@ -5461,6 +5465,7 @@ def saisir_notes(request):
         classes = ClasseNote.objects.filter(ecole=ecole, actif=True).order_by('niveau', 'nom')
     else:
         classes = ClasseNote.objects.filter(actif=True).order_by('niveau', 'nom')
+    classes = classes_notes_annee_active(classes, request)
     
     # Paramètres de sélection
     classe_id = request.GET.get('classe_id')
@@ -6679,6 +6684,7 @@ def consulter_notes(request):
         classes = ClasseNote.objects.filter(ecole=ecole, actif=True).order_by('niveau', 'nom')
     else:
         classes = ClasseNote.objects.filter(actif=True).order_by('niveau', 'nom')
+    classes = classes_notes_annee_active(classes, request)
     
     # Paramètres de sélection
     classe_id = request.GET.get('classe_id')
@@ -7119,6 +7125,7 @@ def bulletin_dynamique(request):
         classes = ClasseNote.objects.filter(ecole=ecole, actif=True).order_by('niveau', 'nom')
     else:
         classes = ClasseNote.objects.filter(actif=True).order_by('niveau', 'nom')
+    classes = classes_notes_annee_active(classes, request)
     
     # Paramètres de sélection avec nettoyage
     def nettoyer_parametre_numerique(param):
@@ -8014,6 +8021,7 @@ def saisie_notes_simple(request):
     
     # Récupérer les classes disponibles
     classes = ClasseNote.objects.filter(ecole=ecole, actif=True).order_by('nom') if ecole else ClasseNote.objects.none()
+    classes = classes_notes_annee_active(classes, request)
     
     # Paramètres de recherche
     classe_id = request.GET.get('classe_id')

@@ -79,3 +79,21 @@ def trouver_classe_eleve(classe_note):
         return meme_niveau_actif[0]
 
     return None
+
+
+def classes_notes_annee_active(classes, request):
+    """Classes Notes de l'année scolaire active.
+
+    Après la création d'une nouvelle année, les deux années ont des classes de
+    même nom : sans ce filtre, les listes les mélangent. Si l'année active n'a
+    encore aucune classe Notes (copie non demandée), la liste reste complète.
+    """
+    from eleves.utils_annee import get_annee_active
+    from utilisateurs.utils import user_school
+
+    ecole = user_school(request.user)
+    annee = get_annee_active(request, ecole) if ecole else None
+    if not annee:
+        return classes
+    de_l_annee = classes.filter(annee_scolaire=annee)
+    return de_l_annee if de_l_annee.exists() else classes

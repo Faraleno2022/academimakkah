@@ -14,6 +14,17 @@ from .models_bibliotheque import (
 )
 from .forms import ReservationForm
 from eleves.models import Eleve
+from eleves.utils_annee import bornes_annee_active
+
+
+def _emprunts_annee(qs, request):
+    """Emprunts de l'année scolaire active, plus ceux des années précédentes
+    encore à rendre : un livre sorti l'an passé reste à récupérer."""
+    bornes = bornes_annee_active(request)
+    if not bornes:
+        return qs
+    return qs.filter(Q(date_emprunt__range=bornes)
+                     | Q(date_retour_effectif__isnull=True, date_emprunt__lte=bornes[1]))
 
 
 def _livres_pour_utilisateur(user, actifs_seulement=True):
@@ -175,7 +186,7 @@ def dashboard_bibliotheque(request):
     ).aggregate(total=Sum('montant_penalite'))['total'] or 0
 
     # Derniers emprunts
-    derniers_emprunts = emprunts_qs.select_related(
+    derniers_emprunts = _emprunts_annee(emprunts_qs, request).select_related(
         'livre', 'eleve', 'cree_par'
     ).order_by('-date_emprunt')[:10]
 
@@ -275,6 +286,7 @@ def liste_emprunts(request):
     ecole = user_school(request.user)
     if ecole:
         emprunts = emprunts.filter(cree_par__profil__ecole=ecole)
+    emprunts = _emprunts_annee(emprunts, request)
     
     if statut:
         emprunts = emprunts.filter(statut=statut)
@@ -761,10 +773,15 @@ def statistiques_bibliotheque(request):
     date_debut = request.GET.get('date_debut', '')
     date_fin = request.GET.get('date_fin', '')
 
+    # Par défaut les 30 derniers jours de l'année scolaire consultée.
+    fin_defaut = date.today()
+    bornes = bornes_annee_active(request)
+    if bornes and not bornes[0] <= fin_defaut <= bornes[1]:
+        fin_defaut = min(bornes[1], fin_defaut)
     if not date_debut:
-        date_debut = (date.today() - timedelta(days=30)).strftime('%Y-%m-%d')
+        date_debut = (fin_defaut - timedelta(days=30)).strftime('%Y-%m-%d')
     if not date_fin:
-        date_fin = date.today().strftime('%Y-%m-%d')
+        date_fin = fin_defaut.strftime('%Y-%m-%d')
 
     # Emprunts par période
     emprunts = Emprunt.objects.filter(

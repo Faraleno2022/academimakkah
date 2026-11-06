@@ -61,6 +61,7 @@ from .services import (
 )
 from eleves.models import Ecole, Classe
 from utilisateurs.utils import user_is_admin, user_school
+from eleves.utils_annee import get_annee_active, q_mois_annee_scolaire
 from utilisateurs.permissions import can_add_teachers, permission_required
 from ecole_moderne.security_decorators import delete_permission_required, require_school_object
 
@@ -74,6 +75,14 @@ from .views_presences import (
 def _ecole_utilisateur(request):
     """Compat: utiliser l'utilitaire centralisé"""
     return user_school(request.user)
+
+
+def _q_annee_scolaire_active(request, prefixe=''):
+    """Mois de l'année scolaire active : la paie d'une année y reste rattachée
+    après la création de la suivante. Sans école, aucune restriction."""
+    ecole = _ecole_utilisateur(request)
+    annee = get_annee_active(request, ecole) if ecole else None
+    return q_mois_annee_scolaire(annee, prefixe) if annee else Q()
 
 
 def _calculer_etats_salaire_periode(periode, utilisateur):
@@ -1064,6 +1073,8 @@ def etats_salaire(request):
     
     if periode_id:
         etats = etats.filter(periode_id=periode_id)
+    else:
+        etats = etats.filter(_q_annee_scolaire_active(request, 'periode__'))
     
     if ecole_id:
         etats = etats.filter(periode__ecole_id=ecole_id)
@@ -1131,6 +1142,7 @@ def etats_salaire(request):
     periodes = PeriodeSalaire.objects.order_by('-annee', '-mois')
     if restreindre:
         periodes = periodes.filter(ecole=ecole_user)
+    periodes_choix = periodes.filter(_q_annee_scolaire_active(request))
     ecoles = Ecole.objects.all()
     if restreindre:
         ecoles = ecoles.filter(id=ecole_user.id)
@@ -1150,7 +1162,7 @@ def etats_salaire(request):
     context = {
         'page_obj': page_obj,
         'etats': page_obj,
-        'periodes': periodes,
+        'periodes': periodes_choix,
         'periode_filtre': periode_filtre,
         'ecoles': ecoles,
         'totaux': totaux,
@@ -1757,6 +1769,8 @@ def gestion_periodes(request):
     
     if annee:
         periodes = periodes.filter(annee=annee)
+    else:
+        periodes = periodes.filter(_q_annee_scolaire_active(request))
     
     # Filtre statut ouvert/clôturé
     if statut == 'cloture':
@@ -1810,6 +1824,8 @@ def gestion_periodes(request):
         base_stats_qs = base_stats_qs.filter(ecole_id=ecole_id)
     if annee:
         base_stats_qs = base_stats_qs.filter(annee=annee)
+    else:
+        base_stats_qs = base_stats_qs.filter(_q_annee_scolaire_active(request))
     if statut == 'cloture':
         base_stats_qs = base_stats_qs.filter(cloturee=True)
     elif statut == 'ouvert':

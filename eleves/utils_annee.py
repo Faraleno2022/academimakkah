@@ -35,6 +35,45 @@ def get_annee_active(request, ecole):
     return annees[0]
 
 
+def bornes_annee_scolaire(annee):
+    """Du 1er septembre au 31 août, comme les périodes de paie
+    (``PeriodeSalaire.annee_scolaire``). None si l'année est mal formée."""
+    try:
+        debut = int(str(annee).split('-')[0])
+    except (TypeError, ValueError):
+        return None
+    return date(debut, 9, 1), date(debut + 1, 8, 31)
+
+
+def bornes_annee_active(request):
+    """Bornes de l'année active de l'utilisateur ; None sans école
+    (super-administrateur), qui garde alors toutes les années."""
+    from utilisateurs.utils import user_school
+    annee = get_annee_active(request, user_school(request.user))
+    return bornes_annee_scolaire(annee) if annee else None
+
+
+def filtrer_par_annee_active(qs, request, champ_date):
+    """Restreint ``qs`` aux enregistrements datés dans l'année scolaire active :
+    les recouvrements, emprunts et salaires d'une année y restent rattachés
+    après la création de la suivante. Pour un DateTimeField, passer
+    ``'champ__date'``."""
+    bornes = bornes_annee_active(request)
+    return qs.filter(**{f'{champ_date}__range': bornes}) if bornes else qs
+
+
+def q_mois_annee_scolaire(annee, prefixe=''):
+    """Filtre Q des mois (champs ``annee``/``mois``) d'une année scolaire :
+    septembre à décembre de la 1re année civile, janvier à août de la 2e."""
+    from django.db.models import Q
+    bornes = bornes_annee_scolaire(annee)
+    if not bornes:
+        return Q()
+    debut = bornes[0].year
+    return (Q(**{f'{prefixe}annee': debut, f'{prefixe}mois__gte': 9})
+            | Q(**{f'{prefixe}annee': debut + 1, f'{prefixe}mois__lte': 8}))
+
+
 def annee_suivante(annee: str) -> str:
     """Calcule l'annee scolaire suivante. Ex: 2025-2026 -> 2026-2027."""
     try:

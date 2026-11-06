@@ -131,6 +131,16 @@
                         </div>
 
                         <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="reconduire_affectations"
+                                   name="reconduire_affectations" value="1" checked>
+                            <label class="form-check-label fw-bold" for="reconduire_affectations">
+                                <i class="fas fa-chalkboard-teacher text-secondary me-1"></i>
+                                Reconduire les enseignants dans leurs classes
+                            </label>
+                            <div class="text-muted small">Affectations reprises sur les classes {{ annee_nouvelle }} à partir de la rentrée (1er septembre).</div>
+                        </div>
+
+                        <div class="form-check form-switch mb-3">
                             <input class="form-check-input" type="checkbox" id="faire_passer_eleves"
                                    name="faire_passer_eleves" value="1" checked>
                             <label class="form-check-label fw-bold" for="faire_passer_eleves">
@@ -356,71 +366,99 @@
         </div>
         {% endif %}
 
-        {% if eleves_non_admis %}
-        <!-- Section élèves non admis (passage par convention) -->
-        <div class="col-12 mt-4">
-            <div class="card shadow-sm border-danger">
-                <div class="card-header text-white d-flex justify-content-between align-items-center" style="background: linear-gradient(135deg, #c62828, #e53935);">
-                    <span><i class="fas fa-exclamation-circle me-2"></i>Élèves sans la moyenne &mdash; Passage par convention</span>
-                    <span class="badge bg-white text-dark">{{ eleves_non_admis|length }} élève(s)</span>
+        {% if classes_nouvelles and nb_eleves_repartis %}
+        <!-- Liste des élèves dans les classes de la nouvelle année -->
+        <input type="hidden" name="confirmation_passage" value="1">
+        <div class="col-12 mt-4" id="section-repartition">
+            <div class="card shadow-sm border-success">
+                <div class="card-header text-white d-flex justify-content-between align-items-center flex-wrap gap-2" style="background: linear-gradient(135deg, #2e7d32, #43a047);">
+                    <span><i class="fas fa-users me-2"></i>Élèves dans les classes {{ annee_nouvelle }} &mdash; confirmation du passage</span>
+                    <span class="badge bg-white text-dark">{{ nb_eleves_repartis }} élève(s)</span>
                 </div>
                 <div class="card-body">
-                    <div class="alert alert-warning py-2 small mb-3">
+                    <div class="alert alert-info py-2 small mb-3">
                         <i class="fas fa-info-circle me-1"></i>
-                        <strong>Ces élèves n'ont pas la moyenne suffisante pour passer en classe supérieure.</strong>
-                        Cochez ceux qui doivent être promus <strong>par convention entre la direction et les parents</strong>.
-                        <br>Les élèves <strong>non cochés</strong> resteront dans la même classe (<em>redoublants</em>).
+                        Chaque élève apparaît dans la classe qu'il rejoindra en <strong>{{ annee_nouvelle }}</strong>.
+                        <strong>Case cochée = passage en classe supérieure confirmé.</strong>
+                        <br>Les élèves admis sont cochés : décochez ceux qui doivent <em>redoubler</em>.
+                        Les élèves sans la moyenne ne sont pas cochés : cochez ceux promus
+                        <strong>par convention entre la direction et les parents</strong>.
+                        L'élève se déplace aussitôt dans sa nouvelle classe.
                     </div>
 
-                    <div class="mb-2">
-                        <button type="button" class="btn btn-sm btn-outline-success me-1"
-                                onclick="cocherTous('.cb-convention', true)">
-                            <i class="fas fa-check-double me-1"></i>Tout cocher
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        <button type="button" class="btn btn-sm btn-outline-success"
+                                onclick="cocherPassage('.cb-confirme', true)">
+                            <i class="fas fa-check-double me-1"></i>Confirmer tous les admis
+                        </button>
+                        {% if eleves_non_admis %}
+                        <button type="button" class="btn btn-sm btn-outline-warning"
+                                onclick="cocherPassage('.cb-convention', true)">
+                            <i class="fas fa-handshake me-1"></i>Promouvoir tous les non admis
                         </button>
                         <button type="button" class="btn btn-sm btn-outline-secondary"
-                                onclick="cocherTous('.cb-convention', false)">
-                            <i class="fas fa-times me-1"></i>Tout décocher
+                                onclick="cocherPassage('.cb-convention', false)">
+                            <i class="fas fa-times me-1"></i>Aucune convention
                         </button>
+                        {% endif %}
+                        <span class="ms-auto small text-muted align-self-center" id="resume-passage"></span>
                     </div>
 
-                    <div class="table-responsive" style="max-height:400px;overflow-y:auto;">
-                        <table class="table table-hover table-sm mb-0">
-                            <thead class="table-light sticky-top">
-                                <tr>
-                                    <th style="width:50px;" class="text-center">Convention</th>
-                                    <th>Matricule</th>
-                                    <th>Nom complet</th>
-                                    <th>Classe</th>
-                                    <th class="text-center">Moyenne</th>
-                                    <th class="text-center">Seuil</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for item in eleves_non_admis %}
-                                <tr>
-                                    <td class="text-center">
-                                        <input type="checkbox" name="eleves_convention"
-                                               value="{{ item.eleve.id }}"
-                                               class="form-check-input cb-convention"
-                                               style="width:1.3em;height:1.3em;">
-                                    </td>
-                                    <td><span class="badge bg-secondary">{{ item.eleve.matricule }}</span></td>
-                                    <td class="fw-semibold">{{ item.eleve.nom }} {{ item.eleve.prenom }}</td>
-                                    <td>{{ item.classe_nom }}</td>
-                                    <td class="text-center">
-                                        {% if item.moyenne != None %}
-                                            <span class="badge bg-danger">{{ item.moyenne }}/{{ item.sur }}</span>
-                                        {% else %}
-                                            <span class="badge bg-secondary">Non évalué</span>
-                                        {% endif %}
-                                    </td>
-                                    <td class="text-center">
-                                        <span class="text-muted">{{ item.seuil }}/{{ item.sur }}</span>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
+                    <div class="row g-3">
+                        {% for nc in classes_nouvelles %}
+                        <div class="col-xl-4 col-md-6 carte-classe-nouvelle" id="carte-{{ nc.cle }}" data-cle="{{ nc.cle }}">
+                            <div class="card h-100 border-success-subtle">
+                                <div class="card-header bg-light d-flex justify-content-between align-items-center py-2">
+                                    <span class="fw-bold"><i class="fas fa-school text-success me-1"></i>{{ nc.nom }}</span>
+                                    <span class="badge bg-success compteur-classe">{{ nc.eleves|length }}</span>
+                                </div>
+                                <div class="card-body p-0">
+                                    <div class="table-responsive" style="max-height:320px;overflow-y:auto;">
+                                        <table class="table table-sm table-hover mb-0">
+                                            <tbody id="eleves-{{ nc.cle }}">
+                                                {% for item in nc.eleves %}
+                                                <tr class="ligne-passage" data-passage="{{ item.cle_passage }}"
+                                                    data-maintien="{{ item.cle_maintien }}"
+                                                    data-admis="{% if item.admis %}1{% else %}0{% endif %}"
+                                                    data-sans-superieure="{% if item.sans_superieure %}1{% else %}0{% endif %}">
+                                                    <td class="text-center" style="width:36px;">
+                                                        {% if item.admis %}
+                                                        <input type="checkbox" name="eleves_confirmes" value="{{ item.eleve.id }}"
+                                                               class="form-check-input cb-passage cb-confirme" checked
+                                                               onchange="majLignePassage(this)"
+                                                               title="Passage confirmé" style="width:1.2em;height:1.2em;">
+                                                        {% else %}
+                                                        <input type="checkbox" name="eleves_convention" value="{{ item.eleve.id }}"
+                                                               class="form-check-input cb-passage cb-convention"
+                                                               onchange="majLignePassage(this)"
+                                                               title="Promotion par convention" style="width:1.2em;height:1.2em;">
+                                                        {% endif %}
+                                                    </td>
+                                                    <td>
+                                                        <div class="fw-semibold">{{ item.eleve.nom }} {{ item.eleve.prenom }}</div>
+                                                        <div class="small text-muted">
+                                                            {{ item.eleve.matricule }} &middot; vient de {{ item.classe_nom }}
+                                                        </div>
+                                                    </td>
+                                                    <td class="text-end text-nowrap small">
+                                                        {% if item.maternelle %}
+                                                            <span class="text-muted">Maternelle</span>
+                                                        {% elif item.moyenne != None %}
+                                                            <span class="badge {% if item.admis %}bg-light text-success border{% else %}bg-danger{% endif %}">{{ item.moyenne }}/{{ item.sur }}</span>
+                                                        {% else %}
+                                                            <span class="badge bg-secondary">Non évalué</span>
+                                                        {% endif %}
+                                                        <div><span class="badge statut-passage"></span></div>
+                                                    </td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
                     </div>
                 </div>
             </div>
@@ -447,9 +485,9 @@
                         <br><strong class="text-warning">{{ eleves_terminale|length }} élève(s) de Terminale</strong>
                         seront archivés (BAC) ou sortis du système selon votre sélection ci-dessus.
                         {% endif %}
-                        {% if eleves_non_admis %}
-                        <br><strong class="text-danger">{{ eleves_non_admis|length }} élève(s) sans la moyenne</strong>
-                        redoubleront sauf ceux cochés pour promotion par convention.
+                        {% if nb_eleves_repartis %}
+                        <br>Seuls les élèves <strong class="text-success">cochés</strong> dans la liste des classes
+                        {{ annee_nouvelle }} passent en classe supérieure ; les autres redoublent.
                         {% endif %}
                     </p>
                 </div>
@@ -492,12 +530,14 @@ function lancerAnnee(form) {
         msg += '\n\u2022 ' + (totalTerm - nbBac) + ' élève(s) sorti(s) du système';
     }
 
-    // Convention (élèves non admis)
-    var nbConvention = document.querySelectorAll('.cb-convention:checked').length;
-    var totalNonAdmis = document.querySelectorAll('.cb-convention').length;
-    if (totalNonAdmis > 0) {
-        msg += '\n\u2022 ' + nbConvention + ' élève(s) promu(s) par convention (sans la moyenne)';
-        msg += '\n\u2022 ' + (totalNonAdmis - nbConvention) + ' élève(s) redoublant(s)';
+    // Liste de confirmation du passage
+    var compte = comptePassage();
+    if (compte.admis + compte.nonAdmis > 0) {
+        msg += '\n\u2022 ' + compte.confirmes + '/' + compte.admis + ' élève(s) admis confirmé(s) en classe supérieure';
+        if (compte.nonAdmis > 0) {
+            msg += '\n\u2022 ' + compte.convention + ' élève(s) promu(s) par convention (sans la moyenne)';
+        }
+        msg += '\n\u2022 ' + compte.redoublants + ' élève(s) redoublant(s)';
     }
 
     if (!confirm(msg)) {
@@ -522,11 +562,99 @@ window.addEventListener('pageshow', function (event) {
 });
 
 function cocherTous(selector, etat) {
-    document.querySelectorAll(selector).forEach(function(cb) { cb.checked = etat; });
+    var cases = document.querySelectorAll(selector);
+    for (var i = 0; i < cases.length; i++) { cases[i].checked = etat; }
 }
 
 function cocherTousBAC(etat) {
     cocherTous('.cb-bac', etat);
 }
+
+// ── Liste des élèves dans les classes de la nouvelle année ──
+function comptePassage() {
+    var c = {admis: 0, confirmes: 0, nonAdmis: 0, convention: 0, redoublants: 0};
+    var cases = document.querySelectorAll('.cb-passage');
+    for (var i = 0; i < cases.length; i++) {
+        var admis = cases[i].className.indexOf('cb-confirme') !== -1;
+        if (admis) { c.admis++; if (cases[i].checked) c.confirmes++; }
+        else { c.nonAdmis++; if (cases[i].checked) c.convention++; }
+        if (!cases[i].checked) c.redoublants++;
+    }
+    return c;
+}
+
+function ligneDeCase(cb) {
+    var el = cb;
+    while (el && el.tagName !== 'TR') { el = el.parentNode; }
+    return el;
+}
+
+function placerLigne(cb) {
+    var ligne = ligneDeCase(cb);
+    var admis = ligne.getAttribute('data-admis') === '1';
+    var cle = cb.checked ? ligne.getAttribute('data-passage') : ligne.getAttribute('data-maintien');
+    var badge = ligne.querySelector('.statut-passage');
+    if (!cb.checked) {
+        badge.className = 'badge statut-passage bg-danger';
+        badge.innerHTML = 'Redouble';
+    } else if (ligne.getAttribute('data-sans-superieure') === '1') {
+        badge.className = 'badge statut-passage bg-secondary';
+        badge.innerHTML = 'Classe supérieure absente';
+    } else if (admis) {
+        badge.className = 'badge statut-passage bg-success';
+        badge.innerHTML = 'Passe';
+    } else {
+        badge.className = 'badge statut-passage bg-warning text-dark';
+        badge.innerHTML = 'Convention';
+    }
+    var cible = document.getElementById('eleves-' + cle);
+    if (cible && ligne.parentNode !== cible) { cible.appendChild(ligne); }
+}
+
+function majCartesPassage() {
+    var cartes = document.querySelectorAll('.carte-classe-nouvelle');
+    for (var i = 0; i < cartes.length; i++) {
+        var cle = cartes[i].getAttribute('data-cle');
+        var nb = document.getElementById('eleves-' + cle).getElementsByTagName('tr').length;
+        cartes[i].querySelector('.compteur-classe').innerHTML = nb;
+        cartes[i].style.display = nb ? '' : 'none';
+    }
+    var resume = document.getElementById('resume-passage');
+    if (resume) {
+        var c = comptePassage();
+        resume.innerHTML = (c.confirmes + c.convention) + ' passent'
+            + (c.convention ? ' (dont ' + c.convention + ' par convention)' : '')
+            + ' · ' + c.redoublants + ' redoublent';
+    }
+}
+
+function majLignePassage(cb) {
+    placerLigne(cb);
+    majCartesPassage();
+}
+
+function cocherPassage(selector, etat) {
+    var cases = document.querySelectorAll(selector);
+    for (var i = 0; i < cases.length; i++) {
+        cases[i].checked = etat;
+        placerLigne(cases[i]);
+    }
+    majCartesPassage();
+}
+
+(function () {
+    var cases = document.querySelectorAll('.cb-passage');
+    for (var i = 0; i < cases.length; i++) { placerLigne(cases[i]); }
+    majCartesPassage();
+
+    // La liste n'a de sens que si les élèves sont passés.
+    var interrupteur = document.getElementById('faire_passer_eleves');
+    var section = document.getElementById('section-repartition');
+    if (interrupteur && section) {
+        var basculer = function () { section.style.display = interrupteur.checked ? '' : 'none'; };
+        interrupteur.onchange = basculer;
+        basculer();
+    }
+})();
 </script>
 {% endblock %}

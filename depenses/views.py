@@ -17,6 +17,7 @@ from .forms import (
     PieceJustificativeForm, BudgetAnnuelForm
 )
 from utilisateurs.utils import user_is_admin, user_is_superadmin, user_school
+from eleves.utils_annee import filtrer_par_annee_active
 from utilisateurs.permissions import can_add_expenses, can_modify_expenses, can_delete_expenses, can_validate_expenses
 from ecole_moderne.security_decorators import require_school_object
 
@@ -31,6 +32,7 @@ def dashboard_courantes(request):
             base_qs = Depense.objects.none()
         else:
             base_qs = base_qs.filter(cree_par__profil__ecole=ecole)
+    base_qs = filtrer_par_annee_active(base_qs, request, 'date_facture')
     # Statistiques générales
     total_depenses = base_qs.count()
     depenses_validees = base_qs.filter(statut='VALIDEE').count()
@@ -115,6 +117,7 @@ def liste_depenses(request):
             depenses = Depense.objects.none()
         else:
             depenses = depenses.filter(cree_par__profil__ecole=ecole)
+    depenses = filtrer_par_annee_active(depenses, request, 'date_facture')
     
     # Filtres
     statut_filtre = request.GET.get('statut')
