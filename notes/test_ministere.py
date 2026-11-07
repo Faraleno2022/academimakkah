@@ -42,11 +42,28 @@ class NomMinistereTest(SimpleTestCase):
             self.assertLessEqual(stringWidth(texte, police, taille), largeur)
         self.assertEqual(' '.join(t for _, t, _ in c.lignes), MINISTERE_NOM)
 
-    def test_en_tete_a_hauteur_fixe_reste_sur_une_ligne(self):
-        lignes, taille = lignes_ministere('Helvetica', 6, 390, sigle=True, max_lignes=1)
-        self.assertEqual(len(lignes), 1)
-        self.assertTrue(lignes[0].endswith('(MENA-ETFP)'))
-        self.assertLessEqual(stringWidth(lignes[0], 'Helvetica', taille), 390)
+    def test_bulletin_pdf_nom_ni_sous_le_logo_ni_sous_la_photo(self):
+        # notes/bulletin_intelligent.py : logo de 1,2 à 3,7 cm, photo à 3,4 cm du bord droit.
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import cm
+        largeur_page = A4[0]
+        c = CanevasFactice()
+        dessiner_ministere(c, largeur_page / 2, 780, 'Helvetica', 6, largeur_page - 7.4 * cm,
+                           sigle=True, max_lignes=1)
+        self.assertEqual(len(c.lignes), 1)
+        _, texte, (police, taille) = c.lignes[0]
+        self.assertTrue(texte.endswith('(MENA-ETFP)'))
+        demi = stringWidth(texte, police, taille) / 2
+        self.assertGreater(largeur_page / 2 - demi, 3.7 * cm)
+        self.assertLess(largeur_page / 2 + demi, largeur_page - 3.4 * cm)
+
+    def test_bulletin_html_reserve_la_place_du_logo_et_de_la_photo(self):
+        # Logo (60 px) et photo + drapeau (110 px) sont en position absolue dans l'en-tête.
+        source = Path(get_template('notes/bulletin_dynamique.html').origin.name).read_text(encoding='utf-8')
+        regle = source[source.index('.header-section .ministere-education,'):]
+        regle = regle[:regle.index('}')]
+        self.assertIn('padding-left: 115px', regle)
+        self.assertIn('padding-right: 115px', regle)
 
     def test_gabarits_html_affichent_le_nouveau_nom(self):
         for nom in ('notes/certificat_maternelle.html', 'notes/certificat_appreciation.html'):

@@ -309,6 +309,16 @@
         margin: 3px 0;
         text-transform: uppercase;
     }
+
+    /* Le logo (60 px à gauche), la photo et le drapeau (jusqu'à 110 px à
+       droite) sont en position absolue : les lignes longues de l'en-tête
+       restent dans la zone centrale, avec le même retrait des deux côtés
+       pour rester centrées. */
+    .header-section .ministere-education,
+    .header-section .nom-ecole {
+        padding-left: 115px;
+        padding-right: 115px;
+    }
     
     .header-section h2 {
         font-size: 14px;
