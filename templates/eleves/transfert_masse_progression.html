@@ -1,0 +1,49 @@
+{% extends 'base.html' %}
+{% block title %}Transfert des élèves{% endblock %}
+{% block content %}
+<div class="container py-5" style="max-width:720px">
+    <div class="card shadow-sm">
+        <div class="card-body p-4 text-center">
+            <h2 class="h4 mb-3">Transfert vers {{ destination.nom }}</h2>
+            <p class="text-muted">Élèves traités : {{ traites }} / {{ total }}.
+                Ne fermez pas cette page, elle continue automatiquement.</p>
+            <div class="progress mb-4" style="height:1.5rem" role="progressbar"
+                 aria-valuenow="{{ pourcentage }}" aria-valuemin="0" aria-valuemax="100">
+                <div class="progress-bar progress-bar-striped progress-bar-animated"
+                     style="width:{{ pourcentage }}%">{{ pourcentage }} %</div>
+            </div>
+            <form method="post" action="{% url 'eleves:transferer_eleves_masse' %}" id="suite-transfert"
+                  data-no-fast-submit data-sync-preserve>
+                {% csrf_token %}
+                <input type="hidden" name="classe_destination" value="{{ destination.pk }}">
+                <input type="hidden" name="eleve_ids" value="{{ restants }}">
+                <input type="hidden" name="transferes" value="{{ transferes }}">
+                <input type="hidden" name="echecs" value="{{ echecs }}">
+                <input type="hidden" name="avertissements" value="{{ avertissements }}">
+                <input type="hidden" name="next" value="{{ next }}">
+                <button type="submit" class="btn btn-primary" id="btn-suite-transfert">
+                    <span class="spinner-border spinner-border-sm me-2"></span>Continuer
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+<script>
+    // ES5 : la page doit aussi s'enchaîner sur les vieux iPad (iOS 9).
+    (function () {
+        var form = document.getElementById('suite-transfert');
+        var envoye = false;
+        function envoyer() {
+            if (envoye) { return; }
+            envoye = true;
+            document.getElementById('btn-suite-transfert').disabled = true;
+            form.submit();
+        }
+        form.addEventListener('submit', function (event) {
+            event.preventDefault();
+            envoyer();
+        });
+        setTimeout(envoyer, 300);
+    })();
+</script>
+{% endblock %}

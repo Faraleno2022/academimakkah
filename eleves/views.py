@@ -92,15 +92,17 @@ def liste_eleves(request):
                 Q(responsable_principal__prenom__icontains=recherche)
             )
     
-    # Filtre par classe optimisé
-    classe_id = request.GET.get('classe_id')
+    classes = classes_visibles(request)
+
+    # Filtre par classe : seule une classe visible (école + année active) est
+    # retenue ; une valeur invalide ou étrangère est ignorée.
+    classe_id = (request.GET.get('classe_id') or '').strip()
     if classe_id:
-        try:
-            int(classe_id)
-            eleves = eleves.filter(classe_id=classe_id)
-        except (TypeError, ValueError):
-            classe_id = None
-    
+        if classe_id.isdigit() and classes.filter(pk=int(classe_id)).exists():
+            eleves = eleves.filter(classe_id=int(classe_id))
+        else:
+            classe_id = ''
+
     # Recalcul immédiat après changement d'admission ou pointage.
     stats = eleves.aggregate(
         total_eleves=Count('id'),
@@ -124,12 +126,14 @@ def liste_eleves(request):
         user_agent=request.META.get('HTTP_USER_AGENT', '')
     )
     
-    classes = classes_visibles(request)
     filtres = request.GET.copy()
     filtres.pop('page', None)
     filtres.pop('partial', None)
+    if not classe_id:
+        filtres.pop('classe_id', None)
 
     context = {
+        'peut_transferer_eleves': _peut_transferer_eleves(request.user),
         'page_obj': page_obj,
         'form_recherche': form_recherche,
         'stats': stats,
@@ -2116,8 +2120,228 @@ def supprimer_eleves_masse(request):
     except Exception as e:
         logger.exception("Erreur lors de la mise à la corbeille groupée")
         messages.error(request, f"Erreur lors de la mise à la corbeille : {e}")
-    
+
     return redirect('eleves:liste_eleves')
+
+
+# Un changement de classe coûte environ 80 requêtes sur MySQL (matricule,
+# notes, échéancier) : chaque requête HTTP n'en traite qu'un lot, la page de
+# progression enchaîne automatiquement les suivants.
+TAILLE_LOT_TRANSFERT = 10
+MAX_ELEVES_TRANSFERT = 500
+
+MOTIFS_ECHEC_TRANSFERT = {
+    'introuvable': "introuvable ou hors de l'année active",
+    'deja': 'déjà dans cette classe',
+    'autre': "autre école ou autre année que la classe choisie",
+    'erreur': "erreur lors de l'enregistrement",
+}
+MOTIFS_AVERTISSEMENT_TRANSFERT = {
+    'config_notes': 'aucune configuration de notes pour la nouvelle classe',
+    'notes': 'notes sans matière équivalente non transférées',
+    'grille': 'pas de grille tarifaire pour la nouvelle classe',
+    'credit': 'crédit à régulariser, le nouveau tarif est inférieur aux encaissements',
+}
+
+
+def _peut_transferer_eleves(user):
+    """Mêmes conditions que la modification individuelle d'un élève
+    (`modifier_eleve`) : compte actif et validé, rattaché à une école, avec le
+    menu Élèves pour un sous-utilisateur, et jamais en lecture seule."""
+    if not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    profil = getattr(user, 'profil', None)
+    if not profil or not profil.ecole_id or not profil.actif or not profil.is_validated:
+        return False
+    if profil.lecture_seule:
+        return False
+    if profil.compte_principal_id and 'eleves' not in set(profil.allowed_menus or []):
+        return False
+    return True
+
+
+def _ids_depuis_post(valeurs):
+    ids = []
+    for valeur in valeurs:
+        for morceau in str(valeur).split(','):
+            morceau = morceau.strip()
+            if morceau.isdigit():
+                ids.append(int(morceau))
+    return list(dict.fromkeys(ids))
+
+
+def _codes_depuis_post(valeur, codes_valides):
+    """« 12:deja,15:erreur » → [(12, 'deja'), (15, 'erreur')]."""
+    resultat = []
+    for morceau in (valeur or '').split(','):
+        pk, _, code = morceau.partition(':')
+        if pk.strip().isdigit() and code in codes_valides:
+            resultat.append((int(pk), code))
+    return resultat
+
+
+def _transferer_un_eleve(request, eleve, destination):
+    """Change la classe comme `modifier_eleve` : `save()` régénère le
+    matricule, transfère les notes, rapproche l'échéancier et écrit
+    l'historique CHANGEMENT_CLASSE. Renvoie la liste des avertissements."""
+    ancienne_classe = eleve.classe
+    eleve.classe = destination
+    eleve._current_user = request.user
+    with transaction.atomic():
+        eleve.save()
+        JournalActivite.objects.create(
+            user=request.user,
+            action='MODIFICATION',
+            type_objet='ELEVE',
+            objet_id=eleve.id,
+            description=(
+                f"Transfert groupé de l'élève {eleve.nom_complet} : "
+                f"{ancienne_classe.nom} -> {destination.nom}"
+            ),
+            adresse_ip=request.META.get('REMOTE_ADDR', ''),
+            user_agent=request.META.get('HTTP_USER_AGENT', '')[:200],
+        )
+
+    avertissements = []
+    notes = getattr(eleve, '_transfert_info', None) or {}
+    if notes.get('classe_note_manquante') or notes.get('matieres_manquantes'):
+        avertissements.append('config_notes')
+    elif notes.get('ignorees'):
+        avertissements.append('notes')
+    finance = getattr(eleve, '_financial_transfer_info', None) or {}
+    if finance.get('grille_manquante'):
+        avertissements.append('grille')
+    elif int(finance.get('credit_non_affecte') or 0) > 0:
+        avertissements.append('credit')
+    return avertissements
+
+
+def _noms_eleves(paires, libelles):
+    noms = dict(
+        (e.pk, f"{e.prenom} {e.nom}")
+        for e in Eleve.objects.filter(pk__in=[pk for pk, _ in paires]).only('prenom', 'nom')
+    )
+    return ', '.join(
+        f"{noms.get(pk, f'élève n° {pk}')} ({libelles[code]})" for pk, code in paires
+    )
+
+
+@login_required
+@require_http_methods(["POST"])
+def transferer_eleves_masse(request):
+    """Transfère les élèves cochés vers une autre classe de la même école et
+    de la même année scolaire, par lots enchaînés."""
+    if not _peut_transferer_eleves(request.user):
+        return render(request, 'utilisateurs/permission_denied.html', {
+            'error_message': "Vous n'avez pas le droit de modifier la classe des élèves.",
+            'permission_name': 'transfert_eleves',
+        }, status=403)
+
+    retour = request.POST.get('next') or ''
+    if not url_has_allowed_host_and_scheme(retour, allowed_hosts={request.get_host()},
+                                           require_https=request.is_secure()):
+        retour = reverse('eleves:liste_eleves')
+
+    restants = _ids_depuis_post(request.POST.getlist('eleve_id') + request.POST.getlist('eleve_ids'))
+    transferes = _ids_depuis_post(request.POST.getlist('transferes'))
+    echecs = _codes_depuis_post(request.POST.get('echecs'), MOTIFS_ECHEC_TRANSFERT)
+    avertissements = _codes_depuis_post(request.POST.get('avertissements'), MOTIFS_AVERTISSEMENT_TRANSFERT)
+
+    if not restants and not transferes and not echecs:
+        messages.error(request, "Aucun élève sélectionné.")
+        return redirect(retour)
+    if len(restants) > MAX_ELEVES_TRANSFERT:
+        messages.error(request, f"Transfert limité à {MAX_ELEVES_TRANSFERT} élèves à la fois.")
+        return redirect(retour)
+
+    # La destination doit appartenir à l'école de l'utilisateur et à l'année active.
+    classe_dest_id = (request.POST.get('classe_destination') or '').strip()
+    destination = None
+    if classe_dest_id.isdigit():
+        destination = classes_visibles(request).filter(pk=int(classe_dest_id)).first()
+    if destination is None:
+        messages.error(
+            request,
+            "Classe de destination invalide : choisissez une classe de votre école "
+            "pour l'année scolaire active.",
+        )
+        return redirect(retour)
+
+    lot, restants = restants[:TAILLE_LOT_TRANSFERT], restants[TAILLE_LOT_TRANSFERT:]
+    eleves = {
+        e.pk: e for e in eleves_visibles(request).filter(pk__in=lot).select_related('classe__ecole')
+    }
+    for pk in lot:
+        eleve = eleves.get(pk)
+        if eleve is None:
+            echecs.append((pk, 'introuvable'))
+        elif eleve.classe_id == destination.pk:
+            echecs.append((pk, 'deja'))
+        elif (eleve.classe.ecole_id != destination.ecole_id
+              or eleve.classe.annee_scolaire != destination.annee_scolaire):
+            echecs.append((pk, 'autre'))
+        else:
+            try:
+                for code in _transferer_un_eleve(request, eleve, destination):
+                    avertissements.append((pk, code))
+                transferes.append(pk)
+            except Exception:
+                # Un élève en erreur ne bloque ni son lot ni les suivants.
+                logger.exception("Transfert groupé impossible pour l'élève %s", pk)
+                echecs.append((pk, 'erreur'))
+
+    if restants:
+        total = len(transferes) + len(echecs) + len(restants)
+        traites = total - len(restants)
+        return render(request, 'eleves/transfert_masse_progression.html', {
+            'destination': destination,
+            'restants': ','.join(str(pk) for pk in restants),
+            'transferes': ','.join(str(pk) for pk in transferes),
+            'echecs': ','.join(f"{pk}:{code}" for pk, code in echecs),
+            'avertissements': ','.join(f"{pk}:{code}" for pk, code in avertissements),
+            'next': retour,
+            'traites': traites,
+            'total': total,
+            'pourcentage': min(100, int(traites * 100 / total)),
+            'titre_page': 'Transfert des élèves',
+        })
+
+    if transferes:
+        messages.success(
+            request,
+            f"{len(transferes)} élève(s) transféré(s) vers {destination.nom} "
+            f"(nouveau matricule, notes et échéancier mis à jour).",
+        )
+    if echecs:
+        messages.error(
+            request,
+            f"{len(echecs)} élève(s) non transféré(s) : {_noms_eleves(echecs, MOTIFS_ECHEC_TRANSFERT)}.",
+        )
+    # Ces deux manques concernent la classe de destination, pas chaque élève.
+    sans_config = sum(1 for _, code in avertissements if code == 'config_notes')
+    sans_grille = sum(1 for _, code in avertissements if code == 'grille')
+    avertissements = [(pk, code) for pk, code in avertissements if code not in ('config_notes', 'grille')]
+    if sans_config:
+        messages.warning(
+            request,
+            f"Aucune configuration de notes pour {destination.nom} : les notes éventuelles de "
+            f"{sans_config} élève(s) transféré(s) n'ont pas suivi.",
+        )
+    if sans_grille:
+        messages.warning(
+            request,
+            f"Aucune grille tarifaire pour {destination.nom} ({destination.annee_scolaire}) : "
+            f"l'échéancier de {sans_grille} élève(s) transféré(s) n'a pas été modifié.",
+        )
+    if avertissements:
+        messages.warning(
+            request,
+            "Transfert effectué, à vérifier : "
+            f"{_noms_eleves(avertissements, MOTIFS_AVERTISSEMENT_TRANSFERT)}.",
+        )
+    return redirect(retour)
 
 
 @login_required

@@ -38,6 +38,7 @@ urlpatterns = [
     path('<int:eleve_id>/evaluation-accueil/', views.definir_evaluation_accueil, name='definir_evaluation_accueil'),
     path('<int:eleve_id>/supprimer/', views.supprimer_eleve, name='supprimer_eleve'),
     path('supprimer-masse/', views.supprimer_eleves_masse, name='supprimer_eleves_masse'),
+    path('transferer-masse/', views.transferer_eleves_masse, name='transferer_eleves_masse'),
     
     # Gestion des classes
     path('classes/', views.gestion_classes, name='gestion_classes'),

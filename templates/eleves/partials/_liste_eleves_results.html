@@ -4,13 +4,38 @@
         <h5 class="card-title mb-0">
             <i class="fas fa-list me-2"></i>Liste des élèves
         </h5>
-        <div class="d-flex align-items-center gap-2">
+        <div class="d-flex align-items-center flex-wrap gap-2">
             <small class="text-muted">{{ page_obj.paginator.count }} élève(s) trouvé(s)</small>
             <button type="button" class="btn btn-danger btn-sm" id="btn-supprimer-masse" style="display: none;" data-bs-toggle="modal" data-bs-target="#confirmDeleteMasseModal">
                 <i class="fas fa-trash me-1"></i>Supprimer la sélection (<span id="count-selection">0</span>)
             </button>
         </div>
     </div>
+    {% if peut_transferer_eleves and classes %}
+    <form method="post" action="{% url 'eleves:transferer_eleves_masse' %}" id="form-transfert-masse"
+          class="card-body border-bottom bg-light py-2" style="display: none;" data-no-fast-submit>
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.path }}{% if filtres_url or page_obj.number > 1 %}?{{ filtres_url }}{% if page_obj.number > 1 %}{% if filtres_url %}&{% endif %}page={{ page_obj.number }}{% endif %}{% endif %}">
+        <input type="hidden" name="eleve_ids" id="eleve-ids-transfert" value="">
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <label for="classe-destination-transfert" class="fw-semibold mb-0">
+                <i class="fas fa-exchange-alt me-1"></i>Transférer <span id="count-selection-transfert">0</span> élève(s) vers :
+            </label>
+            <select name="classe_destination" id="classe-destination-transfert" class="form-select form-select-sm" style="width: auto; min-width: 12rem;" required>
+                <option value="">Choisir la classe…</option>
+                {% for c in classes %}
+                    <option value="{{ c.id }}">{% if user.is_superuser %}{{ c.ecole.nom }} - {% endif %}{{ c.nom }}{% if user.is_superuser %} ({{ c.annee_scolaire }}){% endif %}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-warning btn-sm" id="btn-transferer-masse">
+                <i class="fas fa-exchange-alt me-1"></i>Transférer
+            </button>
+        </div>
+        <div class="form-text mb-0">
+            Comme pour une modification individuelle : nouveau matricule, notes transférées et échéancier recalculé.
+        </div>
+    </form>
+    {% endif %}
     <div class="card-body p-0">
         {% if page_obj %}
             <div class="table-responsive table-container-scrollable">
@@ -18,7 +43,7 @@
                     <thead class="table-light">
                         <tr>
                             <th style="width: 40px;">
-                                <input type="checkbox" class="form-check-input" id="select-all-eleves" title="Tout sélectionner">
+                                <input type="checkbox" class="form-check-input" id="select-all-eleves" title="Tout cocher sur la page" aria-label="Tout cocher sur la page">
                             </th>
                             <th>Photo</th>
                             <th>Matricule</th>
@@ -34,7 +59,7 @@
                         {% for eleve in page_obj %}
                             <tr>
                                 <td>
-                                    <input type="checkbox" class="form-check-input cb-eleve" value="{{ eleve.id }}" data-nom="{{ eleve.prenom }} {{ eleve.nom }}" data-matricule="{{ eleve.matricule }}" data-classe="{{ eleve.classe.nom }}">
+                                    <input type="checkbox" class="form-check-input cb-eleve" name="eleve_id" form="form-transfert-masse" aria-label="Sélectionner {{ eleve.nom_complet }}" value="{{ eleve.id }}" data-nom="{{ eleve.prenom }} {{ eleve.nom }}" data-matricule="{{ eleve.matricule }}" data-classe="{{ eleve.classe.nom }}">
                                 </td>
                                 <td>
                                     {% if eleve.photo %}
@@ -486,73 +511,7 @@ function imprimerCarte(matricule) {
     }
 }
 
-// Gestion de la sélection en masse pour suppression
-(function() {
-    const selectAll = document.getElementById('select-all-eleves');
-    const btnMasse = document.getElementById('btn-supprimer-masse');
-    const countSpan = document.getElementById('count-selection');
-    
-    if (!selectAll || !btnMasse) return;
-
-    function updateSelection() {
-        const checked = document.querySelectorAll('.cb-eleve:checked');
-        const count = checked.length;
-        countSpan.textContent = count;
-        btnMasse.style.display = count > 0 ? 'inline-block' : 'none';
-    }
-
-    selectAll.addEventListener('change', function() {
-        document.querySelectorAll('.cb-eleve').forEach(function(cb) {
-            cb.checked = selectAll.checked;
-        });
-        updateSelection();
-    });
-
-    document.querySelectorAll('.cb-eleve').forEach(function(cb) {
-        cb.addEventListener('change', function() {
-            const all = document.querySelectorAll('.cb-eleve');
-            const checked = document.querySelectorAll('.cb-eleve:checked');
-            selectAll.checked = all.length === checked.length;
-            updateSelection();
-        });
-    });
-
-    // Remplir le modal avant ouverture
-    var modalEl = document.getElementById('confirmDeleteMasseModal');
-    if (modalEl) {
-        modalEl.addEventListener('show.bs.modal', function() {
-            var checked = document.querySelectorAll('.cb-eleve:checked');
-            var ids = [];
-            var html = '';
-            checked.forEach(function(cb) {
-                ids.push(cb.value);
-                html += '<div class="d-flex justify-content-between align-items-center py-1 border-bottom">' +
-                    '<span><i class="fas fa-user me-1"></i><strong>' + cb.dataset.nom + '</strong></span>' +
-                    '<span class="text-muted small">' + cb.dataset.matricule + ' - ' + cb.dataset.classe + '</span>' +
-                    '</div>';
-            });
-            document.getElementById('eleve-ids-input').value = ids.join(',');
-            document.getElementById('liste-eleves-masse').innerHTML = html;
-        });
-    }
-
-    // Validation du formulaire de suppression en masse
-    var formMasse = document.getElementById('deleteFormMasse');
-    if (formMasse) {
-        formMasse.addEventListener('submit', function(e) {
-            var ids = document.getElementById('eleve-ids-input').value;
-            if (!ids) {
-                e.preventDefault();
-                alert('Aucun élève sélectionné.');
-                return false;
-            }
-            var count = ids.split(',').length;
-            var message = 'Déplacer ' + count + ' élève(s) vers la corbeille ?\n\nIls pourront être restaurés par un administrateur.';
-            if (!confirm(message)) {
-                e.preventDefault();
-                return false;
-            }
-        });
-    }
-})();
+// La sélection (tout cocher, suppression et transfert groupés) est gérée
+// par délégation dans liste_eleves.html : elle reste active après une
+// recherche dynamique, qui remplace ce fragment sans exécuter ses scripts.
 </script>

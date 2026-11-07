@@ -57,6 +57,8 @@
         <div class="card-body">
             <form id="recherche-eleves-form" method="get" class="row g-3">
                 {{ form_recherche.as_p }}
+                {# Conserve le filtre de classe si le formulaire part sans le script dynamique. #}
+                <input type="hidden" name="classe_id" id="recherche-classe-id" value="{{ selected_classe_id }}">
                 <div class="col-12">
                     <button type="submit" class="btn btn-primary">
                         <i class="fas fa-search me-1"></i>Rechercher
@@ -82,6 +84,8 @@
         const btnEffacer = document.getElementById('btn-effacer');
 
         if (!input || !form || !zone) return;
+        // Le bloc ES5 ci-dessous n'assure le filtre de classe qu'en l'absence de ce script.
+        window.listeElevesDynamique = true;
 
         // Nouvelle gestion d'export
         window.initElevesExportToolbar = function() {
@@ -245,6 +249,8 @@
             const selectInZone = zone.querySelector('#export-classe-select');
             const classeId = selectInZone ? (selectInZone.value || '') : '';
             if (classeId) url.searchParams.set('classe_id', classeId); else url.searchParams.delete('classe_id');
+            const champClasse = document.getElementById('recherche-classe-id');
+            if (champClasse) champClasse.value = classeId;
             return url.toString();
         }
 
@@ -432,5 +438,148 @@
             if (btnCancel) btnCancel.click();
         }
     });
+    </script>
+
+    <script>
+    // ES5 uniquement (vieux iPad sous iOS 9) : ce bloc doit rester lisible même
+    // si le script dynamique ci-dessus est ignoré. Les écouteurs sont posés sur
+    // la zone, qui survit aux remplacements de son contenu par la recherche.
+    (function () {
+        var zone = document.getElementById('zone-eleves');
+        if (!zone) { return; }
+
+        function cases() { return zone.querySelectorAll('.cb-eleve'); }
+        function cochees() { return zone.querySelectorAll('.cb-eleve:checked'); }
+        function ancetre(el, id) {
+            while (el && el !== zone) {
+                if (el.id === id) { return el; }
+                el = el.parentNode;
+            }
+            return null;
+        }
+
+        function majSelection() {
+            var nb = cochees().length;
+            var total = cases().length;
+            var compteur = document.getElementById('count-selection');
+            var compteurTransfert = document.getElementById('count-selection-transfert');
+            var btnSupprimer = document.getElementById('btn-supprimer-masse');
+            var formTransfert = document.getElementById('form-transfert-masse');
+            var toutCocher = document.getElementById('select-all-eleves');
+            if (compteur) { compteur.textContent = nb; }
+            if (compteurTransfert) { compteurTransfert.textContent = nb; }
+            if (btnSupprimer) { btnSupprimer.style.display = nb > 0 ? 'inline-block' : 'none'; }
+            if (formTransfert) { formTransfert.style.display = nb > 0 ? '' : 'none'; }
+            if (toutCocher) { toutCocher.checked = total > 0 && nb === total; }
+        }
+        window.majSelectionEleves = majSelection;
+
+        function idsCoches() {
+            var liste = cochees();
+            var ids = [];
+            for (var i = 0; i < liste.length; i++) { ids.push(liste[i].value); }
+            return ids;
+        }
+
+        function nomsCoches(maximum) {
+            var liste = cochees();
+            var noms = [];
+            for (var i = 0; i < liste.length && i < maximum; i++) {
+                noms.push('- ' + liste[i].getAttribute('data-nom'));
+            }
+            if (liste.length > maximum) {
+                noms.push('… et ' + (liste.length - maximum) + ' autre(s)');
+            }
+            return noms.join('\n');
+        }
+
+        zone.addEventListener('change', function (e) {
+            var cible = e.target;
+            if (cible.id === 'select-all-eleves') {
+                var liste = cases();
+                for (var i = 0; i < liste.length; i++) { liste[i].checked = cible.checked; }
+                majSelection();
+            } else if (cible.className && (' ' + cible.className + ' ').indexOf(' cb-eleve ') !== -1) {
+                majSelection();
+            } else if (cible.id === 'export-classe-select' && !window.listeElevesDynamique) {
+                // Filtre de secours : recharger la page avec le paramètre GET.
+                var params = [];
+                var champ = document.querySelector('input[name="recherche"]');
+                if (champ && champ.value) { params.push('recherche=' + encodeURIComponent(champ.value)); }
+                if (cible.value) { params.push('classe_id=' + encodeURIComponent(cible.value)); }
+                window.location.href = window.location.pathname + (params.length ? '?' + params.join('&') : '');
+            }
+        });
+
+        // Préparer la fenêtre de mise à la corbeille groupée avant son ouverture.
+        zone.addEventListener('click', function (e) {
+            if (!ancetre(e.target, 'btn-supprimer-masse')) { return; }
+            var liste = cochees();
+            var conteneur = document.getElementById('liste-eleves-masse');
+            var champIds = document.getElementById('eleve-ids-input');
+            if (!conteneur || !champIds) { return; }
+            champIds.value = idsCoches().join(',');
+            conteneur.innerHTML = '';
+            for (var i = 0; i < liste.length; i++) {
+                var ligne = document.createElement('div');
+                ligne.className = 'd-flex justify-content-between align-items-center py-1 border-bottom';
+                var nom = document.createElement('strong');
+                nom.textContent = liste[i].getAttribute('data-nom');
+                var detail = document.createElement('span');
+                detail.className = 'text-muted small';
+                detail.textContent = liste[i].getAttribute('data-matricule') + ' - ' + liste[i].getAttribute('data-classe');
+                ligne.appendChild(nom);
+                ligne.appendChild(detail);
+                conteneur.appendChild(ligne);
+            }
+        });
+
+        zone.addEventListener('submit', function (e) {
+            var form = e.target;
+            var nb;
+            if (form.id === 'deleteFormMasse') {
+                var ids = document.getElementById('eleve-ids-input').value;
+                if (!ids) {
+                    e.preventDefault();
+                    alert('Aucun élève sélectionné.');
+                    return;
+                }
+                nb = ids.split(',').length;
+                if (!confirm('Déplacer ' + nb + ' élève(s) vers la corbeille ?\n\nIls pourront être restaurés par un administrateur.')) {
+                    e.preventDefault();
+                }
+                return;
+            }
+            if (form.id !== 'form-transfert-masse') { return; }
+            if (form.__submitting) { e.preventDefault(); return; }
+            nb = cochees().length;
+            var select = document.getElementById('classe-destination-transfert');
+            if (!nb) {
+                e.preventDefault();
+                alert('Aucun élève sélectionné.');
+                return;
+            }
+            if (!select || !select.value) {
+                e.preventDefault();
+                alert('Choisissez la classe de destination.');
+                if (select) { select.focus(); }
+                return;
+            }
+            var classe = select.options[select.selectedIndex].text;
+            var message = 'Transférer ' + nb + ' élève(s) vers ' + classe + ' ?\n\n' + nomsCoches(10) +
+                '\n\nLeur matricule sera régénéré ; leurs notes et leur échéancier suivront la nouvelle classe.';
+            if (!confirm(message)) {
+                e.preventDefault();
+                return;
+            }
+            document.getElementById('eleve-ids-transfert').value = idsCoches().join(',');
+            form.__submitting = true;
+            var bouton = document.getElementById('btn-transferer-masse');
+            if (bouton) {
+                bouton.disabled = true;
+                bouton.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Transfert…';
+            }
+        });
+    })();
     </script>
 {% endblock %}
