@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+{% load ministere %}
 <html>
 <head>
     {% include 'notes/includes/charte_graphique_pdf.html' %}
@@ -277,7 +278,7 @@
     
     <div class="header">
         <h1>RÉPUBLIQUE DE GUINÉE</h1>
-        <h2>MINISTÈRE DE L'ÉDUCATION NATIONALE</h2>
+        <h2>{% ministere_nom majuscules=True %}</h2>
         <h3>Tableau des Notes - {{ classe_selectionnee.nom }} - {{ periode_selectionnee }}</h3>
     </div>
     

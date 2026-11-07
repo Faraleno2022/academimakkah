@@ -94,8 +94,11 @@ def _draw_school_header(c, ecole, *, y_start, margin, page_width):
         x += pdfmetrics.stringWidth(text, 'Helvetica-Oblique', 10)
     c.setFillColor(colors.black)
     y -= 12
-    c.setFont('Helvetica', 10)
-    c.drawCentredString(center_x, y, "Ministère de l’Enseignement Pré-Universitaire et de l’Alphabétisation")
+    from ecole_moderne.ministere import dessiner_ministere
+    y_ministere = y
+    y = dessiner_ministere(c, center_x, y, 'Helvetica', 10, page_width - 2 * margin, interligne=12)
+    # Une seconde ligne pour le ministère est prise sur l'espace libre plus bas.
+    hauteur_en_plus = y_ministere - y
     y -= 12
     # Abréviations sur 3 lignes (centrées)
     c.setFont('Helvetica-Bold', 10)
@@ -110,7 +113,7 @@ def _draw_school_header(c, ecole, *, y_start, margin, page_width):
     c.drawCentredString(center_x, y, f"DESEE: {desee}")
     y -= 16
     # Espace supplémentaire pour descendre le premier cadre du bulletin
-    y -= 30
+    y -= max(0, 30 - hauteur_en_plus)
 
     # Mémoriser la position du haut du cadre pour le dessiner après le contenu
     frame_top = y

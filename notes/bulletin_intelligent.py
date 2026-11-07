@@ -20,6 +20,7 @@ from reportlab.lib import colors
 from reportlab.platypus import Table, TableStyle
 from reportlab.lib.utils import ImageReader
 from .charte_graphique import get_charte_reportlab
+from ecole_moderne.ministere import dessiner_ministere
 from PIL import Image
 
 # OpenPyXL pour Excel
@@ -441,11 +442,12 @@ def generer_pdf_avec_filigrane(bulletin_data, logo_path=None, ecole=None):
     c.drawCentredString(width/2 - 0.9*cm, y_header, "-")
     c.drawCentredString(width/2 + 0.9*cm, y_header, "-")
     
-    # MEPU-A
+    # Ministère de tutelle
     y_header -= 0.45*cm
     c.setFillColor(colors.black)
     c.setFont("Helvetica", 6)
-    c.drawCentredString(width/2, y_header, "Ministère de l'Enseignement Pré-Universitaire et de l'Alphabétisation (MEPU-A)")
+    # Une seule ligne : l'en-tête est à hauteur fixe, entre le logo et la photo.
+    dessiner_ministere(c, width/2, y_header, "Helvetica", 6, width - 7.4*cm, sigle=True, max_lignes=1)
     
     # Nom de l'école
     y_header -= 0.5*cm
@@ -2000,7 +2002,8 @@ def _dessiner_bulletin_page(c, bulletin_data, logo_path, ecole, logo_reader=None
     
     y_header -= 0.45*cm
     c.setFont("Helvetica", 6)
-    c.drawCentredString(width/2, y_header, "Ministère de l'Enseignement Pré-Universitaire et de l'Alphabétisation (MEPU-A)")
+    # Une seule ligne : l'en-tête est à hauteur fixe, entre le logo et la photo.
+    dessiner_ministere(c, width/2, y_header, "Helvetica", 6, width - 7.4*cm, sigle=True, max_lignes=1)
     
     y_header -= 0.5*cm
     c.setFont("Helvetica-Bold", 10)

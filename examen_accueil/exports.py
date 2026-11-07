@@ -6,6 +6,7 @@ from xml.sax.saxutils import escape
 from django.utils import timezone
 from django.utils.text import slugify
 
+from ecole_moderne.ministere import MINISTERE_NOM
 from ecole_moderne.pdf_utils import draw_logo_watermark
 from notes.charte_graphique import get_charte_reportlab
 
@@ -124,7 +125,7 @@ def _entete(ecole, charte, styles, largeur):
         Paragraph("<b>RÉPUBLIQUE DE GUINÉE</b>", styles['centre']),
         Paragraph("<font color='red'>Travail</font> - <font color='#C9A100'>Justice</font> - "
                   "<font color='green'>Solidarité</font>", styles['centre']),
-        Paragraph("Ministère de l'Enseignement Pré-Universitaire et de l'Alphabétisation", styles['centre']),
+        Paragraph(escape(MINISTERE_NOM), styles['centre']),
     ]
     ire, dpe = getattr(ecole, 'ire', '') or '', getattr(ecole, 'dpe', '') or ''
     if ire or dpe:

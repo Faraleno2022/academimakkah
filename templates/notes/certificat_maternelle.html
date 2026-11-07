@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+{% load ministere %}
 <html lang="fr">
 <head>
     {% include 'notes/includes/charte_graphique_pdf.html' %}
@@ -345,7 +346,7 @@
             <span class="devise-jaune">Justice</span> - 
             <span class="devise-vert">Solidarité</span>
         </div>
-        <div class="ministere">Ministère de l'Enseignement Pré-Universitaire et de l'Alphabétisation</div>
+        <div class="ministere">{% ministere_nom %}</div>
     </div>
     
     <!-- Logo et nom école -->

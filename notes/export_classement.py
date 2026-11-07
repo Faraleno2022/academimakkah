@@ -624,8 +624,8 @@ def _draw_school_header_classement(c, ecole, *, y_start, margin, page_width):
     y -= 10
     
     # Ministère
-    c.setFont('Helvetica', 9)
-    c.drawCentredString(center_x, y, "Ministère de l'Enseignement Pré-Universitaire et de l'Alphabétisation")
+    from ecole_moderne.ministere import dessiner_ministere
+    y = dessiner_ministere(c, center_x, y, 'Helvetica', 9, page_width - 2 * margin, interligne=10)
     y -= 10
     
     # IRE, DPE, DESEE

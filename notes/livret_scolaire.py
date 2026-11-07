@@ -1047,10 +1047,11 @@ def _draw_cover_half(c, x, y, w, h, ecole, eleve, parcours, logo, page_number):
     ty = line_y - 18
     c.drawCentredString(cx, ty, "REPUBLIQUE DE GUINEE")
     ty -= 11
+    from ecole_moderne.ministere import MINISTERE_LIGNES
     c.setFont('Helvetica', 8)
-    c.drawCentredString(cx, ty, "Ministere de l'Enseignement Pre-Universitaire")
+    c.drawCentredString(cx, ty, MINISTERE_LIGNES[0])
     ty -= 9
-    c.drawCentredString(cx, ty, "et de l'Alphabetisation")
+    c.drawCentredString(cx, ty, MINISTERE_LIGNES[1])
     ty -= 10
     c.setFont('Helvetica-Oblique', 8)
     c.setFillColor(couleur_document('couleur_texte_secondaire'))
@@ -2457,8 +2458,10 @@ def _draw_fiche_orientation_lycee_half(c, x, y, w, h, ecole, eleve, parcours, pa
     cy -= 11
     c.setFont('Helvetica', 7)
     c.setFillColor(couleur_document('couleur_texte_secondaire'))
-    c.drawCentredString(cx, cy,
-                        f"R\u00e9publique de Guin\u00e9e - Minist\u00e8re de l'Education Nationale")
+    # Ligne unique : la fiche est \u00e0 mise en page fixe.
+    from ecole_moderne.ministere import MINISTERE_SIGLE, dessiner_ministere
+    dessiner_ministere(c, cx, cy, 'Helvetica', 7, rx - lx, max_lignes=1,
+                       texte=f"R\u00e9publique de Guin\u00e9e - Minist\u00e8re de l'\u00c9ducation Nationale ({MINISTERE_SIGLE})")
     cy -= 9
     c.setFont('Helvetica-Bold', 8)
     c.setFillColor(colors.black)
