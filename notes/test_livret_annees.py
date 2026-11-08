@@ -1,4 +1,6 @@
 """Livret scolaire : chaque année affiche ses propres notes, dans sa propre classe."""
+import os
+import tempfile
 from datetime import date
 from decimal import Decimal
 from io import BytesIO, StringIO
@@ -389,6 +391,86 @@ class ReparationAnneesNotesTest(LivretBase):
         self._lancer('--appliquer')
 
         self.assertEqual(NoteMensuelle.objects.get(eleve=self.aminata).matiere, self.maths_7)
+
+    def _matiere_remplacee(self):
+        """Comme sur le serveur : Histoire HIS supprimée (donc inactive), remplacée par HS."""
+        MatiereNote.objects.filter(pk=self.maths_7.pk).update(actif=False)
+        return MatiereNote.objects.create(classe=self.note_7, nom='Mathématiques', code='MT', coefficient=2)
+
+    def test_la_reparation_prefere_la_matiere_active(self):
+        active = self._matiere_remplacee()
+
+        self._lancer('--appliquer')
+
+        self.assertEqual(NoteMensuelle.objects.get(eleve=self.aminata).matiere, active)
+        ligne = self._parcours(self.aminata)[PASSEE]['matieres_data'][0]
+        self.assertEqual(ligne['sem1_compo'], 12)
+
+    def test_sans_matiere_active_la_matiere_inactive_reste_sa_place(self):
+        MatiereNote.objects.filter(pk=self.maths_7.pk).update(actif=False)
+
+        self._lancer('--appliquer')
+
+        self.assertEqual(NoteMensuelle.objects.get(eleve=self.aminata).matiere, self.maths_7)
+
+    def test_une_ancienne_note_sur_la_matiere_inactive_n_est_plus_un_conflit(self):
+        # Cas CL8-037 : 14 sur l'ancienne matière, 18 saisie ensuite sur sa remplaçante.
+        active = self._matiere_remplacee()
+        ancienne = NoteMensuelle.objects.create(eleve=self.aminata, matiere=self.maths_7, mois='OCTOBRE',
+                                                annee_scolaire=PASSEE, note=Decimal('14'))
+        recente = NoteMensuelle.objects.exclude(pk=ancienne.pk).get(eleve=self.aminata)
+
+        self._lancer('--appliquer')
+
+        recente.refresh_from_db()
+        ancienne.refresh_from_db()
+        self.assertEqual(recente.matiere, active)
+        self.assertEqual(ancienne.matiere, self.maths_7)
+        self.assertEqual(ancienne.note, Decimal('14'))
+
+    def _journal(self, *notes):
+        with tempfile.NamedTemporaryFile('w', suffix='.log', delete=False, encoding='utf-8') as fichier:
+            for note in notes:
+                fichier.write(f"RÉPARÉE  {type(note).__name__} {note.pk} — X {note.annee_scolaire} : A → B\n")
+        self.addCleanup(os.unlink, fichier.name)
+        return fichier.name
+
+    def test_le_journal_reprend_seulement_les_notes_deja_reparees(self):
+        active = self._matiere_remplacee()
+        reparee = NoteMensuelle.objects.get(eleve=self.aminata)
+        compo = CompositionNote.objects.get(eleve=self.aminata)
+        NoteMensuelle.objects.filter(pk=reparee.pk).update(matiere=self.maths_7)
+        CompositionNote.objects.filter(pk=compo.pk).update(matiere=self.maths_7)
+        hors_journal = NoteMensuelle.objects.create(eleve=self.binta, matiere=self.maths_7, mois='OCTOBRE',
+                                                    annee_scolaire=PASSEE, note=Decimal('14'))
+        journal = self._journal(reparee, compo)
+
+        sortie = self._lancer('--journal', journal)
+
+        self.assertIn('2 note(s) réparable(s)', sortie)
+        reparee.refresh_from_db()
+        self.assertEqual(reparee.matiere, self.maths_7)
+
+        self._lancer('--journal', journal, '--appliquer')
+
+        reparee.refresh_from_db()
+        compo.refresh_from_db()
+        hors_journal.refresh_from_db()
+        self.assertEqual(reparee.matiere, active)
+        self.assertEqual(compo.matiere, active)
+        self.assertEqual(hors_journal.matiere, self.maths_7)
+
+    def test_le_journal_laisse_une_matiere_inactive_sans_remplacante(self):
+        MatiereNote.objects.filter(pk=self.maths_7.pk).update(actif=False)
+        reparee = NoteMensuelle.objects.get(eleve=self.aminata)
+        NoteMensuelle.objects.filter(pk=reparee.pk).update(matiere=self.maths_7)
+        CompositionNote.objects.filter(eleve=self.aminata).update(matiere=self.maths_7)
+
+        sortie = self._lancer('--journal', self._journal(reparee), '--appliquer')
+
+        self.assertIn('0 note(s) réparée(s)', sortie)
+        reparee.refresh_from_db()
+        self.assertEqual(reparee.matiere, self.maths_7)
 
     def test_sans_classe_connue_pour_l_annee_la_note_reste_a_verifier(self):
         HistoriqueEleve.objects.filter(eleve=self.aminata).delete()
