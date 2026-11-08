@@ -1437,9 +1437,10 @@ def _draw_renseignements_parents_half(c, x, y, w, h, eleve, page_number):
 # Phrases ecrites par le passage a la nouvelle annee (_passer_eleve) : ce sont les
 # seules qui disent ou etait l'eleve l'annee precedente. Un transfert en cours
 # d'annee ou une annulation d'annee ne renseignent pas sur cette annee-la, et un
-# matricule peut contenir une annee.
+# matricule peut contenir une annee. \u00ab Passage automatique \u00bb est la formulation
+# de fevrier-mars 2026 : elle reste dans l'historique des eleves passes a cette epoque.
 MOTIFS_PASSAGE_ANNEE = (
-    re.compile(r'^(?:Passage|Conservation) nouvelle ann\u00e9e (?P<annee>\d{4}-\d{4}): '
+    re.compile(r'^(?:Passage(?: automatique)?|Conservation) nouvelle ann\u00e9e (?P<annee>\d{4}-\d{4}): '
                r'(?P<classe>.+?)\s*(?:->|\u2192)'),
     re.compile(r'^Redoublant \u2014 ann\u00e9e (?P<annee>\d{4}-\d{4}): '
                r'maintenu\(e\) en (?P<classe>.+?) \(moyenne'),

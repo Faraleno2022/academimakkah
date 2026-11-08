@@ -215,6 +215,24 @@ class ParcoursParAnneeTest(LivretBase):
 
         self.assertEqual(self._parcours(self.aminata)[PASSEE]['classe_nom'], self.classe_7.nom)
 
+    def test_l_ancienne_formulation_du_passage_garde_l_annee_passee(self):
+        # Phrases réelles écrites en février 2026, avec le transfert de notes de l'époque.
+        self.aminata.classe = self.classe_8
+        self.aminata._passage_nouvelle_annee = True
+        self.aminata.save()
+        for description in (
+            f"Changement de classe: {self.classe_7.nom} → {self.classe_8.nom}. Ancien matricule: "
+            f"GSE/CL7-2025-004, Nouveau matricule: CL8-035. 35 note(s) transférée(s) vers la nouvelle classe.",
+            f"Passage automatique nouvelle année {COURANTE}: {self.classe_7.nom} → {self.classe_8.nom}",
+        ):
+            HistoriqueEleve.objects.create(eleve=self.aminata, action='CHANGEMENT_CLASSE',
+                                           description=description)
+
+        parcours = self._parcours(self.aminata)
+
+        self.assertEqual(list(parcours), [PASSEE, COURANTE])
+        self.assertEqual(parcours[PASSEE]['classe_nom'], self.classe_7.nom)
+
     def test_un_matricule_contenant_une_annee_ne_cree_pas_d_annee_fantome(self):
         aminata = self._promouvoir(self.aminata, self.classe_8)
         HistoriqueEleve.objects.filter(eleve=aminata).delete()
@@ -348,6 +366,29 @@ class ReparationAnneesNotesTest(LivretBase):
         self.assertEqual(existante.note, Decimal('11'))
         self.assertEqual(NoteMensuelle.objects.exclude(pk=existante.pk).get(eleve=self.aminata).matiere,
                          self.maths_8b)
+
+    def test_l_ancienne_formulation_du_passage_permet_la_reparation(self):
+        HistoriqueEleve.objects.filter(eleve=self.aminata).update(
+            description=f"Passage automatique nouvelle année {COURANTE}: {self.classe_7.nom} → {self.classe_8.nom}",
+        )
+
+        self._lancer('--appliquer')
+
+        self.assertEqual(NoteMensuelle.objects.get(eleve=self.aminata).matiere, self.maths_7)
+        self.assertEqual(self._parcours(self.aminata)[PASSEE]['matieres_data'][0]['sem1_compo'], 12)
+
+    def test_une_classe_du_meme_nom_d_une_annee_a_l_autre_est_reparee(self):
+        # Cas 9ÈME ANNÉE → 9ÈME ANNÉE du serveur : même nom, mais pas la même année.
+        _, _, maths_7_courante = self._classe(SEPTIEME, COURANTE)
+        NoteMensuelle.objects.filter(eleve=self.aminata).update(matiere=maths_7_courante)
+        CompositionNote.objects.filter(eleve=self.aminata).update(matiere=maths_7_courante)
+        HistoriqueEleve.objects.filter(eleve=self.aminata).update(
+            description=f"Passage automatique nouvelle année {COURANTE}: {self.classe_7.nom} → {self.classe_7.nom}",
+        )
+
+        self._lancer('--appliquer')
+
+        self.assertEqual(NoteMensuelle.objects.get(eleve=self.aminata).matiere, self.maths_7)
 
     def test_sans_classe_connue_pour_l_annee_la_note_reste_a_verifier(self):
         HistoriqueEleve.objects.filter(eleve=self.aminata).delete()
