@@ -10,13 +10,15 @@ import io
 import os
 import re
 import logging
+from collections import Counter
+from datetime import date
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import get_object_or_404, render, redirect
 from django.http import HttpResponse
 from django.contrib import messages
-from django.db.models import Q
+from django.db.models import F, Q
 
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.pdfgen import canvas
@@ -25,7 +27,10 @@ from reportlab.lib import colors
 from reportlab.platypus import Table, TableStyle
 from reportlab.lib.utils import ImageReader
 
+from eleves.annulation_annee import _annee_precedente
 from eleves.models import Eleve, Classe, Ecole, HistoriqueEleve
+from eleves.utils_annee import date_fin_annee_scolaire
+from eleves.views_nouvelle_annee import _normaliser
 from .models import (
     ClasseNote, MatiereNote, Classement,
     NoteMensuelle, CompositionNote,
@@ -1429,35 +1434,154 @@ def _draw_renseignements_parents_half(c, x, y, w, h, eleve, page_number):
 #  COLLECTE DES DONNEES DU PARCOURS
 # ==============================================================================
 
+# Phrases ecrites par le passage a la nouvelle annee (_passer_eleve) : ce sont les
+# seules qui disent ou etait l'eleve l'annee precedente. Un transfert en cours
+# d'annee ou une annulation d'annee ne renseignent pas sur cette annee-la, et un
+# matricule peut contenir une annee.
+MOTIFS_PASSAGE_ANNEE = (
+    re.compile(r'^(?:Passage|Conservation) nouvelle ann\u00e9e (?P<annee>\d{4}-\d{4}): '
+               r'(?P<classe>.+?)\s*(?:->|\u2192)'),
+    re.compile(r'^Redoublant \u2014 ann\u00e9e (?P<annee>\d{4}-\d{4}): '
+               r'maintenu\(e\) en (?P<classe>.+?) \(moyenne'),
+)
+
+
+def classes_quittees_selon_historique(eleve):
+    """{annee: nom de la classe occupee cette annee-la} d'apres les passages de l'eleve."""
+    classes = {}
+    historiques = HistoriqueEleve.objects.filter(
+        eleve=eleve, action='CHANGEMENT_CLASSE'
+    ).order_by('date_action', 'pk')
+    for description in historiques.values_list('description', flat=True):
+        for motif in MOTIFS_PASSAGE_ANNEE:
+            trouve = motif.match(description or '')
+            if trouve:
+                annee = _annee_precedente(trouve.group('annee'))
+                if annee:
+                    classes[annee] = trouve.group('classe').strip()
+                break
+    return classes
+
+
+def classe_note_par_nom(ecole, annee, nom):
+    """ClasseNote de cette annee portant ce nom, a la casse et aux accents pres."""
+    cible = _normaliser(nom or '')
+    for classe_note in ClasseNote.objects.filter(ecole=ecole, annee_scolaire=annee):
+        if _normaliser(classe_note.nom) == cible:
+            return classe_note
+    return None
+
+
+def _classe_note_de_l_annee(eleve, ecole, annee, classe_nom):
+    """ClasseNote ou lire les notes de l'eleve pour cette annee.
+
+    Toujours une classe de cette annee, et jamais celle d'autres eleves : sans
+    classe identifiee le livret reste vide plutot que d'afficher les matieres,
+    l'effectif et les moyennes d'une classe qui n'est pas la sienne.
+    """
+    classes = {c.pk: c for c in ClasseNote.objects.filter(ecole=ecole, annee_scolaire=annee)}
+    if not classes:
+        return None
+
+    notes_par_classe = Counter()
+    for modele in (NoteMensuelle, CompositionNote, AppreciationMaternelle):
+        notes_par_classe.update(
+            modele.objects.filter(
+                eleve=eleve, annee_scolaire=annee, matiere__classe__in=list(classes),
+            ).order_by().values_list('matiere__classe_id', flat=True)
+        )
+    notes_par_classe.update(
+        Classement.objects.filter(
+            eleve=eleve, annee_scolaire=annee, classe__in=list(classes),
+        ).order_by().values_list('classe_id', flat=True)
+    )
+
+    cible = _normaliser(classe_nom or '')
+    meme_nom = [c for c in classes.values() if _normaliser(c.nom) == cible]
+    if notes_par_classe:
+        # Un transfert peut laisser quelques notes sans equivalent dans l'ancienne classe.
+        for classe_note in meme_nom:
+            if notes_par_classe[classe_note.pk]:
+                return classe_note
+        return classes[notes_par_classe.most_common(1)[0][0]]
+    if meme_nom:
+        return meme_nom[0]
+    proches = [c for c in classes.values() if cible and cible in _normaliser(c.nom)]
+    return proches[0] if len(proches) == 1 else None
+
+
+def _annee_depassee(ecole, annee):
+    """Une annee plus recente existe : les eleves ont quitte les classes de celle-ci."""
+    return Classe.objects.filter(ecole=ecole, annee_scolaire__gt=annee).exists()
+
+
+def _ids_eleves_notes(classe_note):
+    """Eleves notes dans cette classe pour son annee, meme s'ils l'ont quittee depuis."""
+    ids = set()
+    for modele in (NoteMensuelle, CompositionNote, AppreciationMaternelle):
+        ids.update(
+            modele.objects.filter(
+                matiere__classe=classe_note, annee_scolaire=classe_note.annee_scolaire,
+            ).order_by().values_list('eleve_id', flat=True)
+        )
+    return ids
+
+
+def _eleves_a_classer(classe_note):
+    """Eleves pris en compte dans le rang annuel d'une classe.
+
+    L'annee en cours suit la regle des bulletins (actifs de la classe). Une annee
+    depassee compte ceux qui y ont ete notes : ils ne sont plus dans cette classe.
+    """
+    if _annee_depassee(classe_note.ecole, classe_note.annee_scolaire):
+        return Eleve.pedagogiques.filter(pk__in=_ids_eleves_notes(classe_note))
+    classe_eleve = Classe.objects.filter(
+        nom=classe_note.nom,
+        ecole=classe_note.ecole,
+        annee_scolaire=classe_note.annee_scolaire,
+    ).first()
+    if not classe_eleve:
+        return Eleve.pedagogiques.none()
+    return Eleve.pedagogiques.filter(classe=classe_eleve, statut='ACTIF')
+
+
+def _eleves_de_la_classe(classe):
+    """Eleves dont le livret est proposable depuis cette classe.
+
+    Passer a l'annee suivante deplace l'eleve : une classe d'une annee depassee
+    retrouve les siens par les notes qu'ils y ont obtenues.
+    """
+    if not _annee_depassee(classe.ecole, classe.annee_scolaire):
+        return Eleve.pedagogiques.filter(classe=classe, statut='ACTIF')
+    classe_note = classe_note_par_nom(classe.ecole, classe.annee_scolaire, classe.nom)
+    ids = _ids_eleves_notes(classe_note) if classe_note else set()
+    return Eleve.pedagogiques.filter(Q(classe=classe) | Q(pk__in=ids))
+
+
+def _annee_terminee(ecole, annee):
+    """L'annee est finie : la suivante existe ou sa date de fin est passee."""
+    if _annee_depassee(ecole, annee):
+        return True
+    fin = date_fin_annee_scolaire(annee)
+    return bool(fin and fin < date.today())
+
+
 def _collecter_parcours_eleve(eleve, ecole):
     """Collecte tout le parcours d'un eleve.
 
     Decouvre TOUTES les annees scolaires ou l'eleve a des donnees
     (notes mensuelles, compositions, appreciations, classements, historique)
     et genere une entree par annee dans l'ordre chronologique.
+
+    Une note ne compte pour une annee que si sa matiere appartient a une classe
+    de cette annee : c'est ainsi que le moteur de calcul la retrouve.
     """
     parcours = []
     annees_classes = {}
 
-    # Source 1: Historique des changements de classe
+    # Source 1: Historique des passages d'une annee a l'autre
     try:
-        historiques = HistoriqueEleve.objects.filter(
-            eleve=eleve, action='CHANGEMENT_CLASSE'
-        ).order_by('date_action')
-
-        for h in historiques:
-            desc = h.description or ''
-            match_annee = re.search(r'(\d{4}-\d{4})', desc)
-            if match_annee:
-                annee = match_annee.group(1)
-                match_classe = re.search(r':\s*(.+?)\s*(?:->|\u2192)', desc)
-                if match_classe and annee not in annees_classes:
-                    parts = annee.split('-')
-                    try:
-                        prev_annee = f"{int(parts[0])-1}-{int(parts[1])-1}"
-                    except Exception:
-                        prev_annee = annee
-                    annees_classes[prev_annee] = match_classe.group(1).strip()
+        annees_classes.update(classes_quittees_selon_historique(eleve))
     except Exception as e:
         logger.warning(f"Erreur lecture historique eleve {eleve.pk}: {e}")
 
@@ -1475,7 +1599,9 @@ def _collecter_parcours_eleve(eleve, ecole):
 
     # Source 4: Notes mensuelles (source la plus fiable - notes reelles)
     try:
-        for nm in NoteMensuelle.objects.filter(eleve=eleve).values(
+        for nm in NoteMensuelle.objects.filter(
+            eleve=eleve, matiere__classe__annee_scolaire=F('annee_scolaire'),
+        ).values(
             'annee_scolaire', 'matiere__classe__nom'
         ).distinct().order_by('annee_scolaire'):
             annee = nm['annee_scolaire']
@@ -1486,7 +1612,9 @@ def _collecter_parcours_eleve(eleve, ecole):
 
     # Source 5: Compositions
     try:
-        for cn in CompositionNote.objects.filter(eleve=eleve).values(
+        for cn in CompositionNote.objects.filter(
+            eleve=eleve, matiere__classe__annee_scolaire=F('annee_scolaire'),
+        ).values(
             'annee_scolaire', 'matiere__classe__nom'
         ).distinct().order_by('annee_scolaire'):
             annee = cn['annee_scolaire']
@@ -1497,7 +1625,9 @@ def _collecter_parcours_eleve(eleve, ecole):
 
     # Source 6: Appreciations maternelle
     try:
-        for am in AppreciationMaternelle.objects.filter(eleve=eleve).values(
+        for am in AppreciationMaternelle.objects.filter(
+            eleve=eleve, matiere__classe__annee_scolaire=F('annee_scolaire'),
+        ).values(
             'annee_scolaire', 'matiere__classe__nom'
         ).distinct().order_by('annee_scolaire'):
             annee = am['annee_scolaire']
@@ -1512,33 +1642,7 @@ def _collecter_parcours_eleve(eleve, ecole):
         sur = 10 if niveau == 'PRIMAIRE' else 20
         is_semestre = niveau in ('COLLEGE', 'LYCEE')
 
-        # Strategie 1: trouver ClasseNote via les notes reelles de l'eleve
-        classe_note = None
-        actual_note = NoteMensuelle.objects.filter(
-            eleve=eleve, annee_scolaire=annee_scolaire
-        ).select_related('matiere__classe').first()
-        if actual_note and actual_note.matiere and actual_note.matiere.classe:
-            classe_note = actual_note.matiere.classe
-        else:
-            actual_compo = CompositionNote.objects.filter(
-                eleve=eleve, annee_scolaire=annee_scolaire
-            ).select_related('matiere__classe').first()
-            if actual_compo and actual_compo.matiere and actual_compo.matiere.classe:
-                classe_note = actual_compo.matiere.classe
-
-        # Strategie 2: recherche par nom de classe
-        if not classe_note:
-            search_nom = classe_nom.split('(')[0].strip()[:15]
-            classe_note = ClasseNote.objects.filter(
-                ecole=ecole, annee_scolaire=annee_scolaire,
-                nom__icontains=search_nom
-            ).first()
-
-        # Strategie 3: n'importe quelle ClasseNote de cette annee
-        if not classe_note:
-            classe_note = ClasseNote.objects.filter(
-                ecole=ecole, annee_scolaire=annee_scolaire,
-            ).first()
+        classe_note = _classe_note_de_l_annee(eleve, ecole, annee_scolaire, classe_nom)
 
         matieres_data = []
         moyenne_annuelle = None
@@ -1615,12 +1719,7 @@ def _collecter_parcours_eleve(eleve, ecole):
                 if result_annuel.get('moyenne_generale') is not None:
                     moyenne_annuelle = float(result_annuel['moyenne_generale'])
                     try:
-                        classe_eleve = Classe.objects.filter(
-                            nom=classe_note.nom,
-                            ecole=classe_note.ecole,
-                            annee_scolaire=annee_scolaire,
-                        ).first()
-                        eleves_classe = Eleve.pedagogiques.filter(classe=classe_eleve, statut='ACTIF') if classe_eleve else Eleve.pedagogiques.none()
+                        eleves_classe = _eleves_a_classer(classe_note)
                         periode_annuelle = 'ANNUEL_SEM' if is_semestre else 'ANNUEL_TRIM'
                         classement_calc = calculer_classement_classe(
                             eleves_classe, matieres, periode_annuelle, system_type_annuel, use_cache=False
@@ -1731,20 +1830,6 @@ def _collecter_parcours_eleve(eleve, ecole):
                         Classement.objects.filter(classe=classe_note, annee_scolaire=annee_scolaire)
                     )
 
-                # Strategie 3: si rien, essayer tous les Classement de cette annee pour l'ecole
-                if stats is None:
-                    all_classes_ecole = ClasseNote.objects.filter(
-                        ecole=ecole, annee_scolaire=annee_scolaire,
-                        nom__icontains=classe_nom.split('(')[0].strip()[:10]
-                    )
-                    if all_classes_ecole.exists():
-                        stats = _get_class_stats(
-                            Classement.objects.filter(
-                                classe__in=all_classes_ecole,
-                                annee_scolaire=annee_scolaire
-                            )
-                        )
-
                 if stats and moy_classe is None:
                     moy_classe = round(float(stats['avg']), 2) if stats['avg'] else None
                     note_min_classe = round(float(stats['mn']), 2) if stats['mn'] else None
@@ -1782,19 +1867,22 @@ def _collecter_parcours_eleve(eleve, ecole):
 
         # Décision de passage: uniquement si l'élève est admis (moyenne >= seuil).
         # Un élève sous la moyenne redouble (ne "passe" pas en classe supérieure).
+        # Pas de décision en cours d'année : une période non évaluée compte 0 et
+        # ferait « redoubler » toute la classe dès le premier trimestre.
         decision_txt = ''
         seuil_adm = 5.0 if sur == 10 else 10.0
         admis_annuel = (moyenne_annuelle is not None and moyenne_annuelle >= seuil_adm)
-        try:
-            from eleves.views_nouvelle_annee import PROGRESSION_CLASSES, PROGRESSION_LABELS, _normaliser
-            base_norm = _normaliser(classe_nom.split('(')[0].strip())
-            next_base = PROGRESSION_CLASSES.get(base_norm)
-            if next_base and admis_annuel:
-                passe_en = PROGRESSION_LABELS.get(next_base, next_base)
-            elif moyenne_annuelle is not None and not admis_annuel:
-                decision_txt = 'Redouble la classe'
-        except Exception:
-            pass
+        if _annee_terminee(ecole, annee_scolaire):
+            try:
+                from eleves.views_nouvelle_annee import PROGRESSION_CLASSES, PROGRESSION_LABELS
+                base_norm = _normaliser(classe_nom.split('(')[0].strip())
+                next_base = PROGRESSION_CLASSES.get(base_norm)
+                if next_base and admis_annuel:
+                    passe_en = PROGRESSION_LABELS.get(next_base, next_base)
+                elif moyenne_annuelle is not None and not admis_annuel:
+                    decision_txt = 'Redouble la classe'
+            except Exception:
+                pass
 
         parcours.append({
             'annee_scolaire': annee_scolaire,
@@ -3225,6 +3313,8 @@ def _generer_livret_annuel_pdf(eleve, ecole, parcours, annee_scolaire):
     """Genere le livret scolaire pour une seule annee.
 
     Format paysage A4 : couverture (gauche) + tableau des notes (droite).
+    L'analyse et l'orientation s'arretent a cette annee : le livret d'une annee
+    passee ne tient pas compte de ce que l'eleve a fait ensuite.
     """
     entry = None
     for p in parcours:
@@ -3233,6 +3323,7 @@ def _generer_livret_annuel_pdf(eleve, ecole, parcours, annee_scolaire):
             break
     if not entry:
         return None
+    parcours = [p for p in parcours if p['annee_scolaire'] <= annee_scolaire]
 
     buffer = io.BytesIO()
     width, height = landscape(A4)
@@ -3631,9 +3722,7 @@ def livret_scolaire_selection(request):
         if classe_id:
             try:
                 classe_selected = classes.get(pk=classe_id)
-                eleves = Eleve.pedagogiques.filter(
-                    classe=classe_selected, statut='ACTIF'
-                ).order_by('nom', 'prenom')
+                eleves = _eleves_de_la_classe(classe_selected).order_by('nom', 'prenom')
             except Classe.DoesNotExist:
                 pass
 
@@ -3740,9 +3829,7 @@ def livret_scolaire_classe_pdf(request, classe_id):
         return redirect('notes:tableau_bord')
 
     classe = get_object_or_404(Classe, pk=classe_id, ecole=ecole)
-    eleves_qs = Eleve.pedagogiques.filter(
-        classe=classe, statut='ACTIF'
-    ).order_by('nom', 'prenom')
+    eleves_qs = _eleves_de_la_classe(classe).order_by('nom', 'prenom')
 
     if not eleves_qs.exists():
         messages.warning(request, f"Aucun eleve actif dans la classe {classe.nom}.")

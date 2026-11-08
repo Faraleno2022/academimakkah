@@ -737,7 +737,10 @@ class Eleve(SyncTrackedModel):
     
     def _transferer_notes_vers_nouvelle_classe(self, ancienne_classe, nouvelle_classe):
         """
-        Transfère TOUTES les notes de l'élève vers la nouvelle classe.
+        Transfère vers la nouvelle classe les notes de l'élève pour l'année de
+        cette classe. Celles des autres années restent dans la classe où elles
+        ont été obtenues : les bulletins et le livret lisent une note à travers
+        l'année de sa matière.
 
         Cherche les matières équivalentes (par code OU par nom) dans la nouvelle ClasseNote
         et met à jour les références des notes.
@@ -779,15 +782,7 @@ class Eleve(SyncTrackedModel):
                 actif=True
             ).first()
 
-            # Essai 2 : correspondance nom sans filtre année
-            if not nouvelle_classe_note:
-                nouvelle_classe_note = ClasseNote.objects.filter(
-                    ecole=nouvelle_classe.ecole,
-                    nom__iexact=nouvelle_classe.nom,
-                    actif=True
-                ).first()
-
-            # Essai 3 : correspondance par numéro de niveau (regex exact, pas icontains)
+            # Essai 2 : correspondance par numéro de niveau (regex exact, pas icontains)
             #   Ex: "3ÈME ANNÉE A" → cherche les ClasseNote dont le nom commence par "3"
             #   IMPORTANT : regex ^\b3\b pour éviter que "3" matche "13"
             if not nouvelle_classe_note:
@@ -806,7 +801,7 @@ class Eleve(SyncTrackedModel):
                             nouvelle_classe_note = candidat
                             break
 
-            # Essai 4 : correspondance par niveau
+            # Essai 3 : correspondance par niveau
             if not nouvelle_classe_note:
                 nouvelle_classe_note = ClasseNote.objects.filter(
                     ecole=nouvelle_classe.ecole,
@@ -857,7 +852,9 @@ class Eleve(SyncTrackedModel):
             notes_ignorees = 0
 
             # ── 1. Transférer les NoteMensuelle ──────────────────────────────
-            notes_mensuelles = NoteMensuelle.objects.filter(eleve=self).select_related('matiere')
+            notes_mensuelles = NoteMensuelle.objects.filter(
+                eleve=self, annee_scolaire=annee,
+            ).select_related('matiere')
             for note in notes_mensuelles:
                 nouvelle_matiere = trouver_matiere_equivalente(note.matiere)
                 if nouvelle_matiere:
@@ -877,7 +874,9 @@ class Eleve(SyncTrackedModel):
                     notes_ignorees += 1
 
             # ── 2. Transférer les CompositionNote ────────────────────────────
-            compositions = CompositionNote.objects.filter(eleve=self).select_related('matiere')
+            compositions = CompositionNote.objects.filter(
+                eleve=self, annee_scolaire=annee,
+            ).select_related('matiere')
             for comp in compositions:
                 nouvelle_matiere = trouver_matiere_equivalente(comp.matiere)
                 if nouvelle_matiere:
@@ -897,7 +896,9 @@ class Eleve(SyncTrackedModel):
                     notes_ignorees += 1
 
             # ── 3. Transférer les AppreciationMaternelle ─────────────────────
-            appreciations = AppreciationMaternelle.objects.filter(eleve=self).select_related('matiere')
+            appreciations = AppreciationMaternelle.objects.filter(
+                eleve=self, annee_scolaire=annee,
+            ).select_related('matiere')
             for appr in appreciations:
                 nouvelle_matiere = trouver_matiere_equivalente(appr.matiere)
                 if nouvelle_matiere:
@@ -917,7 +918,9 @@ class Eleve(SyncTrackedModel):
                     notes_ignorees += 1
 
             # ── 4. Transférer les NoteEleve (via Evaluation) ─────────────────
-            notes_eleve = NoteEleve.objects.filter(eleve=self).select_related('evaluation__matiere')
+            notes_eleve = NoteEleve.objects.filter(
+                eleve=self, evaluation__matiere__classe__annee_scolaire=annee,
+            ).select_related('evaluation__matiere')
             for note_eleve in notes_eleve:
                 if note_eleve.evaluation and note_eleve.evaluation.matiere:
                     nouvelle_matiere = trouver_matiere_equivalente(note_eleve.evaluation.matiere)
@@ -945,7 +948,7 @@ class Eleve(SyncTrackedModel):
 
             # ── 5. Transférer les EvaluationMaternelle + NoteMaternelle ──────
             evals_maternelle = EvaluationMaternelle.objects.filter(
-                eleve=self
+                eleve=self, annee_scolaire=annee,
             ).prefetch_related('notes_matieres')
             for eval_mat in evals_maternelle:
                 # Mettre à jour la classe de l'évaluation
@@ -963,14 +966,14 @@ class Eleve(SyncTrackedModel):
                         notes_ignorees += 1
 
             # ── 6. Transférer les BulletinMaternelle ─────────────────────────
-            bulletins_mat = BulletinMaternelle.objects.filter(eleve=self)
+            bulletins_mat = BulletinMaternelle.objects.filter(eleve=self, annee_scolaire=annee)
             for bulletin in bulletins_mat:
                 bulletin.classe = nouvelle_classe_note
                 bulletin.save(update_fields=['classe'])
                 notes_transferees += 1
 
-            # ── 7. Supprimer les anciens classements (seront recalculés) ─────
-            Classement.objects.filter(eleve=self).delete()
+            # ── 7. Supprimer les classements de l'année (seront recalculés) ──
+            Classement.objects.filter(eleve=self, annee_scolaire=annee).delete()
 
             # ── 8. Invalider le cache des rangs pour les deux classes ────────
             try:
