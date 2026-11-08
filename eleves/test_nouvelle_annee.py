@@ -662,6 +662,26 @@ class CreationNouvelleAnneeTest(TestCase):
         self.assertContains(page, url)
         self.assertEqual(self.client.get(url).status_code, 200)
 
+    def test_annulation_reconnait_l_ancienne_formulation_du_passage(self):
+        # Formulation de février-mars 2026 : elle reste dans l'historique de ces élèves.
+        from eleves.models import HistoriqueEleve
+        fode = self._eleve_sans_moyenne()  # 1ÈRE en 2026-2027, 2ÈME en 2027-2028
+        self._creer_annee(dupliquer_grilles='1')
+        self._creer_annee_suivante_par_erreur()
+        passages = HistoriqueEleve.objects.filter(
+            eleve=fode, description__startswith='Passage nouvelle année 2027-2028',
+        )
+        self.assertTrue(passages.exists())
+        for passage in passages:
+            HistoriqueEleve.objects.filter(pk=passage.pk).update(
+                description=passage.description.replace('Passage nouvelle', 'Passage automatique nouvelle'),
+            )
+
+        self.client.post(reverse('eleves:annuler_annee', args=['2027-2028']), {'confirmation': '2027-2028'})
+
+        fode.refresh_from_db()
+        self.assertEqual((fode.classe.nom, fode.classe.annee_scolaire), ('1ÈRE ANNÉE A', '2026-2027'))
+
     def test_annulation_par_lots(self):
         from unittest.mock import patch
         self._eleve_sans_moyenne()

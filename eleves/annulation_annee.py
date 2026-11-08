@@ -50,10 +50,14 @@ def _annee_precedente(annee):
 
 
 def _motifs_passage(annee):
-    """Descriptions écrites par ``_passer_eleve`` : elles donnent la classe quittée."""
+    """Descriptions écrites par ``_passer_eleve`` : elles donnent la classe quittée.
+
+    « Passage automatique » est la formulation de février-mars 2026 : elle reste
+    dans l'historique des élèves passés à cette époque.
+    """
     a = re.escape(annee)
     return (
-        re.compile(rf"^Passage nouvelle année {a}: (?P<classe>.+?) → "),
+        re.compile(rf"^Passage(?: automatique)? nouvelle année {a}: (?P<classe>.+?) → "),
         re.compile(rf"^Conservation nouvelle année {a}: (?P<classe>.+?) → "),
         re.compile(rf"^Redoublant — année {a}: maintenu\(e\) en (?P<classe>.+?) \(moyenne"),
     )
