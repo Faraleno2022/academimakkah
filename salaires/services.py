@@ -15,6 +15,8 @@ from decimal import Decimal, ROUND_HALF_UP
 from django.db import transaction
 from django.db.models import Q, Sum
 
+from synchronisation.context import est_recu_du_serveur
+
 from .models import (
     AvanceSalaire,
     DetailHeuresClasse,
@@ -58,6 +60,10 @@ def synchroniser_avances_etat(enseignant_id, periode_id):
     ).first()
     if etat is None:
         return None
+
+    # Sur un poste, un état validé ou payé reste celui diffusé par le serveur.
+    if est_recu_du_serveur() and (etat.valide or etat.paye):
+        return etat
 
     etat.avances = total_avances_salaire(etat.enseignant, etat.periode)
     etat.save(update_fields=['avances', 'salaire_net'])
@@ -246,6 +252,31 @@ def repartir_heures(total_heures, lignes_prevues):
     return repartition
 
 
+def cle_correction_cours(affectation):
+    """Clé d'une correction d'heures : la même sur toutes les machines, contrairement au pk."""
+    return str(affectation.sync_uuid)
+
+
+def corrections_heures_cours(etat):
+    """Heures corrigées d'un état, par ``cle_correction_cours``.
+
+    Les anciennes corrections sont indexées par pk, faux sur une autre machine :
+    elles sont remplacées par le détail par classe, synchronisé par sync_uuid.
+    """
+    if etat is None or not etat.heures_cours_corrigees:
+        return {}
+    corrections = {
+        cle: heures for cle, heures in etat.heures_cours_corrigees.items()
+        if not cle.isdigit()
+    }
+    if len(corrections) != len(etat.heures_cours_corrigees) and etat.pk:
+        for affectation_uuid, heures in etat.details_heures.values_list(
+            'affectation_classe__sync_uuid', 'heures_realisees'
+        ):
+            corrections.setdefault(str(affectation_uuid), str(heures))
+    return corrections
+
+
 def lignes_cours_administrateur(enseignant, periode, etat=None):
     """Cours d'un administrateur : ``[(affectation, heures, taux, montant)]``.
 
@@ -256,11 +287,13 @@ def lignes_cours_administrateur(enseignant, periode, etat=None):
     if enseignant.type_enseignant != TypeEnseignant.ADMINISTRATEUR:
         return []
     lignes = []
+    corrections = corrections_heures_cours(etat)
     for affectation, heures_prevues in heures_prevues_par_affectation(
         enseignant, periode, avec_prorata=False
     ):
-        corrections = etat.heures_cours_corrigees if etat is not None else {}
-        heures = arrondir_heures(corrections.get(str(affectation.pk), heures_prevues))
+        heures = arrondir_heures(
+            corrections.get(cle_correction_cours(affectation), heures_prevues)
+        )
         taux = arrondir_montant(affectation.taux_horaire)
         lignes.append((affectation, heures, taux, arrondir_montant(heures * taux)))
     return lignes
@@ -292,11 +325,14 @@ def part_fixe_salaire(etat):
 
 def actualiser_details_heures(etat):
     """Aligne la ventilation par classe sur le total courant de l'état."""
+    # Lues avant l'effacement : une ancienne correction se retrouve dans le détail.
+    lignes_cours = (
+        lignes_cours_administrateur(etat.enseignant, etat.periode, etat)
+        if etat.enseignant.type_enseignant == TypeEnseignant.ADMINISTRATEUR else []
+    )
     etat.details_heures.all().delete()
     if etat.enseignant.type_enseignant == TypeEnseignant.ADMINISTRATEUR:
-        for affectation, heures, taux, _ in lignes_cours_administrateur(
-            etat.enseignant, etat.periode, etat
-        ):
+        for affectation, heures, taux, _ in lignes_cours:
             DetailHeuresClasse.objects.create(
                 etat_salaire=etat,
                 affectation_classe=affectation,

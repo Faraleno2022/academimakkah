@@ -204,6 +204,18 @@ MARQUEUR_RECU = '_recu_du_serveur'
 REESSAIS_PAR_CYCLE = 200
 
 
+def _refus_de_paie_corriges():
+    """Paie refusée à tort par un serveur plus ancien : auteur absent ou doublon.
+
+    Ces lignes n'existent que sur leur poste et rien d'autre ne les renverrait.
+    """
+    from django.db.models import Q
+    motifs = Q()
+    for champ in ('cree_par', 'calcule_par', 'pointe_par', '__all__'):
+        motifs |= Q(erreur__contains=f"'{champ}'")
+    return Q(model_label__startswith='salaires.') & motifs
+
+
 def reprogrammer_refus_temporaires(ecole, limite=100):
     """Reprend les dépendances absentes et verrous après au moins une minute.
 
@@ -225,7 +237,8 @@ def reprogrammer_refus_temporaires(ecole, limite=100):
         Q(erreur__startswith='Relation introuvable pour ')
         | Q(erreur__startswith='[TEMPORAIRE] ')
         | Q(erreur__icontains='database is locked')
-        | Q(erreur__icontains='database table is locked'),
+        | Q(erreur__icontains='database table is locked')
+        | _refus_de_paie_corriges(),
     ).filter(object_uuid__isnull=False).annotate(
         remplace=Exists(plus_recents),
     ).filter(remplace=False).order_by('date_application', 'id')

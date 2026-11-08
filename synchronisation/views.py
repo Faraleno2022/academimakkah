@@ -409,8 +409,10 @@ def push(request):
                         device=device, source_event_id=event_id, statut=SyncChange.STATUT_APPLIED,
                     ).first()
                     if precedent is not None:
-                        if (precedent.ecole_id, precedent.model_label, precedent.object_uuid, precedent.operation, precedent.payload) != (
-                                device.ecole_id, model_label, object_uuid, operation, payload):
+                        # Sans object_uuid : il suit la fusion d'un doublon, et le
+                        # payload porte déjà le sync_uuid envoyé par le poste.
+                        if (precedent.ecole_id, precedent.model_label, precedent.operation, precedent.payload) != (
+                                device.ecole_id, model_label, operation, payload):
                             raise ValueError('Identifiant de changement réutilisé avec des données différentes.')
                         sync_change = precedent
                 if sync_change is None:

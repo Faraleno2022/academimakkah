@@ -698,18 +698,22 @@ class EtatSalaireAjustementForm(forms.ModelForm):
             enseignant is not None
             and enseignant.type_enseignant == TypeEnseignant.ADMINISTRATEUR
         ):
-            from .services import part_fixe_salaire
+            from .services import (
+                cle_correction_cours,
+                corrections_heures_cours,
+                part_fixe_salaire,
+            )
 
             if salaire_base is None:
                 salaire_base = part_fixe_salaire(self.instance)
-            self.corrections_cours = dict(self.instance.heures_cours_corrigees)
+            self.corrections_cours = corrections_heures_cours(self.instance)
             self.montant_cours = Decimal('0')
             for nom, affectation, heures, taux in self.cours_modifiables:
                 valeur = cleaned_data.get(nom)
                 if valeur is None:
                     valeur = heures
                 if self.add_prefix(nom) in self.data and nom in self.changed_data:
-                    self.corrections_cours[str(affectation.pk)] = str(valeur)
+                    self.corrections_cours[cle_correction_cours(affectation)] = str(valeur)
                 self.montant_cours += (valeur * taux).quantize(
                     Decimal('0.01'), rounding=ROUND_HALF_UP
                 )

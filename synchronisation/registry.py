@@ -141,4 +141,18 @@ CLES_NATURELLES = {
     # Modes et types créés par défaut sur un poste avant sa liaison au serveur.
     'paiements.ModePaiement': ('nom',),
     'paiements.TypePaiement': ('nom',),
+    # Même mois de paie saisi sur deux postes hors ligne.
+    'salaires.AffectationClasse': ('enseignant', 'classe', 'matiere', 'date_debut'),
+    'salaires.PeriodeSalaire': ('mois', 'annee', 'ecole'),
+    'salaires.EtatSalaire': ('enseignant', 'periode'),
+    'salaires.PresenceEnseignant': ('enseignant', 'date'),
+    'salaires.DetailHeuresClasse': ('etat_salaire', 'affectation_classe'),
+}
+
+# Lors d'une fusion, une ligne dans cet état n'est pas remplacée par un doublon
+# qui ne l'a pas : un salaire payé ne redevient pas impayé parce qu'un poste
+# hors ligne l'avait seulement calculé.
+ETATS_ACQUIS = {
+    'salaires.PeriodeSalaire': ('cloturee',),
+    'salaires.EtatSalaire': ('paye', 'valide'),
 }

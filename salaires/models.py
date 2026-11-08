@@ -7,7 +7,19 @@ from django.utils import timezone
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime
 from eleves.models import Classe, Ecole
+from synchronisation.context import est_recu_du_serveur
 from synchronisation.mixins import SyncTrackedModel
+
+
+def valider_ligne(instance):
+    """Contrôle une ligne de paie avant enregistrement.
+
+    Une ligne reçue du serveur a déjà passé ces règles et n'est pas revalidée :
+    un poste la refuserait sinon pour de mauvaises raisons (état validé livré
+    avant ses avances, ancienne ligne d'avant une règle ajoutée depuis).
+    """
+    if not est_recu_du_serveur():
+        instance.full_clean()
 
 
 class TypeEnseignant(models.TextChoices):
@@ -222,10 +234,13 @@ class Enseignant(SyncTrackedModel):
     date_modification = models.DateTimeField(auto_now=True)
     
     # Relations
+    # blank=True : la synchronisation n'échange jamais l'auteur. Sans lui, le
+    # full_clean() de save() refuserait toute ligne reçue d'une autre machine.
     cree_par = models.ForeignKey(
-        User, 
-        on_delete=models.SET_NULL, 
-        null=True, 
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name='enseignants_crees'
     )
     
@@ -332,7 +347,7 @@ class Enseignant(SyncTrackedModel):
     def save(self, *args, **kwargs):
         # Les validateurs doivent aussi protéger les imports, scripts et API,
         # pas uniquement les ModelForm de l'interface.
-        self.full_clean()
+        valider_ligne(self)
         super().save(*args, **kwargs)
     
     def calculer_salaire_mensuel(self, heures_realisees=None):
@@ -528,7 +543,7 @@ class AffectationClasse(SyncTrackedModel):
             })
 
     def save(self, *args, **kwargs):
-        self.full_clean()
+        valider_ligne(self)
         super().save(*args, **kwargs)
 
 
@@ -618,9 +633,10 @@ class PeriodeSalaire(SyncTrackedModel):
     date_cloture = models.DateTimeField(null=True, blank=True)
     
     cree_par = models.ForeignKey(
-        User, 
-        on_delete=models.SET_NULL, 
+        User,
+        on_delete=models.SET_NULL,
         null=True,
+        blank=True,
         related_name='periodes_salaire_creees'
     )
     cloturee_par = models.ForeignKey(
@@ -649,7 +665,7 @@ class PeriodeSalaire(SyncTrackedModel):
             self.jours_ouvrables = jours_ouvrables_du_mois(self.annee, self.mois)
             if kwargs.get('update_fields') is not None:
                 kwargs['update_fields'] = set(kwargs['update_fields']) | {'jours_ouvrables'}
-        self.full_clean()
+        valider_ligne(self)
         super().save(*args, **kwargs)
 
     @property
@@ -839,9 +855,10 @@ class EtatSalaire(SyncTrackedModel):
     
     # Utilisateurs
     calcule_par = models.ForeignKey(
-        User, 
-        on_delete=models.SET_NULL, 
+        User,
+        on_delete=models.SET_NULL,
         null=True,
+        blank=True,
         related_name='etats_salaire_calcules'
     )
     valide_par = models.ForeignKey(
@@ -936,7 +953,7 @@ class EtatSalaire(SyncTrackedModel):
         ).quantize(
             Decimal('0.01'), rounding=ROUND_HALF_UP
         )
-        self.full_clean()
+        valider_ligne(self)
         if kwargs.get('update_fields') is not None:
             kwargs['update_fields'] = set(kwargs['update_fields']) | {
                 'salaire_net', 'primes'
@@ -1124,7 +1141,7 @@ class AvanceSalaire(SyncTrackedModel):
                 'enseignant_id', 'periode_id'
             ).first()
 
-        self.full_clean()
+        valider_ligne(self)
         super().save(*args, **kwargs)
 
         from .services import synchroniser_avances_etat
@@ -1139,7 +1156,7 @@ class AvanceSalaire(SyncTrackedModel):
         ancienne = AvanceSalaire.objects.select_for_update().select_related(
             'periode',
         ).get(pk=self.pk)
-        if not ancienne.peut_etre_modifiee:
+        if not ancienne.peut_etre_modifiee and not est_recu_du_serveur():
             raise ValidationError(
                 "Cette avance ne peut plus être supprimée car la paie est "
                 "validée, payée ou clôturée."
@@ -1227,6 +1244,7 @@ class PresenceEnseignant(SyncTrackedModel):
         User,
         on_delete=models.SET_NULL,
         null=True,
+        blank=True,
         related_name='pointages_effectues',
         verbose_name="Pointé par"
     )
@@ -1291,7 +1309,7 @@ class PresenceEnseignant(SyncTrackedModel):
             if self.heures_travaillees is None:
                 self.heures_travaillees = Decimal('0')
 
-        self.full_clean()
+        valider_ligne(self)
         if kwargs.get('update_fields') is not None:
             kwargs['update_fields'] = set(kwargs['update_fields']) | {
                 'heures_travaillees'
@@ -1366,7 +1384,7 @@ class DetailHeuresClasse(SyncTrackedModel):
         self.montant = (self.heures_realisees * self.taux_horaire_applique).quantize(
             Decimal('0.01'), rounding=ROUND_HALF_UP
         )
-        self.full_clean()
+        valider_ligne(self)
         if kwargs.get('update_fields') is not None:
             kwargs['update_fields'] = set(kwargs['update_fields']) | {'montant'}
         super().save(*args, **kwargs)

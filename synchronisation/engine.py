@@ -8,8 +8,8 @@ from django.db import models, transaction
 from django.utils import timezone
 
 from eleves.models import Ecole
-from .context import mute_sync
-from .registry import CLES_NATURELLES, SYNC_MODEL_LABELS, SYNC_MODEL_SET
+from .context import mute_sync, recu_du_serveur
+from .registry import CLES_NATURELLES, ETATS_ACQUIS, SYNC_MODEL_LABELS, SYNC_MODEL_SET
 from .scope import scoped_queryset, school_for_instance, validate_scope, remember_school
 
 
@@ -85,6 +85,26 @@ def serialize_instance(instance):
     return payload
 
 
+def objet_par_uuid(model, sync_uuid, verrou=False):
+    """Objet portant ce sync_uuid, ou qui l'a porté avant une fusion de doublons."""
+    from .models import SyncAlias
+    lignes = model.objects.select_for_update() if verrou else model.objects
+    obj = lignes.filter(sync_uuid=sync_uuid).first()
+    if obj is not None:
+        return obj
+    pk = SyncAlias.objects.filter(
+        model_label=model_label_for(model), ancien_uuid=sync_uuid,
+    ).values_list('object_pk', flat=True).first()
+    return lignes.filter(pk=pk).first() if pk else None
+
+
+def retenir_alias(model_label, ancien_uuid, obj):
+    from .models import SyncAlias
+    SyncAlias.objects.update_or_create(
+        model_label=model_label, ancien_uuid=ancien_uuid, defaults={'object_pk': obj.pk},
+    )
+
+
 def resolve_related(field, raw_value):
     if not raw_value:
         return None
@@ -94,8 +114,7 @@ def resolve_related(field, raw_value):
 
     sync_uuid = raw_value.get('sync_uuid') if isinstance(raw_value, dict) else None
     if sync_uuid and hasattr(model, 'sync_uuid'):
-        obj = model.objects.filter(sync_uuid=sync_uuid).first()
-        return obj
+        return objet_par_uuid(model, sync_uuid)
 
     pk = raw_value.get('pk') if isinstance(raw_value, dict) else None
     if pk:
@@ -129,8 +148,13 @@ def objet_par_cle_naturelle(model, model_label, payload):
     for nom in champs:
         field = model._meta.get_field(nom)
         raw_value = payload.get(nom)
-        if raw_value in (None, ''):
+        # Une matière vide fait partie de la clé d'une affectation : seul un
+        # champ qui ne peut pas être vide rend la clé inutilisable.
+        if raw_value is None or (raw_value == '' and not field.blank):
             return None
+        if raw_value == '':
+            filtres[nom] = ''
+            continue
         value = deserialize_field(field, raw_value)
         if value is None:
             return None
@@ -186,14 +210,23 @@ def build_change_instance(model_label, object_uuid, payload, *, operation='UPDAT
     if model_label == 'eleves.Ecole' and operation == 'DELETE':
         raise ValueError("La suppression d'une école ne passe pas par la synchronisation.")
 
-    with mute_sync():
-        obj = model.objects.select_for_update().filter(sync_uuid=object_uuid).first()
+    with mute_sync(), recu_du_serveur(trusted):
+        obj = objet_par_uuid(model, object_uuid, verrou=True)
+        uuid_remplace = None
         if obj is None and operation != 'DELETE':
             obj = objet_par_cle_naturelle(model, model_label, payload)
             if obj is not None:
+                uuid_remplace = obj.sync_uuid
                 obj.sync_uuid = object_uuid
         if obj is not None and ecole is not None:
             validate_scope(obj, ecole, existing=True, trusted=trusted)
+        if uuid_remplace is not None:
+            if any(getattr(obj, nom) and not payload.get(nom) for nom in ETATS_ACQUIS.get(model_label, ())):
+                # La ligne existante reste telle quelle ; le doublon la désigne désormais.
+                obj.sync_uuid = uuid_remplace
+                retenir_alias(model_label, object_uuid, obj)
+                return obj
+            retenir_alias(model_label, uuid_remplace, obj)
         keys = _financial_keys(obj)
         ancienne_classe = obj.classe if obj is not None and model_label == 'eleves.Eleve' else None
         if operation == 'DELETE':
@@ -246,14 +279,24 @@ def build_change_instance(model_label, object_uuid, payload, *, operation='UPDAT
 
 @transaction.atomic
 def apply_sync_change(change):
+    a_supprimer = None
+    if change.operation == 'DELETE' and change.object_uuid and get_model(change.model_label):
+        a_supprimer = objet_par_uuid(get_model(change.model_label), change.object_uuid)
+    uuid_cible = a_supprimer.sync_uuid if a_supprimer is not None else None
     obj = build_change_instance(
         change.model_label, change.object_uuid, change.payload,
         operation=change.operation, ecole=change.ecole, trusted=change.device_id is None,
     )
+    if obj is not None:
+        uuid_cible = obj.sync_uuid
+    # Reçu sous un ancien identifiant (doublon fusionné) : le pull ne diffuse que
+    # l'identifiant courant, ce changement ne quitterait jamais cette machine.
+    if change.object_uuid and uuid_cible and str(change.object_uuid) != str(uuid_cible):
+        change.object_uuid = uuid_cible
     change.statut = change.STATUT_APPLIED
     change.date_application = timezone.now()
     change.erreur = ''
-    change.save(update_fields=['statut', 'date_application', 'erreur'])
+    change.save(update_fields=['statut', 'date_application', 'erreur', 'object_uuid'])
     if change.device_id is None and change.operation != 'DELETE':
         from .media import queue_received
         queue_received(change.ecole, change.model_label, change.object_uuid, change.payload)

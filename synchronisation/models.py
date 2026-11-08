@@ -172,6 +172,20 @@ class SyncOwnership(models.Model):
         constraints = [models.UniqueConstraint(fields=['model_label', 'object_uuid'], name='sync_object_school_unique')]
 
 
+class SyncAlias(models.Model):
+    """Ancien sync_uuid d'un objet fusionné avec son doublon d'un autre poste.
+
+    Des changements déjà partis désignent encore cet identifiant : sans cette
+    trace, leurs enfants (états d'une période fusionnée...) resteraient refusés.
+    """
+    model_label = models.CharField(max_length=120)
+    ancien_uuid = models.UUIDField()
+    object_pk = models.PositiveBigIntegerField()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['model_label', 'ancien_uuid'], name='sync_alias_unique')]
+
+
 class SyncCheckpoint(models.Model):
     """Avancement local d'un poste, conservé entre deux exécutions."""
     device_id = models.UUIDField(unique=True)
