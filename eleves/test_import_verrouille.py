@@ -160,6 +160,55 @@ class ImportVerrouilleTests(TestCase):
         self.assertEqual(self.client.get(self.url).context['page_obj'].paginator.count, 0)
         self.assertEqual(self.client.post(self.url, {'eleve_id': self.eleve.pk, 'classe_id': self.b.pk}).status_code, 404)
 
+    def test_activation_groupee_sans_paiement(self):
+        from eleves.models import HistoriqueEleve
+        autre = Eleve.objects.create(matricule='IMPORT-002', nom='Bah', prenom='Ousmane', sexe='M', classe=self.a, import_verrouille=True)
+        reste = Eleve.objects.create(matricule='IMPORT-003', nom='Sow', prenom='Fanta', sexe='F', classe=self.a, import_verrouille=True)
+        response = self.client.post(self.url, {'action': 'activer', 'eleve_ids': [self.eleve.pk, autre.pk, 'x']})
+        self.assertRedirects(response, self.url, fetch_redirect_response=False)
+        for eleve, verrouille in ((self.eleve, False), (autre, False), (reste, True)):
+            eleve.refresh_from_db()
+            self.assertEqual(eleve.import_verrouille, verrouille)
+            self.assertEqual(eleve.statut, 'ATTENTE_PAIEMENT' if verrouille else 'ACTIF')
+        self.assertFalse(Paiement.objects.exists())
+        self.assertTrue(HistoriqueEleve.objects.filter(eleve=autre, action='CHANGEMENT_STATUT').exists())
+        self.assertTrue(Eleve.pedagogiques.filter(pk=self.eleve.pk).exists())
+
+    def test_activer_tout_respecte_la_recherche(self):
+        autre = Eleve.objects.create(matricule='IMPORT-002', nom='Bah', prenom='Ousmane', sexe='M', classe=self.a, import_verrouille=True)
+        self.client.post(self.url, {'action': 'activer_tout', 'q': 'Diallo'})
+        self.eleve.refresh_from_db()
+        autre.refresh_from_db()
+        self.assertFalse(self.eleve.import_verrouille)
+        self.assertTrue(autre.import_verrouille)
+        self.client.post(self.url, {'action': 'activer_tout', 'q': ''})
+        autre.refresh_from_db()
+        self.assertFalse(autre.import_verrouille)
+
+    def test_activation_sans_paiement_reservee_a_la_direction(self):
+        user = get_user_model().objects.create_user('comptable')
+        user.profil.role = 'COMPTABLE'
+        user.profil.is_validated = True
+        user.profil.save(update_fields=['role', 'is_validated'])
+        self.client.force_login(user)
+        self.assertFalse(self.client.get(self.url).context['peut_activer'])
+        self.assertEqual(self.client.post(self.url, {'action': 'activer', 'eleve_ids': [self.eleve.pk]}).status_code, 403)
+        self.eleve.refresh_from_db()
+        self.assertTrue(self.eleve.import_verrouille)
+
+    def test_activation_ignore_eleve_autre_ecole(self):
+        ecole = Ecole.objects.create(nom='Autre ecole', adresse='Conakry', telephone='620111112', directeur='Direction')
+        user = get_user_model().objects.create_user('directeur-autre')
+        user.profil.ecole = ecole
+        user.profil.role = 'DIRECTEUR'
+        user.profil.is_validated = True
+        user.profil.save(update_fields=['ecole', 'role', 'is_validated'])
+        self.client.force_login(user)
+        self.client.post(self.url, {'action': 'activer', 'eleve_ids': [self.eleve.pk]})
+        self.client.post(self.url, {'action': 'activer_tout'})
+        self.eleve.refresh_from_db()
+        self.assertTrue(self.eleve.import_verrouille)
+
     def test_fiche_et_paiement_restent_accessibles(self):
         self.assertEqual(self.client.get(reverse('eleves:detail_eleve', args=[self.eleve.pk])).status_code, 200)
         self.assertEqual(self.client.get(reverse('paiements:ajouter_paiement_eleve', args=[self.eleve.pk])).status_code, 200)

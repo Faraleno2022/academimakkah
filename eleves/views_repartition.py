@@ -10,8 +10,60 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_http_methods
 
 from utilisateurs.utils import filter_by_user_school
-from .models import Classe, Eleve
+from .models import Classe, Eleve, HistoriqueEleve
 from .views_import import peut_importer_eleves
+
+
+def peut_activer_sans_paiement(user):
+    """Lever le verrou sans paiement reste réservé à la direction.
+
+    Utile aux écoles qui n'utilisent que le module notes : leurs élèves
+    importés n'auront jamais de premier paiement.
+    """
+    profil = getattr(user, 'profil', None)
+    return bool(
+        user.is_superuser or user.is_staff
+        or user.groups.filter(name__in=['Administrateurs', 'Directeurs']).exists()
+        or (profil is not None and profil.role in ('ADMIN', 'DIRECTEUR'))
+    )
+
+
+def _filtrer_recherche(eleves, recherche):
+    if recherche:
+        eleves = eleves.filter(Q(nom__icontains=recherche) | Q(prenom__icontains=recherche) | Q(matricule__icontains=recherche))
+    return eleves
+
+
+def _activer_sans_paiement(request, eleves):
+    """Déverrouille les élèves choisis sans enregistrer de paiement."""
+    if not peut_activer_sans_paiement(request.user):
+        raise PermissionDenied("Seule la direction peut activer des élèves sans paiement.")
+    if request.POST.get('action') == 'activer_tout':
+        cibles = _filtrer_recherche(eleves, request.POST.get('q', '').strip())
+    else:
+        ids = {i for i in request.POST.getlist('eleve_ids') if i.isdigit()}
+        if not ids:
+            messages.warning(request, "Cochez au moins un élève à activer.")
+            return redirect('eleves:repartir_importes')
+        cibles = eleves.filter(pk__in=ids)
+    nombre = 0
+    with transaction.atomic():
+        # Sauvegarde élève par élève (et non .update()) pour que la
+        # synchronisation entre postes enregistre chaque déverrouillage.
+        for eleve in cibles.select_for_update():
+            eleve.import_verrouille = False
+            eleve.statut = 'ACTIF'
+            eleve.save(update_fields=['import_verrouille', 'statut'])
+            HistoriqueEleve.objects.create(
+                eleve=eleve, action='CHANGEMENT_STATUT', utilisateur=request.user,
+                description="Élève importé activé sans paiement (verrou du premier paiement levé).",
+            )
+            nombre += 1
+    if nombre:
+        messages.success(request, f"{nombre} élève(s) activé(s) sans paiement. Notes, bulletins et présences leur sont désormais accessibles.")
+    else:
+        messages.warning(request, "Aucun élève verrouillé ne correspond à la sélection.")
+    return redirect('eleves:repartir_importes')
 
 
 @login_required
@@ -24,6 +76,8 @@ def repartir_importes(request):
         request.user, 'classe__ecole',
     )
     if request.method == 'POST':
+        if request.POST.get('action') in ('activer', 'activer_tout'):
+            return _activer_sans_paiement(request, eleves)
         if not all(request.POST.get(key, '').isdigit() for key in ('eleve_id', 'classe_id')):
             raise Http404("Élève ou classe introuvable.")
         with transaction.atomic():
@@ -46,8 +100,7 @@ def repartir_importes(request):
         return redirect('eleves:repartir_importes')
 
     recherche = request.GET.get('q', '').strip()
-    if recherche:
-        eleves = eleves.filter(Q(nom__icontains=recherche) | Q(prenom__icontains=recherche) | Q(matricule__icontains=recherche))
+    eleves = _filtrer_recherche(eleves, recherche)
     page = Paginator(eleves.order_by('classe__ecole__nom', 'classe__niveau', 'nom', 'prenom'), 30).get_page(request.GET.get('page'))
     groupes = {}
     for eleve in page:
@@ -55,4 +108,7 @@ def repartir_importes(request):
         if key not in groupes:
             groupes[key] = list(Classe.objects.filter(ecole_id=key[0], niveau=key[1], annee_scolaire=key[2]).order_by('nom'))
         eleve.classes_proposees = groupes[key]
-    return render(request, 'eleves/repartir_importes.html', {'page_obj': page, 'recherche': recherche})
+    return render(request, 'eleves/repartir_importes.html', {
+        'page_obj': page, 'recherche': recherche,
+        'peut_activer': peut_activer_sans_paiement(request.user),
+    })
