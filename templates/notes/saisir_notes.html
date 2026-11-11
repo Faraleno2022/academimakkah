@@ -228,6 +228,13 @@
         background: #fff5f5 !important;
         border-left: 4px solid #dc2626 !important;
     }
+
+    /* Assistant IA : cases remplies depuis une photo */
+    .note-input.ia-rempli { box-shadow: 0 0 0 2px #93c5fd inset; }
+    .note-input.ia-douteux { box-shadow: 0 0 0 3px #f59e0b inset; background: #fffbeb; }
+    .assistant-btn { background: linear-gradient(135deg, #0d6efd, #6f42c1); color: #fff; border: 0;
+        padding: 1rem 2rem; border-radius: 10px; font-weight: 600; font-size: 1.1rem; }
+    .assistant-btn:hover { color: #fff; filter: brightness(1.08); }
 </style>
 {% endblock %}
 
@@ -503,7 +510,12 @@
                 <span id="saveBtnText">Sauvegarder Toutes les Notes ({{ eleves|length }} élèves)</span>
                 <span id="unsavedIndicator" style="display: none;" class="unsaved-indicator"></span>
             </button>
-            
+            {% if eleves and type_note != 'appreciation' %}
+            <button type="button" onclick="ouvrirAssistantNotes()" class="btn assistant-btn ms-3" id="assistantNotesBtn">
+                <i class="fas fa-camera me-2"></i>Remplir depuis une photo
+            </button>
+            {% endif %}
+
             {% if notes_deja_saisies %}
             <button onclick="confirmerSuppression()" class="btn btn-danger btn-lg ms-3" id="deleteBtn" style="padding: 1rem 2.5rem; border-radius: 10px; font-weight: 600; font-size: 1.2rem;">
                 <i class="fas fa-trash-alt me-2"></i>
@@ -1250,4 +1262,68 @@ async function supprimerNotes() {
     }
 }
 </script>
+
+{% if classe_selectionnee and matiere_selectionnee and periode and eleves and type_note != 'appreciation' %}
+{% include 'assistant_ia/_modal.html' %}
+<script>
+function ouvrirAssistantNotes() {
+    var lignes = document.querySelectorAll('#elevesTableBody tr[data-eleve-id]');
+    var eleveIds = Array.prototype.map.call(lignes, function (tr) { return tr.dataset.eleveId; }).join(',');
+    AssistantIA.ouvrir({
+        titre: 'Remplir {{ matiere_selectionnee.nom|escapejs }} depuis une photo',
+        aide: "Photographiez la fiche de notes de cette matière (ou collez le texte). L’assistant remplit le tableau ; les cases en orange sont à vérifier. Rien n’est enregistré avant que vous cliquiez sur « Sauvegarder ».",
+        exempleTexte: 'Ex. : Diallo Aminata 14 ; Bah Mamadou 12,5 ; Camara Fatou absente',
+        url: '{% url "notes:assistant_notes" %}',
+        donnees: function () {
+            return {
+                classe_id: '{{ classe_selectionnee.id|stringformat:"d" }}',
+                matiere_id: '{{ matiere_selectionnee.id|stringformat:"d" }}',
+                matiere_seule: '1',
+                eleve_ids: eleveIds
+            };
+        },
+        onResultat: function (data, resume) {
+            var remplies = 0, douteuses = 0, absents = 0;
+            var declencher = function (el) { el.dispatchEvent(new Event('change', { bubbles: true })); };
+            data.notes.forEach(function (n) {
+                var ligne = document.querySelector('#elevesTableBody tr[data-eleve-id="' + n.eleve_id + '"]');
+                if (!ligne) return;
+                var input = ligne.querySelector('[data-field="note"]');
+                var absent = ligne.querySelector('[data-field="absent"]');
+                if (!input || !absent) return;
+                input.classList.remove('ia-rempli', 'ia-douteux');
+                if (n.absent) {
+                    if (!absent.checked) { absent.checked = true; declencher(absent); }
+                    absents++;
+                } else if (n.note !== null) {
+                    if (absent.checked) { absent.checked = false; declencher(absent); }
+                    input.disabled = false;
+                    input.value = n.note;
+                    ligne.classList.remove('no-note');
+                    declencher(input);
+                } else {
+                    return;
+                }
+                input.classList.add(n.douteux ? 'ia-douteux' : 'ia-rempli');
+                input.title = n.remarque || '';
+                if (n.douteux) douteuses++;
+                remplies++;
+            });
+            var premiere = document.querySelector('.note-input.ia-douteux');
+            if (premiere) premiere.scrollIntoView({ block: 'center' });
+
+            var html = '<strong>' + remplies + '</strong> élève(s) rempli(s)'
+                + (absents ? ', dont ' + absents + ' absent(s)' : '')
+                + (douteuses ? '. <strong>' + douteuses + '</strong> à vérifier (en orange, survolez pour voir la raison).' : '.');
+            if (data.non_reconnus.length) {
+                html += '<br><span class="text-danger">Non reconnus, à saisir à la main :</span><ul class="mb-0">'
+                    + data.non_reconnus.map(function (t) { return '<li>' + t.replace(/</g, '&lt;') + '</li>'; }).join('') + '</ul>';
+            }
+            html += '<br>Vérifiez le tableau, puis cliquez sur <strong>Sauvegarder</strong>.';
+            resume(html);
+        }
+    });
+}
+</script>
+{% endif %}
 {% endblock %}

@@ -107,6 +107,32 @@ class AssistantNotesTests(TestCase):
         self.assertContains(rep, 'Remplir depuis une photo')
         self.assertContains(rep, reverse('notes:assistant_notes'))
 
+    def test_page_saisir_une_matiere(self):
+        """Page « Saisir les notes » : sa liste d'élèves et sa seule matière sont envoyées."""
+        rep, appel = self._poster(
+            {'notes': [
+                {'eleve_id': self.aminata.pk, 'matiere_id': self.math.pk, 'note': 14, 'absent': False, 'douteux': False, 'remarque': ''},
+                {'eleve_id': self.aminata.pk, 'matiere_id': self.fr.pk, 'note': 9, 'absent': False, 'douteux': False, 'remarque': ''},
+            ], 'non_reconnus': []},
+            matiere_id=self.math.pk, matiere_seule='1',
+            eleve_ids=f'{self.aminata.pk},{self.intrus.pk}',
+        )
+        self.assertEqual(rep.status_code, 200, rep.content)
+        self.assertEqual([(n['eleve_id'], n['matiere_id']) for n in rep.json()['notes']], [(self.aminata.pk, self.math.pk)])
+        consigne = appel.call_args.args[0].upper()
+        self.assertIn('AMINATA DIALLO', consigne)
+        self.assertNotIn('MAMADOU', consigne)  # seulement les élèves affichés par la page
+        self.assertNotIn('INTRUS', consigne)  # jamais un élève d'une autre école
+        self.assertNotIn('CODE FR', consigne)  # une seule matière proposée
+
+    def test_la_page_saisir_affiche_le_bouton(self):
+        rep = self.client.get(reverse('notes:saisir_notes'), {
+            'classe_id': self.classe_note.pk, 'matiere_id': self.math.pk, 'type_note': 'mensuelle', 'periode': 'OCTOBRE',
+        })
+        self.assertEqual(rep.status_code, 200)
+        self.assertContains(rep, 'Remplir depuis une photo')
+        self.assertContains(rep, 'matiere_seule')
+
 
 class OutilsAssistantTests(TestCase):
     def test_photo_reduite_et_convertie(self):

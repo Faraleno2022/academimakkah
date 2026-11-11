@@ -66,6 +66,22 @@ def _eleves_de_la_classe(classe_note):
     return list(Eleve.pedagogiques.filter(classe=classe_eleve, statut="ACTIF").order_by("prenom", "nom"))
 
 
+def _eleves_de_la_page(request, classe_note):
+    """
+    Élèves affichés par la page qui appelle l'assistant (« Saisir les notes » a ses propres
+    règles de correspondance de classe). Restreints aux élèves actifs de l'école de la classe.
+    """
+    from eleves.models import Eleve
+
+    ids = [int(x) for x in request.POST.get("eleve_ids", "").split(",") if x.strip().isdigit()][:400]
+    if not ids:
+        return []
+    return list(
+        Eleve.pedagogiques.filter(pk__in=ids, statut="ACTIF", classe__ecole=classe_note.ecole)
+        .order_by("prenom", "nom")
+    )
+
+
 def _consigne(eleves, matieres, note_max, matiere_ciblee) -> str:
     liste_eleves = "\n".join(f"{e.id} | {e.prenom} {e.nom} | matricule {e.matricule}" for e in eleves)
     liste_matieres = "\n".join(f"{m.id} | {m.nom} | code {m.code or '-'}" for m in matieres)
@@ -119,7 +135,7 @@ def assistant_notes(request):
         classe = get_object_or_404(ClasseNote, pk=classe_id)
 
     matieres = list(MatiereNote.objects.filter(classe=classe, actif=True).order_by("nom"))
-    eleves = _eleves_de_la_classe(classe)
+    eleves = _eleves_de_la_page(request, classe) or _eleves_de_la_classe(classe)
     if not matieres or not eleves:
         return JsonResponse({"ok": False, "erreur": "Cette classe n'a pas d'élèves ou de matières."}, status=400)
     note_max = 10 if detecter_niveau_scolaire(classe.nom) == "PRIMAIRE" else 20
@@ -127,6 +143,9 @@ def assistant_notes(request):
     matiere_ciblee = None
     if request.POST.get("matiere_id"):
         matiere_ciblee = next((m for m in matieres if str(m.id) == request.POST["matiere_id"]), None)
+    # Page « Saisir les notes » : une seule matière à l'écran, on n'en propose pas d'autre
+    if matiere_ciblee and request.POST.get("matiere_seule"):
+        matieres = [matiere_ciblee]
 
     try:
         images = [preparer_image(f) for f in request.FILES.getlist("photos")[:4]]
