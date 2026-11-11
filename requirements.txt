@@ -34,3 +34,7 @@ whitenoise==6.8.2
 pypdf==6.19.0
 python-dotenv==1.2.2
 anthropic>=1.8.0
+# Requis par anthropic 2.x (httpx2) : brotli ancien -> « process() takes no keyword arguments »,
+# h11 0.16 incompatible avec httpcore < 1.0.9 (utilisé par openai/httpx)
+brotli>=1.2.0
+httpcore>=1.0.9
