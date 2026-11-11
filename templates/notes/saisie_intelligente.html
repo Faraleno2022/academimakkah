@@ -711,7 +711,7 @@ function ouvrirAssistantNotes() {
         aide: "Photographiez la fiche de notes remplie (ou collez le texte). L'assistant remplit la grille ; les cases en orange sont à vérifier. Rien n'est enregistré avant que vous cliquiez sur « Enregistrer toutes les notes ».",
         exempleTexte: 'Ex. : Diallo Aminata 14 ; Bah Mamadou 12,5 ; Camara Fatou absente',
         url: '{% url "notes:assistant_notes" %}',
-        extraHtml: '<label for="assistantMatiere" class="form-label fw-semibold">Matière (si la fiche ne concerne qu'une seule matière)</label>'
+        extraHtml: '<label for="assistantMatiere" class="form-label fw-semibold">Matière (si la fiche ne concerne qu\'une seule matière)</label>'
             + '<select id="assistantMatiere" class="form-select"><option value="">Plusieurs matières / voir la fiche</option>' + options + '</select>',
         donnees: () => ({
             classe_id: '{{ classe_selectionnee.id|stringformat:"d" }}',
