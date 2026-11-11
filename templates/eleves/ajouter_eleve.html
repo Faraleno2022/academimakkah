@@ -144,7 +144,14 @@
             <div class="form-container">
                 <form method="post" enctype="multipart/form-data">
                     {% csrf_token %}
-                    
+
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-3 p-3 rounded" style="background:#eef4ff;border:1px solid #c9dafc;">
+                        <button type="button" class="btn btn-primary" onclick="ouvrirAssistantEleve()" id="assistantEleveBtn">
+                            <i class="fas fa-camera me-2"></i>Remplir depuis une photo
+                        </button>
+                        <small class="text-muted">Fiche d'inscription, extrait de naissance, ancien bulletin : l'assistant remplit le formulaire, vous vérifiez puis enregistrez.</small>
+                    </div>
+
                     <!-- Informations personnelles -->
                     <h4 class="section-title"><i class="fas fa-user me-2"></i>Informations personnelles</h4>
                     
@@ -855,6 +862,99 @@ function selectionnerResponsableExistant(id, prenom, nom, relation) {
             alert.remove();
         }
     }, 5000);
+}
+</script>
+
+{% include 'assistant_ia/_modal.html' %}
+<script>
+function ouvrirAssistantEleve() {
+    function champ(id) { return document.getElementById(id); }
+    function echapper(t) {
+        return String(t || '').replace(/[&<>"]/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+        });
+    }
+    function marquer(el, douteux) {
+        if (!el) return;
+        el.classList.remove('border-warning', 'border-3', 'border-primary', 'border-1');
+        el.classList.add(douteux ? 'border-warning' : 'border-primary', douteux ? 'border-3' : 'border-1');
+    }
+    function poser(id, valeur, douteux) {
+        var el = champ(id);
+        if (!el || !valeur) return false;
+        if (el.tagName === 'SELECT') {
+            var existe = Array.prototype.some.call(el.options, function (o) { return o.value === String(valeur); });
+            if (!existe) return false;
+        }
+        el.value = String(valeur);
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        marquer(el, douteux);
+        return true;
+    }
+
+    function remplir(data, resume) {
+        var lu = data.lu, r = lu.responsable, douteux = lu.champs_douteux || [];
+        var d = function (nom) { return douteux.indexOf(nom) !== -1; };
+        var html = '';
+
+        poser('id_prenom', lu.prenom, d('prenom'));
+        poser('id_nom', lu.nom, d('nom'));
+        if (!poser('id_sexe', lu.sexe, d('sexe'))) html += '<span class="text-warning">Sexe à choisir.</span><br>';
+        poser('id_date_naissance', lu.date_naissance, d('date_naissance'));
+        poser('id_lieu_naissance', lu.lieu_naissance, d('lieu_naissance'));
+        if (!poser('id_classe', lu.classe_id, d('classe_id'))) html += '<span class="text-warning">Classe à choisir.</span><br>';
+        html += 'Élève : <strong>' + echapper(lu.prenom + ' ' + lu.nom) + '</strong><br>';
+
+        // Responsable : déjà connu (même téléphone) → on le sélectionne ; sinon nouveau responsable
+        var caseNouveau = document.querySelector('input[name="responsable_principal_nouveau"]');
+        var aUnResponsable = r.prenom || r.nom || r.telephone;
+        if (data.responsable_connu && caseNouveau) {
+            if (caseNouveau.checked) { caseNouveau.checked = false; caseNouveau.dispatchEvent(new Event('change', { bubbles: true })); }
+            if (poser('id_responsable_principal', data.responsable_connu.id, false)) {
+                html += 'Responsable déjà enregistré : <strong>' + echapper(data.responsable_connu.nom) + '</strong> ('
+                    + echapper(data.responsable_connu.telephone) + '), sélectionné.<br>';
+            } else {
+                html += '<span class="text-warning">Responsable déjà enregistré : ' + echapper(data.responsable_connu.nom)
+                    + ' (' + echapper(data.responsable_connu.telephone) + '). Sélectionnez-le dans la liste.</span><br>';
+            }
+        } else if (aUnResponsable && caseNouveau) {
+            if (!caseNouveau.checked) { caseNouveau.checked = true; caseNouveau.dispatchEvent(new Event('change', { bubbles: true })); }
+            poser('id_resp_principal-prenom', r.prenom, d('responsable.prenom'));
+            poser('id_resp_principal-nom', r.nom, d('responsable.nom'));
+            poser('id_resp_principal-relation', r.relation, d('responsable.relation'));
+            poser('id_resp_principal-telephone', r.telephone, d('responsable.telephone'));
+            poser('id_resp_principal-telephone_secondaire', r.telephone_secondaire, d('responsable.telephone_secondaire'));
+            poser('id_resp_principal-email', r.email, d('responsable.email'));
+            poser('id_resp_principal-profession', r.profession, d('responsable.profession'));
+            poser('id_resp_principal-adresse', r.adresse, d('responsable.adresse'));
+            html += 'Nouveau responsable : <strong>' + echapper((r.prenom + ' ' + r.nom).trim() || 'nom non lu') + '</strong>';
+            var manque = [];
+            if (!r.relation) manque.push('relation');
+            if (!r.telephone) manque.push('téléphone');
+            if (!r.adresse) manque.push('adresse');
+            html += manque.length ? ' <span class="text-warning">(à compléter : ' + manque.join(', ') + ')</span><br>' : '<br>';
+        } else {
+            html += '<span class="text-muted">Aucun responsable lu sur le document.</span><br>';
+        }
+
+        if (data.doublons.length) {
+            html += '<div class="alert alert-warning py-2 px-2 my-2"><strong>Attention, élève peut-être déjà inscrit :</strong><ul class="mb-0">'
+                + data.doublons.map(function (e) {
+                    return '<li>' + echapper(e.nom) + ' – ' + echapper(e.matricule) + ' (' + echapper(e.classe) + ', ' + echapper(e.statut) + ')</li>';
+                }).join('') + '</ul></div>';
+        }
+        if (lu.remarque) html += '<em>' + echapper(lu.remarque) + '</em><br>';
+        html += 'Vérifiez les champs encadrés (orange = à contrôler), puis cliquez sur <strong>Enregistrer</strong>.';
+        resume(html);
+    }
+
+    AssistantIA.ouvrir({
+        titre: 'Remplir la fiche élève depuis une photo',
+        aide: "Photographiez la fiche d’inscription, l’extrait de naissance ou un ancien bulletin (ou collez le texte). L’assistant remplit l’élève et son responsable. Rien n’est enregistré avant que vous cliquiez sur « Enregistrer ».",
+        exempleTexte: 'Ex. : Aminata Diallo, fille, née le 12/03/2014 à Kindia, 7ème année. Père : Mamadou Diallo, 622 00 00 00, Ratoma',
+        url: '{% url "eleves:assistant_eleve" %}',
+        onResultat: remplir
+    });
 }
 </script>
 {% endblock %}
