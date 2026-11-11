@@ -4,6 +4,8 @@ from . import views
 
 app_name = 'examen_accueil'
 
+from . import assistant_saisie  # noqa: E402
+
 urlpatterns = [
     path('', views.tableau_bord, name='tableau_bord'),
     path('classes/', views.classes, name='classes'),
@@ -13,6 +15,8 @@ urlpatterns = [
     path('matieres/<int:pk>/supprimer/', views.supprimer_matiere, name='supprimer_matiere'),
     path('eleves/', views.eleves, name='eleves'),
     path('saisie/', views.saisie_notes, name='saisie_notes'),
+    path('saisie/assistant/', assistant_saisie.assistant_notes_accueil, name='assistant_notes'),
+    path('saisie/assistant/excel/', assistant_saisie.assistant_notes_accueil_excel, name='assistant_notes_excel'),
     path('saisie/<int:classe_id>/modele/', views.modele_notes, name='modele_notes'),
     path('saisie/<int:classe_id>/fiche/', views.fiche_notes, name='fiche_notes'),
     path('saisie/<int:classe_id>/importer/', views.importer_notes, name='importer_notes'),

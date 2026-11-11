@@ -1,0 +1,29 @@
+{# Assistant « plusieurs lignes » prêt à l'emploi : encadré + bouton + fenêtre + table de corrections.
+   Paramètres : fonction, description, titre, aide, exemple, url_lire, url_importer, url_excel, nom_excel, extra_json #}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3 p-3 rounded no-print" style="background:#eef4ff;border:1px solid #c9dafc;">
+    <button type="button" class="btn btn-primary" onclick="{{ fonction }}()">
+        <i class="fas fa-camera me-2"></i>Remplir depuis une photo
+    </button>
+    <small class="text-muted">{{ description }}</small>
+</div>
+{% include 'assistant_ia/_modal.html' %}
+<script>
+function {{ fonction }}() {
+    var extra = {{ extra_json|default:"{}"|safe }};
+    AssistantIA.ouvrir({
+        titre: '{{ titre|escapejs }}',
+        aide: '{{ aide|escapejs }}',
+        exempleTexte: '{{ exemple|escapejs }}',
+        url: '{{ url_lire|escapejs }}',
+        large: true,
+        donnees: function () { return extra; },
+        onResultat: function (data, resume) {
+            AssistantIA.lot({
+                resume: resume, intro: data.intro, colonnes: data.colonnes, lignes: data.lignes,
+                urlImporter: '{{ url_importer|escapejs }}', urlExcel: '{{ url_excel|escapejs }}',
+                nomExcel: '{{ nom_excel|default:"assistant.xlsx"|escapejs }}', extra: extra
+            });
+        }
+    });
+}
+</script>

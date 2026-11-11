@@ -3,6 +3,8 @@ from . import views
 
 app_name = 'salaires'
 
+from . import assistant_saisie  # noqa: E402
+
 urlpatterns = [
     # Tableau de bord
     path('', views.tableau_bord, name='tableau_bord'),
@@ -40,6 +42,9 @@ urlpatterns = [
     # Avances de salaire
     path('avances/', views.liste_avances, name='liste_avances'),
     path('avances/ajouter/', views.ajouter_avance, name='ajouter_avance'),
+    path('avances/ajouter/assistant/', assistant_saisie.assistant_avances, name='assistant_avances'),
+    path('avances/ajouter/assistant/importer/', assistant_saisie.assistant_avances_importer, name='assistant_avances_importer'),
+    path('avances/ajouter/assistant/excel/', assistant_saisie.assistant_avances_excel, name='assistant_avances_excel'),
     path('avances/<int:avance_id>/modifier/', views.modifier_avance, name='modifier_avance'),
     path('avances/<int:avance_id>/supprimer/', views.supprimer_avance, name='supprimer_avance'),
     

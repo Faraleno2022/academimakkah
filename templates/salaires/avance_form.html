@@ -22,6 +22,10 @@
 
             <div class="card border-0 shadow-sm">
                 <div class="card-body p-4">
+                    {% if not form.instance.pk %}
+                    {% url 'salaires:assistant_avances' as ia_lire %}{% url 'salaires:assistant_avances_importer' as ia_importer %}{% url 'salaires:assistant_avances_excel' as ia_excel %}
+                    {% include 'assistant_ia/_lot.html' with fonction='ouvrirAssistantAvances' description="Cahier ou liste d'avances : l'assistant prépare les lignes, vous vérifiez puis validez tout en un clic." titre='Avances de salaire depuis une photo' aide="Photographiez le cahier ou la liste des avances (ou collez le texte). Vous vérifiez la table, puis « Valider et enregistrer » crée chaque avance et recalcule le salaire net." exemple='Ex. : Avances du 10/11/2026 : M. Diallo Ibrahima 500 000 espèces ; Mme Camara Aïssatou 300 000 Orange Money' url_lire=ia_lire url_importer=ia_importer url_excel=ia_excel nom_excel='avances_assistant.xlsx' %}
+                    {% endif %}
                     <form method="post" novalidate>
                         {% csrf_token %}
                         {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}

@@ -8,6 +8,8 @@ from .abonnement_public import abonnement_public_pdf
 
 app_name = 'bus'
 
+from . import assistant_saisie  # noqa: E402
+
 urlpatterns = [
     # Abonnements Bus
     path('', views.liste_abonnements, name='index'),
@@ -21,6 +23,9 @@ urlpatterns = [
     path('grilles/<int:grille_id>/basculer/', views.basculer_grille_bus, name='grille_basculer'),
     path('api/tarif/', views.tarif_bus_json, name='tarif_bus_json'),
     path('nouveau/', views.abonnement_create, name='nouveau'),
+    path('nouveau/assistant/', assistant_saisie.assistant_bus, name='assistant_bus'),
+    path('nouveau/assistant/importer/', assistant_saisie.assistant_bus_importer, name='assistant_bus_importer'),
+    path('nouveau/assistant/excel/', assistant_saisie.assistant_bus_excel, name='assistant_bus_excel'),
     path('<int:abo_id>/modifier/', views.abonnement_edit, name='modifier'),
     path('<int:abo_id>/supprimer/', views.supprimer_abonnement_bus, name='supprimer_abonnement_bus'),
     path('relances/', views.relances, name='relances'),
@@ -46,6 +51,9 @@ urlpatterns = [
     path('cantine/', views_cantine.tableau_bord_cantine, name='tableau_bord_cantine'),
     path('cantine/liste/', views_cantine.liste_abonnements_cantine, name='liste_abonnements_cantine'),
     path('cantine/nouveau/', views_cantine.creer_abonnement_cantine, name='creer_abonnement_cantine'),
+    path('cantine/nouveau/assistant/', assistant_saisie.assistant_cantine, name='assistant_cantine'),
+    path('cantine/nouveau/assistant/importer/', assistant_saisie.assistant_cantine_importer, name='assistant_cantine_importer'),
+    path('cantine/nouveau/assistant/excel/', assistant_saisie.assistant_cantine_excel, name='assistant_cantine_excel'),
     path('cantine/<int:pk>/modifier/', views_cantine.modifier_abonnement_cantine, name='modifier_abonnement_cantine'),
     path('cantine/<int:pk>/supprimer/', views_cantine.supprimer_abonnement_cantine, name='supprimer_abonnement_cantine'),
     path('cantine/<int:abo_id>/recu/pdf/', views_cantine.generer_recu_cantine_pdf, name='recu_cantine_pdf'),

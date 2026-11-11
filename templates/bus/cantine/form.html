@@ -23,6 +23,10 @@
             <!-- Formulaire -->
             <div class="card">
                 <div class="card-body">
+                    {% if not abonnement %}
+                    {% url 'bus:assistant_cantine' as ia_lire %}{% url 'bus:assistant_cantine_importer' as ia_importer %}{% url 'bus:assistant_cantine_excel' as ia_excel %}
+                    {% include 'assistant_ia/_lot.html' with fonction='ouvrirAssistantCantine' description="Reçu ou liste d'abonnements de cantine : l'assistant prépare les lignes, vous vérifiez puis validez tout en un clic." titre='Abonnements de cantine depuis une photo' aide="Photographiez le reçu ou la liste des abonnements de cantine (ou collez le texte). Vous vérifiez la table, puis « Valider et enregistrer » crée chaque abonnement." exemple='Ex. : Camara Fatou, 8e B, cantine mensuelle, déjeuner, 150 000 GNF, payé le 05/11/2026' url_lire=ia_lire url_importer=ia_importer url_excel=ia_excel nom_excel='cantine_assistant.xlsx' %}
+                    {% endif %}
                     <form method="post">
                         <div class="mb-3">
                             <label class="form-label" for="{{ form.annee_scolaire.id_for_label }}">Année scolaire de l'abonnement</label>

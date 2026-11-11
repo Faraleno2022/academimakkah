@@ -29,6 +29,10 @@
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-lg-9">
+    {% if not form.instance.pk %}
+    {% url 'bus:assistant_bus' as ia_lire %}{% url 'bus:assistant_bus_importer' as ia_importer %}{% url 'bus:assistant_bus_excel' as ia_excel %}
+    {% include 'assistant_ia/_lot.html' with fonction='ouvrirAssistantBus' description="Reçu, bordereau ou liste de paiements de bus : l'assistant prépare les lignes, vous vérifiez puis validez tout en un clic." titre='Paiements de bus depuis une photo' aide="Photographiez le reçu, le bordereau ou la liste des paiements de bus (ou collez le texte). Vous vérifiez la table, puis « Valider et enregistrer » crée un reçu par ligne." exemple='Ex. : Bah Mamadou, 7e A, bus zone Kipé, 1ère tranche, 300 000 GNF, Orange Money réf. OM123' url_lire=ia_lire url_importer=ia_importer url_excel=ia_excel nom_excel='bus_assistant.xlsx' %}
+    {% endif %}
     <form method="post" id="busForm">
       {% csrf_token %}
       {{ form.non_field_errors }}

@@ -74,6 +74,7 @@
         </div>
         <div class="d-flex flex-wrap gap-2">
             <button type="submit" class="btn btn-primary"><i class="fas fa-save me-1"></i>Enregistrer les notes</button>
+            <button type="button" class="btn btn-outline-primary" onclick="ouvrirAssistantAccueil()"><i class="fas fa-camera me-1"></i>Remplir depuis une photo</button>
             <a href="{% url 'examen_accueil:consultation' %}?classe={{ classe.pk }}" class="btn btn-outline-success"><i class="fas fa-eye me-1"></i>Voir les résultats</a>
         </div>
     </form>
@@ -82,6 +83,71 @@
 {% endblock %}
 
 {% block extra_js %}
+{% if classe and matieres and lignes %}
+{% include 'assistant_ia/_modal.html' %}
+<script>
+function ouvrirAssistantAccueil() {
+    var options = [{% for m in matieres %}'<option value="{{ m.pk|stringformat:"d" }}">{{ m.nom|escapejs }}</option>',{% endfor %}].join('');
+    var champ = function (n) { return document.querySelector('#form-notes input[name="note_' + n.eleve_id + '_' + n.matiere_id + '"]'); };
+    AssistantIA.ouvrir({
+        titre: 'Notes du test d\u2019accueil depuis une photo',
+        aide: 'Photographiez la fiche de notes du test (ou collez le texte). L\u2019assistant remplit la grille ; les cases en orange sont à vérifier. Rien n\u2019est enregistré avant que vous validiez.',
+        exempleTexte: 'Ex. : Français : Diallo Aminata 14 ; Bah Mamadou 12,5 — Maths : Diallo Aminata 9',
+        url: '{% url "examen_accueil:assistant_notes" %}',
+        extraHtml: '<label for="assistantMatiere" class="form-label fw-semibold">Matière (si la fiche ne concerne qu\u2019une seule matière)</label>'
+            + '<select id="assistantMatiere" class="form-select"><option value="">Plusieurs matières / voir la fiche</option>' + options + '</select>',
+        donnees: function () {
+            return {
+                classe: '{{ classe.pk|stringformat:"d" }}', tous: '{% if tous %}1{% endif %}',
+                matiere_id: (document.getElementById('assistantMatiere') || {}).value || ''
+            };
+        },
+        onResultat: function (data, resume) {
+            var remplies = 0, douteuses = 0, absents = 0, lues = [];
+            data.notes.forEach(function (n) {
+                var input = champ(n);
+                if (!input) return;
+                if (n.absent || n.note === null) { if (n.absent) absents++; return; }
+                input.value = String(n.note).replace('.', ',');
+                input.style.boxShadow = n.douteux ? '0 0 0 3px #f59e0b inset' : '0 0 0 2px #93c5fd inset';
+                input.style.background = n.douteux ? '#fffbeb' : '';
+                input.title = n.remarque || '';
+                input.setAttribute('data-ia', '1');
+                if (n.douteux) douteuses++;
+                remplies++;
+            });
+            var html = '<strong>' + remplies + '</strong> case(s) remplie(s)'
+                + (douteuses ? '. <strong>' + douteuses + '</strong> à vérifier (en orange, survolez pour voir la raison).' : '.')
+                + (absents ? ' ' + absents + ' absent(s) laissé(s) vide(s).' : '');
+            if (data.non_reconnus.length) {
+                html += '<br><span class="text-danger">Non reconnus, à saisir à la main :</span><ul class="mb-0">'
+                    + data.non_reconnus.map(function (t) { return '<li>' + AssistantIA.echapper(t) + '</li>'; }).join('') + '</ul>';
+            }
+            html += '<br>Vérifiez la grille (vous pouvez fermer cette fenêtre pour corriger), puis validez.';
+            resume(html);
+            AssistantIA.actions(document.getElementById('assistantIAResume'), [
+                {
+                    html: '<i class="fas fa-check me-2"></i>Valider et enregistrer', classe: 'btn-success', enCours: 'Enregistrement…',
+                    action: function () { document.getElementById('form-notes').submit(); return new Promise(function () {}); }
+                },
+                {
+                    html: '<i class="fas fa-file-excel me-2"></i>Télécharger l\u2019Excel', classe: 'btn-outline-success', enCours: 'Préparation…',
+                    action: function () {
+                        var notes = [];
+                        Array.prototype.forEach.call(document.querySelectorAll('#form-notes input[data-ia]'), function (i) {
+                            var m = /^note_(\d+)_(\d+)$/.exec(i.name);
+                            if (m && i.value !== '') notes.push({ eleve_id: m[1], matiere_id: m[2], note: i.value });
+                        });
+                        return AssistantIA.envoyer('{% url "examen_accueil:assistant_notes_excel" %}',
+                            { classe: '{{ classe.pk|stringformat:"d" }}', notes: notes }, 'test_accueil_assistant.xlsx');
+                    }
+                }
+            ]);
+        }
+    });
+}
+</script>
+{% endif %}
 <script>
 /* ES5 (anciens iPad) : Entrée passe à la case suivante au lieu d'envoyer le formulaire. */
 (function () {

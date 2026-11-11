@@ -205,6 +205,51 @@ window.AssistantIA = (function () {
     return zone;
   }
 
+  /*
+   * Table de corrections complète, préparée par le serveur (colonnes + lignes) :
+   * « Valider et enregistrer » envoie les lignes cochées, « Télécharger l'Excel » en option.
+   * cfg : { resume, intro, colonnes, lignes, urlImporter, urlExcel, nomExcel, extra, libelleValider }
+   * Le serveur répond { crees: [{index, texte}], echecs: [{index, nom, erreur}] }.
+   */
+  function lot(cfg) {
+    cfg.resume((cfg.intro || '') + '<div id="assistantLotTable" class="mt-2 bg-white text-dark p-2 rounded"></div><div id="assistantLotBilan"></div>');
+    const zone = el('assistantLotTable');
+    const table = tableau(zone, cfg.colonnes, cfg.lignes);
+    const choisies = function () {
+      const lignes = table.lire();
+      if (!lignes.length) throw new Error('Cochez au moins une ligne.');
+      return Object.assign({ lignes: lignes }, cfg.extra || {});
+    };
+    const boutons = [{
+      html: '<i class="fas fa-check me-2"></i>' + (cfg.libelleValider || 'Valider et enregistrer'),
+      classe: 'btn-success', enCours: 'Enregistrement…',
+      action: async function () {
+        const rep = await envoyer(cfg.urlImporter, choisies());
+        let html = '';
+        if (rep.crees.length) {
+          html += '<div class="alert alert-success py-2 mt-2 mb-1"><strong>' + rep.crees.length + ' ligne(s) enregistrée(s) :</strong><ul class="mb-0">'
+            + rep.crees.map(function (c) { return '<li>' + echapper(c.texte) + '</li>'; }).join('') + '</ul></div>';
+        }
+        if (rep.echecs.length) {
+          html += '<div class="alert alert-danger py-2 mt-2 mb-1"><strong>' + rep.echecs.length + ' ligne(s) non enregistrée(s) — corrigez-les puis validez à nouveau :</strong><ul class="mb-0">'
+            + rep.echecs.map(function (c) { return '<li>' + echapper(c.nom) + ' : ' + echapper(c.erreur) + '</li>'; }).join('') + '</ul></div>';
+        }
+        el('assistantLotBilan').innerHTML = html;
+        // Les lignes enregistrées sortent de la table : un second clic ne les recrée pas
+        rep.crees.forEach(function (c) {
+          zone.querySelectorAll('tr[data-ligne="' + c.index + '"], tr[data-note="' + c.index + '"]').forEach(function (tr) { tr.remove(); });
+        });
+      },
+    }];
+    if (cfg.urlExcel) {
+      boutons.push({
+        html: '<i class="fas fa-file-excel me-2"></i>Télécharger l’Excel', classe: 'btn-outline-success', enCours: 'Préparation…',
+        action: async function () { await envoyer(cfg.urlExcel, choisies(), cfg.nomExcel || 'assistant.xlsx'); },
+      });
+    }
+    actions(zone, boutons);
+  }
+
   function ouvrir(opts) {
     options = opts;
     el('assistantIAModal').querySelector('.modal-dialog').classList.toggle('modal-xl', !!opts.large);
@@ -225,6 +270,6 @@ window.AssistantIA = (function () {
   const brancher = () => el('assistantIAAnalyser').addEventListener('click', analyser);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', brancher);
   else brancher();
-  return { ouvrir, fermer, tableau, envoyer, actions, echapper, erreur };
+  return { ouvrir, fermer, tableau, envoyer, actions, echapper, erreur, lot };
 })();
 </script>
