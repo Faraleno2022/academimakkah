@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from .assistant_saisie import assistant_notes
 from . import views_acces_enseignants as enseignants
 from .bulletin_intelligent import (
     bulletin_intelligent_view,
@@ -172,6 +173,7 @@ urlpatterns = [
     # Saisie intelligente - Toutes les matières en colonnes
     path('saisie-intelligente/', saisie_intelligente, name='saisie_intelligente'),
     path('saisie-intelligente/save/', saisie_intelligente_save, name='saisie_intelligente_save'),
+    path('saisie-intelligente/assistant/', assistant_notes, name='assistant_notes'),
     
     # Bulletin Maternelle Modèle 2 (format tableau avec activités)
     path('maternelle/bulletin-modele2/<int:eleve_id>/<int:classe_id>/<str:trimestre>/pdf/', 

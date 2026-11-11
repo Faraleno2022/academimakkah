@@ -1,0 +1,115 @@
+{# Fenêtre « Assistant IA » partagée : photo ou texte -> appel serveur -> callback de la page. #}
+<div class="modal fade" id="assistantIAModal" tabindex="-1" aria-labelledby="assistantIATitre" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="assistantIATitre"><i class="fas fa-magic me-2"></i>Assistant de saisie</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-3" id="assistantIAAide"></p>
+
+        <label for="assistantIAPhotos" class="form-label fw-semibold">Photo du document</label>
+        <input type="file" class="form-control mb-1" id="assistantIAPhotos" accept="image/*" capture="environment" multiple>
+        <div class="form-text mb-3">Sur téléphone, l'appareil photo s'ouvre directement. Prenez la photo bien à plat, avec de la lumière.</div>
+
+        <label for="assistantIATexte" class="form-label fw-semibold">Ou écrivez / collez le texte</label>
+        <textarea class="form-control" id="assistantIATexte" rows="3" placeholder=""></textarea>
+
+        <div id="assistantIAExtra" class="mt-3"></div>
+
+        <div id="assistantIAErreur" class="alert alert-danger mt-3 mb-0 d-none"></div>
+        <div id="assistantIAResume" class="alert alert-success mt-3 mb-0 d-none"></div>
+      </div>
+      <div class="modal-footer">
+        <small class="text-muted me-auto"><i class="fas fa-shield-alt me-1"></i>Rien n'est enregistré sans votre validation.</small>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Fermer</button>
+        <button type="button" class="btn btn-primary" id="assistantIAAnalyser">
+          <span class="spinner-border spinner-border-sm me-2 d-none" id="assistantIASpinner"></span>
+          <span id="assistantIABoutonTexte">Analyser</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+window.AssistantIA = (function () {
+  let options = null;
+  const el = (id) => document.getElementById(id);
+
+  function csrf() {
+    const champ = document.querySelector('input[name="csrfmiddlewaretoken"]');
+    if (champ) return champ.value;
+    const m = document.cookie.match(/csrftoken=([^;]+)/);
+    return m ? m[1] : '';
+  }
+
+  function etat(enCours) {
+    el('assistantIAAnalyser').disabled = enCours;
+    el('assistantIASpinner').classList.toggle('d-none', !enCours);
+    el('assistantIABoutonTexte').textContent = enCours ? 'Lecture en cours…' : 'Analyser';
+  }
+
+  function erreur(message) {
+    const zone = el('assistantIAErreur');
+    zone.textContent = message || '';
+    zone.classList.toggle('d-none', !message);
+  }
+
+  function resume(html) {
+    const zone = el('assistantIAResume');
+    zone.innerHTML = html || '';
+    zone.classList.toggle('d-none', !html);
+  }
+
+  async function analyser() {
+    erreur(''); resume('');
+    const fd = new FormData();
+    for (const f of el('assistantIAPhotos').files) fd.append('photos', f);
+    fd.append('texte', el('assistantIATexte').value || '');
+    const extra = options.donnees ? options.donnees() : {};
+    Object.entries(extra).forEach(([k, v]) => { if (v !== undefined && v !== null) fd.append(k, v); });
+
+    if (!el('assistantIAPhotos').files.length && !el('assistantIATexte').value.trim()) {
+      erreur('Ajoutez une photo ou un texte.'); return;
+    }
+    etat(true);
+    try {
+      const rep = await fetch(options.url, {
+        method: 'POST', body: fd,
+        headers: { 'X-CSRFToken': csrf(), 'X-Requested-With': 'XMLHttpRequest' },
+      });
+      let data;
+      try { data = await rep.json(); } catch (_) { throw new Error('Réponse inattendue du serveur (session expirée ?).'); }
+      if (!data.ok) throw new Error(data.erreur || "L'assistant n'a pas pu lire le document.");
+      await options.onResultat(data, resume);
+    } catch (e) {
+      erreur(e.message || String(e));
+    } finally {
+      etat(false);
+    }
+  }
+
+  function ouvrir(opts) {
+    options = opts;
+    el('assistantIATitre').innerHTML = '<i class="fas fa-magic me-2"></i>' + (opts.titre || 'Assistant de saisie');
+    el('assistantIAAide').textContent = opts.aide || '';
+    el('assistantIATexte').placeholder = opts.exempleTexte || '';
+    el('assistantIAExtra').innerHTML = opts.extraHtml || '';
+    el('assistantIAPhotos').value = '';
+    el('assistantIATexte').value = '';
+    erreur(''); resume('');
+    bootstrap.Modal.getOrCreateInstance(el('assistantIAModal')).show();
+  }
+
+  function fermer() {
+    bootstrap.Modal.getOrCreateInstance(el('assistantIAModal')).hide();
+  }
+
+  const brancher = () => el('assistantIAAnalyser').addEventListener('click', analyser);
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', brancher);
+  else brancher();
+  return { ouvrir, fermer };
+})();
+</script>

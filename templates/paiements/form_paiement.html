@@ -140,6 +140,14 @@
         <div class="col-lg-8">
             <form method="post" id="paiementForm">
                 {% csrf_token %}
+                {% if not paiement %}
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-3 p-3 rounded" style="background:#eef4ff;border:1px solid #c9dafc;">
+                    <button type="button" class="btn btn-primary" onclick="ouvrirAssistantPaiement()" id="assistantPaiementBtn">
+                        <i class="fas fa-camera me-2"></i>Remplir depuis une photo
+                    </button>
+                    <small class="text-muted">Reçu, bordereau, capture Orange Money / MTN : l'assistant remplit le formulaire, vous vérifiez puis enregistrez.</small>
+                </div>
+                {% endif %}
                 
                 <!-- Informations de l'élève -->
                 {% if eleve %}
@@ -1750,5 +1758,114 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 </script>
+
+{% if not paiement %}
+{% include 'assistant_ia/_modal.html' %}
+<script>
+function ouvrirAssistantPaiement() {
+    const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+    const champ = (id) => document.getElementById(id);
+    const echapper = (t) => String(t || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+    function marquer(id, douteux) {
+        const el = champ(id);
+        if (!el) return;
+        el.classList.remove('border-warning', 'border-3', 'border-primary', 'border-1');
+        el.classList.add(douteux ? 'border-warning' : 'border-primary', douteux ? 'border-3' : 'border-1');
+    }
+
+    function choisirOption(id, valeur) {
+        const el = champ(id);
+        if (!el || valeur === null || valeur === undefined) return false;
+        if (![...el.options].some((o) => o.value === String(valeur))) return false;
+        el.value = String(valeur);
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+    }
+
+    // Charge l'élève avec la recherche par matricule déjà présente sur la page
+    async function chargerEleve(matricule) {
+        const input = champ('matriculeInput'), bouton = champ('rechercherBtn');
+        if (!input || !bouton) return false;           // page ouverte pour un élève précis
+        input.value = matricule;
+        bouton.click();
+        for (let i = 0; i < 40; i++) {                  // jusqu'à 10 secondes
+            await pause(250);
+            if (!bouton.disabled && champ('id_eleve') && champ('id_eleve').value) return true;
+            if (!bouton.disabled && i > 4) break;
+        }
+        return !!(champ('id_eleve') && champ('id_eleve').value);
+    }
+
+    async function remplir(data, resume) {
+        const lu = data.lu, douteux = new Set(lu.champs_douteux || []);
+        let html = '';
+
+        if (data.eleve) {
+            const ok = await chargerEleve(data.eleve.matricule);
+            html += ok
+                ? `Élève : <strong>${echapper(data.eleve.nom)}</strong> (${echapper(data.eleve.matricule)}, ${echapper(data.eleve.classe)})${douteux.has('eleve_nom') ? ' <span class="text-warning">à vérifier</span>' : ''}<br>`
+                : `<span class="text-danger">Impossible de charger l'élève ${echapper(data.eleve.nom)} : choisissez-le à la main.</span><br>`;
+        } else if (champ('matriculeInput')) {
+            html += `<span class="text-danger">Élève « ${echapper(lu.eleve_nom || 'non lu')} » non retrouvé avec certitude.</span>`;
+            if (data.suggestions.length) {
+                html += ' Choisissez :<div class="d-flex flex-wrap gap-1 mt-1">' + data.suggestions.map((e) =>
+                    `<button type="button" class="btn btn-sm btn-outline-primary" data-matricule="${echapper(e.matricule)}">${echapper(e.nom)} – ${echapper(e.classe)}</button>`
+                ).join('') + '</div>';
+            }
+            html += '<br>';
+        }
+
+        // Le type peut déclencher une suggestion de montant : on attend avant de poser le montant lu
+        if (choisirOption('id_type_paiement', lu.type_paiement_id)) {
+            marquer('id_type_paiement', douteux.has('type_paiement_id'));
+            await pause(1200);
+        } else {
+            html += '<span class="text-warning">Type de paiement à choisir.</span><br>';
+        }
+        if (choisirOption('id_mode_paiement', lu.mode_paiement_id)) {
+            marquer('id_mode_paiement', douteux.has('mode_paiement_id'));
+        }
+        if (lu.montant !== null && champ('id_montant')) {
+            champ('id_montant').value = Math.round(lu.montant);
+            champ('id_montant').dispatchEvent(new Event('input', { bubbles: true }));
+            marquer('id_montant', douteux.has('montant'));
+            html += `Montant : <strong>${Math.round(lu.montant).toLocaleString('fr-FR')} GNF</strong>${douteux.has('montant') ? ' <span class="text-warning">à vérifier</span>' : ''}<br>`;
+        } else {
+            html += '<span class="text-warning">Montant illisible : saisissez-le.</span><br>';
+        }
+        if (/^\d{4}-\d{2}-\d{2}$/.test(lu.date_paiement || '') && champ('id_date_paiement')) {
+            champ('id_date_paiement').value = lu.date_paiement;
+            marquer('id_date_paiement', douteux.has('date_paiement'));
+        }
+        if (lu.reference && champ('id_reference_externe')) {
+            champ('id_reference_externe').value = lu.reference;
+            marquer('id_reference_externe', douteux.has('reference'));
+        }
+        if (champ('id_observations')) {
+            const note = "Saisi avec l'assistant photo" + (lu.payeur ? ` — payé par ${lu.payeur}` : '') + '.';
+            if (!champ('id_observations').value.includes('assistant photo')) {
+                champ('id_observations').value = (champ('id_observations').value + '\n' + note).trim();
+            }
+        }
+        if (lu.plusieurs_paiements) html += '<span class="text-warning">Le document contient plusieurs paiements : seul le premier a été repris.</span><br>';
+        if (lu.remarque) html += `<em>${echapper(lu.remarque)}</em><br>`;
+        html += 'Vérifiez les champs encadrés (orange = à contrôler), puis cliquez sur <strong>Enregistrer</strong>.';
+        resume(html);
+
+        document.querySelectorAll('#assistantIAResume [data-matricule]').forEach((b) =>
+            b.addEventListener('click', async () => { await chargerEleve(b.dataset.matricule); AssistantIA.fermer(); }));
+    }
+
+    AssistantIA.ouvrir({
+        titre: 'Remplir le paiement depuis une photo',
+        aide: "Photographiez le reçu, le bordereau de versement ou la capture du paiement mobile. L'assistant retrouve l'élève et remplit le formulaire. Le paiement reste à valider comme d'habitude.",
+        exempleTexte: 'Ex. : Bah Mamadou, 7e A, 500 000 GNF par Orange Money, réf. PP2611.1234, 2e tranche',
+        url: '{% url "paiements:assistant_paiement" %}',
+        onResultat: remplir,
+    });
+}
+</script>
+{% endif %}
 
 {% endblock %}

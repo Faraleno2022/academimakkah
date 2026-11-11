@@ -231,6 +231,11 @@
         .main-card { box-shadow: none; }
     }
 </style>
+    /* Assistant IA : cases remplies depuis une photo */
+    .note-input.ia-rempli { box-shadow: 0 0 0 2px #93c5fd inset; }
+    .note-input.ia-douteux { box-shadow: 0 0 0 3px #f59e0b inset; background: #fffbeb; }
+    .assistant-btn { background: linear-gradient(135deg, #0d6efd, #6f42c1); color: #fff; border: 0; }
+    .assistant-btn:hover { color: #fff; filter: brightness(1.08); }
 {% endblock %}
 
 {% block content %}
@@ -388,6 +393,9 @@
             <button onclick="sauvegarderToutesNotes()" class="save-btn" id="saveBtn">
                 <i class="fas fa-save me-2"></i>
                 Enregistrer toutes les notes
+            </button>
+            <button type="button" onclick="ouvrirAssistantNotes()" class="btn assistant-btn ms-3" id="assistantNotesBtn">
+                <i class="fas fa-camera me-2"></i>Remplir depuis une photo
             </button>
             <button onclick="window.print()" class="btn btn-outline-secondary ms-3">
                 <i class="fas fa-print me-2"></i>Imprimer
@@ -691,4 +699,63 @@ document.addEventListener('DOMContentLoaded', function() {
     {% endif %}
 });
 </script>
+
+{% if classe_selectionnee and eleves and matieres %}
+{% include 'assistant_ia/_modal.html' %}
+<script>
+function ouvrirAssistantNotes() {
+    const options = [{% for m in matieres %}'<option value="{{ m.id|stringformat:"d" }}">{{ m.nom|escapejs }}</option>',{% endfor %}].join('');
+    AssistantIA.ouvrir({
+        titre: 'Remplir les notes depuis une photo',
+        aide: "Photographiez la fiche de notes remplie (ou collez le texte). L'assistant remplit la grille ; les cases en orange sont à vérifier. Rien n'est enregistré avant que vous cliquiez sur « Enregistrer toutes les notes ».",
+        exempleTexte: 'Ex. : Diallo Aminata 14 ; Bah Mamadou 12,5 ; Camara Fatou absente',
+        url: '{% url "notes:assistant_notes" %}',
+        extraHtml: '<label for="assistantMatiere" class="form-label fw-semibold">Matière (si la fiche ne concerne qu'une seule matière)</label>'
+            + '<select id="assistantMatiere" class="form-select"><option value="">Plusieurs matières / voir la fiche</option>' + options + '</select>',
+        donnees: () => ({
+            classe_id: '{{ classe_selectionnee.id|stringformat:"d" }}',
+            matiere_id: (document.getElementById('assistantMatiere') || {}).value || '',
+        }),
+        onResultat: (data, resume) => {
+            let remplies = 0, douteuses = 0, absents = 0;
+            data.notes.forEach((n) => {
+                const input = document.querySelector(`input.note-input[data-eleve-id="${n.eleve_id}"][data-matiere-id="${n.matiere_id}"]`);
+                if (!input) return;
+                input.classList.remove('ia-rempli', 'ia-douteux');
+                if (n.absent) {
+                    input.value = '';
+                    input.classList.add('absent');
+                    input.dataset.absent = 'true';
+                    absents++;
+                } else if (n.note !== null) {
+                    input.classList.remove('absent');
+                    delete input.dataset.absent;
+                    input.value = n.note;
+                    validateNote(input);
+                } else {
+                    return;
+                }
+                input.classList.add(n.douteux ? 'ia-douteux' : 'ia-rempli');
+                input.title = n.remarque || '';
+                if (n.douteux) douteuses++;
+                remplies++;
+            });
+            updateStats();
+            const premiere = document.querySelector('.note-input.ia-douteux');
+            if (premiere) premiere.scrollIntoView({ block: 'center' });
+
+            let html = `<strong>${remplies}</strong> case(s) remplie(s)`
+                + (absents ? `, dont ${absents} absent(s)` : '')
+                + (douteuses ? `. <strong>${douteuses}</strong> à vérifier (en orange, survolez pour voir la raison).` : '.');
+            if (data.non_reconnus.length) {
+                html += '<br><span class="text-danger">Non reconnus, à saisir à la main :</span><ul class="mb-0">'
+                    + data.non_reconnus.map((t) => `<li>${t.replace(/</g, '&lt;')}</li>`).join('') + '</ul>';
+            }
+            html += '<br>Vérifiez la grille, puis cliquez sur <strong>Enregistrer toutes les notes</strong>.';
+            resume(html);
+        },
+    });
+}
+</script>
+{% endif %}
 {% endblock %}
