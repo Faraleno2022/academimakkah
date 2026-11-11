@@ -948,12 +948,96 @@ function ouvrirAssistantEleve() {
         resume(html);
     }
 
+    // Plusieurs élèves lus : table de corrections, puis import direct ou fichier Excel
+    function plusieurs(data, resume) {
+        var colonnes = [
+            { cle: 'prenom', titre: 'Prénom', largeur: 120 },
+            { cle: 'nom', titre: 'Nom', largeur: 110 },
+            { cle: 'sexe', titre: 'Sexe', type: 'select', options: [['M', 'M'], ['F', 'F']], largeur: 70 },
+            { cle: 'date_naissance', titre: 'Né(e) le', type: 'date', largeur: 140 },
+            { cle: 'lieu_naissance', titre: 'Lieu', largeur: 100 },
+            { cle: 'classe_id', titre: 'Classe', type: 'select', options: data.classes, largeur: 140 },
+            { cle: 'resp_prenom', titre: 'Resp. prénom', largeur: 110 },
+            { cle: 'resp_nom', titre: 'Resp. nom', largeur: 100 },
+            { cle: 'resp_relation', titre: 'Relation', type: 'select', options: data.relations, largeur: 110 },
+            { cle: 'resp_telephone', titre: 'Téléphone', largeur: 110 },
+            { cle: 'resp_adresse', titre: 'Adresse', largeur: 130 }
+        ];
+        var lignes = data.eleves.map(function (e) {
+            var lu = e.lu, r = lu.responsable;
+            var douteux = (lu.champs_douteux || []).map(function (c) { return c.replace('responsable.', 'resp_'); });
+            if (!lu.sexe) douteux.push('sexe');
+            if (!lu.classe_id) douteux.push('classe_id');
+            var alerte = e.doublons.length
+                ? 'Peut-être déjà inscrit : ' + e.doublons.map(function (d) { return d.nom + ' – ' + d.matricule + ' (' + d.classe + ')'; }).join(' ; ')
+                : '';
+            var remarque = lu.remarque || '';
+            if (e.responsable_connu) remarque = ('Responsable déjà enregistré : ' + e.responsable_connu.nom + '. ' + remarque).trim();
+            return {
+                valeurs: {
+                    prenom: lu.prenom, nom: lu.nom, sexe: lu.sexe, date_naissance: lu.date_naissance,
+                    lieu_naissance: lu.lieu_naissance, classe_id: lu.classe_id || '',
+                    resp_prenom: r.prenom, resp_nom: r.nom, resp_relation: r.relation,
+                    resp_telephone: r.telephone, resp_adresse: r.adresse
+                },
+                douteux: douteux, remarque: remarque, alerte: alerte,
+                coche: !e.doublons.length
+            };
+        });
+
+        resume('<strong>' + lignes.length + ' élèves lus.</strong> Corrigez les cases si besoin (orange = à contrôler), '
+            + 'décochez les lignes à ne pas importer, puis validez. Les lignes « déjà inscrit » sont décochées.'
+            + '<div id="assistantElevesTable" class="mt-2 bg-white text-dark p-2 rounded"></div><div id="assistantElevesBilan"></div>');
+        var zone = document.getElementById('assistantElevesTable');
+        var table = AssistantIA.tableau(zone, colonnes, lignes);
+
+        AssistantIA.actions(zone, [
+            {
+                html: '<i class="fas fa-check me-2"></i>Valider et importer', classe: 'btn-success', enCours: 'Enregistrement…',
+                action: async function () {
+                    var choisies = table.lire();
+                    if (!choisies.length) throw new Error('Cochez au moins une ligne.');
+                    var rep = await AssistantIA.envoyer('{% url "eleves:assistant_eleves_importer" %}', { lignes: choisies });
+                    var html = '';
+                    if (rep.crees.length) {
+                        html += '<div class="alert alert-success py-2 mt-2 mb-1"><strong>' + rep.crees.length + ' élève(s) enregistré(s) :</strong><ul class="mb-0">'
+                            + rep.crees.map(function (c) { return '<li>' + AssistantIA.echapper(c.nom) + ' – ' + AssistantIA.echapper(c.matricule) + ' (' + AssistantIA.echapper(c.classe) + ')</li>'; }).join('') + '</ul></div>';
+                    }
+                    if (rep.echecs.length) {
+                        html += '<div class="alert alert-danger py-2 mt-2 mb-1"><strong>' + rep.echecs.length + ' ligne(s) non enregistrée(s) — corrigez-les puis validez à nouveau :</strong><ul class="mb-0">'
+                            + rep.echecs.map(function (c) { return '<li>' + AssistantIA.echapper(c.nom) + ' : ' + AssistantIA.echapper(c.erreur) + '</li>'; }).join('') + '</ul></div>';
+                    }
+                    document.getElementById('assistantElevesBilan').innerHTML = html;
+                    // Les lignes enregistrées sortent de la table : un second clic ne les recrée pas
+                    rep.crees.forEach(function (c) {
+                        var tr = zone.querySelector('tr[data-ligne="' + c.index + '"]');
+                        var note = zone.querySelector('tr[data-note="' + c.index + '"]');
+                        if (tr) tr.remove();
+                        if (note) note.remove();
+                    });
+                }
+            },
+            {
+                html: '<i class="fas fa-file-excel me-2"></i>Télécharger l’Excel', classe: 'btn-outline-success', enCours: 'Préparation…',
+                action: async function () {
+                    var choisies = table.lire();
+                    if (!choisies.length) throw new Error('Cochez au moins une ligne.');
+                    await AssistantIA.envoyer('{% url "eleves:assistant_eleves_excel" %}', { lignes: choisies }, 'eleves_assistant.xlsx');
+                }
+            }
+        ]);
+    }
+
     AssistantIA.ouvrir({
-        titre: 'Remplir la fiche élève depuis une photo',
-        aide: "Photographiez la fiche d’inscription, l’extrait de naissance ou un ancien bulletin (ou collez le texte). L’assistant remplit l’élève et son responsable. Rien n’est enregistré avant que vous cliquiez sur « Enregistrer ».",
+        titre: 'Remplir depuis une photo (un ou plusieurs élèves)',
+        aide: "Photographiez une fiche d’inscription, un extrait de naissance ou une liste d’élèves (ou collez le texte). Un seul élève : le formulaire est rempli. Plusieurs élèves : vous vérifiez la liste, puis vous importez tout en un clic.",
         exempleTexte: 'Ex. : Aminata Diallo, fille, née le 12/03/2014 à Kindia, 7ème année. Père : Mamadou Diallo, 622 00 00 00, Ratoma',
         url: '{% url "eleves:assistant_eleve" %}',
-        onResultat: remplir
+        large: true,
+        onResultat: function (data, resume) {
+            if (data.eleves.length === 1) return remplir(data.eleves[0], resume);
+            return plusieurs(data, resume);
+        }
     });
 }
 </script>

@@ -1,7 +1,7 @@
 from django.urls import path
 from . import views
 from . import views_collecte
-from .assistant_saisie import assistant_eleve
+from .assistant_saisie import assistant_eleve, assistant_eleves_excel, assistant_eleves_importer
 from .views_paiements_actifs import actifs_paiements
 from .views_repartition import repartir_importes
 from .views_import import (
@@ -36,6 +36,8 @@ urlpatterns = [
     # Gestion des élèves
     path('ajouter/', views.ajouter_eleve, name='ajouter_eleve'),
     path('ajouter/assistant/', assistant_eleve, name='assistant_eleve'),
+    path('ajouter/assistant/importer/', assistant_eleves_importer, name='assistant_eleves_importer'),
+    path('ajouter/assistant/excel/', assistant_eleves_excel, name='assistant_eleves_excel'),
     path('<int:eleve_id>/modifier/', views.modifier_eleve, name='modifier_eleve'),
     path('<int:eleve_id>/evaluation-accueil/', views.definir_evaluation_accueil, name='definir_evaluation_accueil'),
     path('<int:eleve_id>/supprimer/', views.supprimer_eleve, name='supprimer_eleve'),

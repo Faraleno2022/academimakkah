@@ -1,6 +1,6 @@
 from django.urls import path
 from . import views
-from .assistant_saisie import assistant_paiement
+from .assistant_saisie import assistant_paiement, assistant_paiements_excel, assistant_paiements_importer
 from .views_tranches import export_tranches_par_classe_pdf, export_tranches_par_classe_excel
 from .rapports_professionnels import (
     apercu_rapport_comptable,
@@ -33,6 +33,8 @@ urlpatterns = [
     path('ajouter/', views.ajouter_paiement, name='ajouter_paiement'),
     path('ajouter/<int:eleve_id>/', views.ajouter_paiement, name='ajouter_paiement_eleve'),
     path('ajouter/assistant/', assistant_paiement, name='assistant_paiement'),
+    path('ajouter/assistant/importer/', assistant_paiements_importer, name='assistant_paiements_importer'),
+    path('ajouter/assistant/excel/', assistant_paiements_excel, name='assistant_paiements_excel'),
     path('modifier/<int:paiement_id>/', views.modifier_paiement, name='modifier_paiement'),
     path('supprimer/<int:paiement_id>/', views.supprimer_paiement, name='supprimer_paiement'),
     path('valider/<int:paiement_id>/', views.valider_paiement, name='valider_paiement'),

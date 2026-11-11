@@ -91,8 +91,123 @@ window.AssistantIA = (function () {
     }
   }
 
+  // ---------- Table de corrections (plusieurs lignes lues sur un document) ----------
+  function echapper(t) {
+    return String(t === null || t === undefined ? '' : t).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  /*
+   * colonnes : [{ cle, titre, type: 'text'|'number'|'date'|'select', options: [[valeur, libellé]], largeur }]
+   * lignes   : [{ valeurs: {cle: valeur}, douteux: [cle], remarque, alerte, coche }]
+   * Renvoie { lire() } : les lignes cochées, valeurs corrigées par l'utilisateur.
+   */
+  function tableau(conteneur, colonnes, lignes) {
+    var html = '<div class="table-responsive" style="max-height:55vh"><table class="table table-sm table-bordered align-middle mb-2">'
+      + '<thead class="table-light" style="position:sticky;top:0;z-index:1"><tr><th style="width:32px">'
+      + '<input type="checkbox" class="form-check-input" data-tout checked title="Tout cocher"></th>'
+      + colonnes.map(function (c) { return '<th style="min-width:' + (c.largeur || 110) + 'px">' + echapper(c.titre) + '</th>'; }).join('')
+      + '</tr></thead><tbody>';
+    lignes.forEach(function (l, i) {
+      var classeLigne = l.alerte ? 'table-warning' : '';
+      html += '<tr data-ligne="' + i + '" class="' + classeLigne + '"><td><input type="checkbox" class="form-check-input" data-coche'
+        + (l.coche === false ? '' : ' checked') + '></td>';
+      colonnes.forEach(function (c) {
+        var v = l.valeurs[c.cle];
+        var douteux = (l.douteux || []).indexOf(c.cle) !== -1;
+        var style = douteux ? ' style="box-shadow:0 0 0 2px #f59e0b inset;background:#fffbeb"' : '';
+        var titre = douteux && l.remarque ? ' title="' + echapper(l.remarque) + '"' : '';
+        if (c.type === 'select') {
+          html += '<td><select class="form-select form-select-sm" data-cle="' + c.cle + '"' + style + titre + '>'
+            + '<option value=""></option>'
+            + (c.options || []).map(function (o) {
+              return '<option value="' + echapper(o[0]) + '"' + (String(o[0]) === String(v) ? ' selected' : '') + '>' + echapper(o[1]) + '</option>';
+            }).join('') + '</select></td>';
+        } else {
+          html += '<td><input class="form-control form-control-sm" type="' + (c.type || 'text') + '"'
+            + (c.type === 'number' ? ' step="any"' : '') + ' data-cle="' + c.cle + '" value="' + echapper(v) + '"' + style + titre + '></td>';
+        }
+      });
+      html += '</tr>';
+      if (l.alerte || l.remarque) {
+        html += '<tr data-note="' + i + '"><td></td><td colspan="' + colonnes.length + '" class="small py-1 '
+          + (l.alerte ? 'text-danger' : 'text-muted') + '">' + (l.alerte ? '⚠ ' + echapper(l.alerte) + ' ' : '')
+          + (l.remarque ? '<em>' + echapper(l.remarque) + '</em>' : '') + '</td></tr>';
+      }
+    });
+    html += '</tbody></table></div>';
+    conteneur.innerHTML = html;
+
+    var tout = conteneur.querySelector('[data-tout]');
+    tout.addEventListener('change', function () {
+      conteneur.querySelectorAll('[data-coche]').forEach(function (c) { c.checked = tout.checked; });
+    });
+
+    return {
+      lire: function () {
+        var resultat = [];
+        conteneur.querySelectorAll('tr[data-ligne]').forEach(function (tr) {
+          if (!tr.querySelector('[data-coche]').checked) return;
+          var valeurs = {};
+          tr.querySelectorAll('[data-cle]').forEach(function (champ) { valeurs[champ.dataset.cle] = champ.value.trim(); });
+          valeurs._index = parseInt(tr.dataset.ligne, 10);
+          resultat.push(valeurs);
+        });
+        return resultat;
+      }
+    };
+  }
+
+  // Envoi JSON (import) ou téléchargement d'un fichier Excel renvoyé par le serveur
+  async function envoyer(url, donnees, nomFichier) {
+    const rep = await fetch(url, {
+      method: 'POST', body: JSON.stringify(donnees),
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf(), 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    const type = rep.headers.get('Content-Type') || '';
+    if (nomFichier && type.indexOf('spreadsheet') !== -1) {
+      const blob = await rep.blob();
+      const lien = document.createElement('a');
+      lien.href = URL.createObjectURL(blob);
+      lien.download = nomFichier;
+      document.body.appendChild(lien); lien.click(); lien.remove();
+      setTimeout(function () { URL.revokeObjectURL(lien.href); }, 5000);
+      return { ok: true };
+    }
+    let data;
+    try { data = await rep.json(); } catch (_) { throw new Error('Réponse inattendue du serveur (session expirée ?).'); }
+    if (!data.ok) throw new Error(data.erreur || "L'opération a échoué.");
+    return data;
+  }
+
+  // Boutons d'action sous la table (ex. « Valider et importer », « Télécharger l'Excel »)
+  function actions(conteneur, boutons) {
+    const zone = document.createElement('div');
+    zone.className = 'd-flex flex-wrap gap-2 mt-2';
+    boutons.forEach(function (b) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn ' + (b.classe || 'btn-primary');
+      btn.innerHTML = b.html;
+      btn.addEventListener('click', async function () {
+        erreur('');
+        const tous = zone.querySelectorAll('button');
+        tous.forEach(function (x) { x.disabled = true; });
+        const texte = btn.innerHTML;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>' + (b.enCours || 'Patientez…');
+        try { await b.action(); } catch (e) { erreur(e.message || String(e)); }
+        finally { btn.innerHTML = texte; tous.forEach(function (x) { x.disabled = false; }); }
+      });
+      zone.appendChild(btn);
+    });
+    conteneur.appendChild(zone);
+    return zone;
+  }
+
   function ouvrir(opts) {
     options = opts;
+    el('assistantIAModal').querySelector('.modal-dialog').classList.toggle('modal-xl', !!opts.large);
     el('assistantIATitre').innerHTML = '<i class="fas fa-magic me-2"></i>' + (opts.titre || 'Assistant de saisie');
     el('assistantIAAide').textContent = opts.aide || '';
     el('assistantIATexte').placeholder = opts.exempleTexte || '';
@@ -110,6 +225,6 @@ window.AssistantIA = (function () {
   const brancher = () => el('assistantIAAnalyser').addEventListener('click', analyser);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', brancher);
   else brancher();
-  return { ouvrir, fermer };
+  return { ouvrir, fermer, tableau, envoyer, actions, echapper, erreur };
 })();
 </script>

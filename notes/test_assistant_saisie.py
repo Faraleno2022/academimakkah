@@ -125,6 +125,28 @@ class AssistantNotesTests(TestCase):
         self.assertNotIn('INTRUS', consigne)  # jamais un élève d'une autre école
         self.assertNotIn('CODE FR', consigne)  # une seule matière proposée
 
+    def test_excel_reimportable_par_l_import_intelligent(self):
+        import json
+        from .import_intelligent import importer_notes_intelligent
+        from .models import NoteMensuelle
+
+        rep = self.client.post(reverse('notes:assistant_notes_excel'), json.dumps({
+            'classe_id': self.classe_note.pk, 'periode': 'OCTOBRE',
+            'notes': [
+                {'eleve_id': self.aminata.pk, 'matiere_id': self.math.pk, 'note': '14,5'},
+                {'eleve_id': self.mamadou.pk, 'matiere_id': self.fr.pk, 'note': '9'},
+                {'eleve_id': self.intrus.pk, 'matiere_id': self.math.pk, 'note': '10'},  # autre école : écarté
+            ],
+        }), content_type='application/json')
+        self.assertEqual(rep.status_code, 200, rep.content[:200])
+        self.assertIn('spreadsheet', rep['Content-Type'])
+        self.assertFalse(NoteMensuelle.objects.exists())  # l'Excel n'enregistre rien
+
+        stats = importer_notes_intelligent(BytesIO(rep.content), self.classe_note.pk, 'OCTOBRE', '2026-2027', user=self.user)
+        self.assertEqual(stats['erreurs'], 0, stats['erreurs_details'])
+        self.assertEqual(NoteMensuelle.objects.count(), 2)
+        self.assertEqual(float(NoteMensuelle.objects.get(eleve=self.aminata, matiere=self.math).note), 14.5)
+
     def test_la_page_saisir_affiche_le_bouton(self):
         rep = self.client.get(reverse('notes:saisir_notes'), {
             'classe_id': self.classe_note.pk, 'matiere_id': self.math.pk, 'type_note': 'mensuelle', 'periode': 'OCTOBRE',

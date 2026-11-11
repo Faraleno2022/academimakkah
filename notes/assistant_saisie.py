@@ -176,3 +176,80 @@ def assistant_notes(request):
         len(notes), classe.pk, request.user.username,
     )
     return JsonResponse({"ok": True, "notes": notes, "non_reconnus": resultat.get("non_reconnus", [])})
+
+
+@login_required
+@require_POST
+def assistant_notes_excel(request):
+    """
+    Fichier Excel des notes lues, au format de « l'import intelligent »
+    (N° | Matricule | Prénoms | Nom | Sexe | une colonne par matière).
+    """
+    import json
+    from io import BytesIO
+
+    from django.http import HttpResponse
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    from eleves.models import Eleve
+    from utilisateurs.utils import user_school
+    from .calculs_moyennes import detecter_niveau_scolaire
+    from .import_intelligent import _get_periode_label
+
+    if not has_permission(request.user, "peut_gerer_notes"):
+        return JsonResponse({"ok": False, "erreur": "Vous n'avez pas la permission de gérer les notes."}, status=403)
+    try:
+        corps = json.loads(request.body.decode("utf-8"))
+        notes = [n for n in corps.get("notes", []) if isinstance(n, dict)][:5000]
+        classe_id = int(corps.get("classe_id"))
+    except Exception:  # noqa: BLE001
+        return JsonResponse({"ok": False, "erreur": "Demande invalide."}, status=400)
+
+    ecole = None if request.user.is_superuser else user_school(request.user)
+    filtre = {"pk": classe_id, **({"ecole": ecole} if ecole else {})}
+    classe = get_object_or_404(ClasseNote, **filtre)
+    matieres = {m.id: m for m in MatiereNote.objects.filter(classe=classe, actif=True)}
+
+    valeurs = {}  # (eleve_id, matiere_id) -> note
+    for n in notes:
+        try:
+            eleve_id, matiere_id, note = int(n["eleve_id"]), int(n["matiere_id"]), float(str(n["note"]).replace(",", "."))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if matiere_id in matieres:
+            valeurs[(eleve_id, matiere_id)] = note
+    if not valeurs:
+        return JsonResponse({"ok": False, "erreur": "Aucune note à exporter."}, status=400)
+
+    eleves = list(
+        Eleve.pedagogiques.filter(pk__in={e for e, _ in valeurs}, classe__ecole=classe.ecole).order_by("prenom", "nom")
+    )
+    colonnes = sorted({matieres[m] for _, m in valeurs}, key=lambda m: m.nom)
+    note_max = 10 if detecter_niveau_scolaire(classe.nom) == "PRIMAIRE" else 20
+    periode = str(corps.get("periode") or "")
+
+    classeur = Workbook()
+    feuille = classeur.active
+    feuille.title = "Notes"
+    # Deux lignes d'information, comme le modèle : l'import saute les 2 premières lignes
+    feuille.append([f"FICHE DE REPORT DES NOTES - {classe.nom} - {_get_periode_label(periode)} - Notes sur {note_max}"])
+    feuille.append(["Légende: " + " | ".join(f"{m.code or m.nom[:10]}: {m.nom}" for m in colonnes)])
+    feuille.append(["N°", "Matricule", "Prénoms", "Nom", "Sexe"] + [m.code or m.nom[:15] for m in colonnes])
+    for cellule in feuille[3]:
+        cellule.font = Font(bold=True, color="FFFFFF")
+        cellule.fill = PatternFill(start_color="1a5276", end_color="1a5276", fill_type="solid")
+    for i, e in enumerate(eleves, start=1):
+        feuille.append([i, e.matricule, e.prenom, e.nom, e.sexe or ""] + [valeurs.get((e.id, m.id), "") for m in colonnes])
+    feuille["A1"].font = Font(bold=True, size=12, color="1a5276")
+    for lettre, largeur in (("A", 5), ("B", 18), ("C", 18), ("D", 16), ("E", 6)):
+        feuille.column_dimensions[lettre].width = largeur
+    feuille.freeze_panes = "A4"
+
+    tampon = BytesIO()
+    classeur.save(tampon)
+    reponse = HttpResponse(
+        tampon.getvalue(), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    reponse["Content-Disposition"] = 'attachment; filename="notes_assistant.xlsx"'
+    return reponse

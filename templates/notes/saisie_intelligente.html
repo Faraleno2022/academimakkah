@@ -752,8 +752,28 @@ function ouvrirAssistantNotes() {
                 html += '<br><span class="text-danger">Non reconnus, à saisir à la main :</span><ul class="mb-0">'
                     + data.non_reconnus.map((t) => `<li>${t.replace(/</g, '&lt;')}</li>`).join('') + '</ul>';
             }
-            html += '<br>Vérifiez la grille, puis cliquez sur <strong>Enregistrer toutes les notes</strong>.';
+            html += '<br>Vérifiez la grille (vous pouvez fermer cette fenêtre pour corriger), puis validez.';
             resume(html);
+            AssistantIA.actions(document.getElementById('assistantIAResume'), [
+                {
+                    html: '<i class="fas fa-check me-2"></i>Valider et enregistrer', classe: 'btn-success', enCours: 'Enregistrement…',
+                    action: async function () { AssistantIA.fermer(); await sauvegarderToutesNotes(); }
+                },
+                {
+                    html: '<i class="fas fa-file-excel me-2"></i>Télécharger l’Excel', classe: 'btn-outline-success', enCours: 'Préparation…',
+                    action: async function () {
+                        const lues = [];
+                        document.querySelectorAll('.note-input.ia-rempli, .note-input.ia-douteux').forEach((i) => {
+                            if (i.value !== '') lues.push({ eleve_id: i.dataset.eleveId, matiere_id: i.dataset.matiereId, note: i.value });
+                        });
+                        await AssistantIA.envoyer('{% url "notes:assistant_notes_excel" %}', {
+                            classe_id: '{{ classe_selectionnee.id|stringformat:"d" }}',
+                            periode: new URLSearchParams(location.search).get('periode') || '',
+                            notes: lues,
+                        }, 'notes_assistant.xlsx');
+                    }
+                },
+            ]);
         },
     });
 }

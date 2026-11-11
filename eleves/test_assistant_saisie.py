@@ -49,7 +49,7 @@ class AssistantEleveTests(TestCase):
         self.client.force_login(self.user)
 
     def _poster(self, lu):
-        with mock.patch('eleves.assistant_saisie.extraire_json', return_value=lu) as appel:
+        with mock.patch('eleves.assistant_saisie.extraire_json', return_value={'eleves': lu if isinstance(lu, list) else [lu]}) as appel:
             rep = self.client.post(reverse('eleves:assistant_eleve'), {'texte': 'Aminata Diallo, 7A'})
         return rep, appel
 
@@ -58,10 +58,12 @@ class AssistantEleveTests(TestCase):
         self.assertEqual(rep.status_code, 200, rep.content)
         data = rep.json()
         self.assertTrue(data['ok'])
-        self.assertEqual(data['lu']['classe_id'], self.classe.pk)
-        self.assertEqual(data['lu']['responsable']['telephone'], '622613559')  # sans indicatif
-        self.assertEqual([d['matricule'] for d in data['doublons']], ['7A-009'])
-        self.assertEqual(data['responsable_connu']['id'], self.parent.pk)
+        un = data['eleves'][0]
+        self.assertEqual(un['lu']['classe_id'], self.classe.pk)
+        self.assertEqual(un['lu']['responsable']['telephone'], '622613559')  # sans indicatif
+        self.assertEqual([d['matricule'] for d in un['doublons']], ['7A-009'])
+        self.assertEqual(un['responsable_connu']['id'], self.parent.pk)
+        self.assertIn([self.classe.pk, self.classe.nom], data['classes'])
 
         consigne = appel.call_args.args[0]
         self.assertIn('7A', consigne)
@@ -69,11 +71,11 @@ class AssistantEleveTests(TestCase):
 
     def test_classe_d_une_autre_ecole_ignoree_et_date_invalide(self):
         rep, _ = self._poster(_lecture(classe_id=self.autre_classe.pk, date_naissance='12/03/2014', prenom='Ibrahima', nom='Sow'))
-        data = rep.json()
-        self.assertIsNone(data['lu']['classe_id'])
-        self.assertEqual(data['lu']['date_naissance'], '')
-        self.assertIn('date_naissance', data['lu']['champs_douteux'])
-        self.assertEqual(data['doublons'], [])
+        un = rep.json()['eleves'][0]
+        self.assertIsNone(un['lu']['classe_id'])
+        self.assertEqual(un['lu']['date_naissance'], '')
+        self.assertIn('date_naissance', un['lu']['champs_douteux'])
+        self.assertEqual(un['doublons'], [])
 
     def test_rien_n_est_enregistre(self):
         avant_eleves, avant_resp = Eleve.objects.count(), Responsable.objects.count()
@@ -92,3 +94,61 @@ class AssistantEleveTests(TestCase):
         self.assertEqual(rep.status_code, 200)
         self.assertContains(rep, 'Remplir depuis une photo')
         self.assertContains(rep, reverse('eleves:assistant_eleve'))
+
+    # ----- Plusieurs élèves : import direct et Excel -----
+
+    def _ligne(self, **modifs):
+        ligne = {
+            '_index': 0, 'prenom': 'Ibrahima', 'nom': 'Sow', 'sexe': 'M', 'date_naissance': '2013-05-02',
+            'lieu_naissance': 'Labé', 'classe_id': str(self.classe.pk),
+            'resp_prenom': '', 'resp_nom': '', 'resp_relation': '', 'resp_telephone': '', 'resp_adresse': '',
+        }
+        ligne.update(modifs)
+        return ligne
+
+    def _json(self, nom_url, lignes):
+        import json
+        return self.client.post(reverse(nom_url), json.dumps({'lignes': lignes}), content_type='application/json')
+
+    def test_import_en_lot_comme_le_formulaire(self):
+        rep = self._json('eleves:assistant_eleves_importer', [
+            self._ligne(),  # sans responsable
+            self._ligne(_index=1, prenom='Fatou', nom='Camara', sexe='F', resp_prenom='Sekou', resp_nom='Camara',
+                        resp_relation='PERE', resp_telephone='664 11 22 33', resp_adresse='Kipé'),
+            self._ligne(_index=2, prenom='Mariama', nom='Diallo', sexe='F', resp_telephone='622613559'),  # parent connu
+            self._ligne(_index=3, prenom='Oumar', nom='Bah', resp_prenom='Alpha'),  # responsable incomplet
+            self._ligne(_index=4, prenom='Sans', nom='Classe', classe_id=str(self.autre_classe.pk)),  # autre école
+        ])
+        self.assertEqual(rep.status_code, 200, rep.content)
+        data = rep.json()
+        self.assertEqual([c['index'] for c in data['crees']], [0, 1, 2])
+        self.assertEqual([e['index'] for e in data['echecs']], [3, 4])
+        self.assertIn('incomplet', data['echecs'][0]['erreur'])
+
+        ibrahima = Eleve.objects.get(prenom='IBRAHIMA', nom='SOW')
+        self.assertTrue(ibrahima.matricule)  # généré comme par le formulaire
+        self.assertEqual(ibrahima.cree_par, self.user)
+        self.assertIsNone(ibrahima.responsable_principal)
+        fatou = Eleve.objects.get(prenom='FATOU', nom='CAMARA')
+        self.assertEqual(fatou.responsable_principal.telephone, '+224664112233')
+        self.assertEqual(fatou.responsable_principal.relation, 'PERE')
+        self.assertEqual(Eleve.objects.get(prenom='MARIAMA').responsable_principal, self.parent)
+        self.assertFalse(Eleve.objects.filter(prenom='OUMAR').exists())
+        self.assertFalse(Eleve.objects.filter(classe=self.autre_classe).exists())
+
+    def test_excel_au_format_de_l_import(self):
+        from io import BytesIO
+        import pandas as pd
+        from .import_eleves import COLONNES_EXPORT_COMPLET
+
+        rep = self._json('eleves:assistant_eleves_excel', [
+            self._ligne(resp_prenom='Sekou', resp_nom='Sow', resp_telephone='664112233', resp_adresse='Kipé'),
+        ])
+        self.assertEqual(rep.status_code, 200)
+        self.assertIn('spreadsheet', rep['Content-Type'])
+        df = pd.read_excel(BytesIO(rep.content), dtype=str).fillna('')
+        self.assertEqual(list(df.columns), COLONNES_EXPORT_COMPLET)
+        ligne = df.iloc[0]
+        self.assertEqual((ligne['Classe'], ligne['Prénom'], ligne['Date de Naissance']), ('7A', 'Ibrahima', '02/05/2013'))
+        self.assertEqual(ligne['Téléphone Principal'], '+224664112233')
+        self.assertFalse(Eleve.objects.filter(nom='SOW').exists())  # l'Excel n'enregistre rien
