@@ -33,13 +33,157 @@ def est_configure() -> bool:
     return bool(os.getenv("ANTHROPIC_API_KEY"))
 
 
+PAGES_PDF_MAX = 40
+TEXTE_MAX = 150_000  # caractères tirés d'un Word / Excel / CSV
+LIGNES_EXCEL_MAX = 3000
+
+
+def _texte_cellule(valeur) -> str:
+    """Valeur Excel -> texte lisible (14.0 -> « 14 », date -> JJ/MM/AAAA)."""
+    import datetime
+
+    if valeur is None:
+        return ""
+    if isinstance(valeur, datetime.datetime):
+        return valeur.strftime("%d/%m/%Y") if valeur.time() == datetime.time(0) else valeur.strftime("%d/%m/%Y %H:%M")
+    if isinstance(valeur, datetime.date):
+        return valeur.strftime("%d/%m/%Y")
+    if isinstance(valeur, float) and valeur.is_integer():
+        return str(int(valeur))
+    return str(valeur).strip()
+
+
+def _texte_excel(fichier) -> str:
+    from openpyxl import load_workbook
+
+    try:
+        classeur = load_workbook(fichier, read_only=True, data_only=True)
+    except Exception as exc:  # noqa: BLE001
+        raise AssistantIAError("Le fichier Excel est illisible (enregistrez-le au format .xlsx).") from exc
+    morceaux, restantes = [], LIGNES_EXCEL_MAX
+    try:
+        for feuille in classeur.worksheets[:6]:
+            lignes = []
+            for ligne in feuille.iter_rows(values_only=True):
+                cellules = [_texte_cellule(c) for c in ligne]
+                while cellules and not cellules[-1]:
+                    cellules.pop()
+                if not any(cellules):
+                    continue
+                lignes.append(" | ".join(cellules))
+                restantes -= 1
+                if restantes <= 0:
+                    break
+            if lignes:
+                morceaux.append(f"--- Feuille « {feuille.title} » ---\n" + "\n".join(lignes))
+            if restantes <= 0:
+                break
+    finally:
+        classeur.close()
+    return "\n\n".join(morceaux)
+
+
+def _texte_word(archive) -> str:
+    """Texte d'un .docx : paragraphes et tableaux, dans l'ordre du document."""
+    from xml.etree import ElementTree
+
+    W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    def texte(noeud) -> str:
+        morceaux = []
+        for n in noeud.iter():
+            if n.tag == f"{W}t":
+                morceaux.append(n.text or "")
+            elif n.tag in (f"{W}tab",):
+                morceaux.append("\t")
+            elif n.tag in (f"{W}br", f"{W}cr"):
+                morceaux.append("\n")
+        return "".join(morceaux).strip()
+
+    try:
+        corps = ElementTree.fromstring(archive.read("word/document.xml")).find(f"{W}body")
+    except Exception as exc:  # noqa: BLE001
+        raise AssistantIAError("Le fichier Word est illisible (enregistrez-le au format .docx).") from exc
+    lignes = []
+    for bloc in list(corps) if corps is not None else []:
+        if bloc.tag == f"{W}p":
+            t = texte(bloc)
+            if t:
+                lignes.append(t)
+        elif bloc.tag == f"{W}tbl":
+            for rangee in bloc.iter(f"{W}tr"):
+                cellules = [" ".join(texte(p) for p in c.iter(f"{W}p")).strip() for c in rangee.iter(f"{W}tc")]
+                if any(cellules):
+                    lignes.append(" | ".join(cellules))
+    return "\n".join(lignes)
+
+
+def _bloc_texte(nom: str, texte: str) -> tuple[str, str]:
+    texte = (texte or "").strip()
+    if not texte:
+        raise AssistantIAError(f"Le fichier « {nom} » ne contient aucun texte lisible.")
+    if len(texte) > TEXTE_MAX:
+        raise AssistantIAError(f"Le fichier « {nom} » est trop long : gardez seulement la partie à importer.")
+    return "text/plain", f"Contenu du fichier « {nom} » :\n{texte}"
+
+
 def preparer_image(fichier) -> tuple[str, str]:
     """
-    Lit un fichier envoyé (UploadedFile Django), le réduit si besoin et renvoie
-    (media_type, données base64) prêts pour l'API.
+    Prépare un fichier envoyé (UploadedFile Django) pour l'API. Renvoie (type, données) :
+    - photo (JPG, PNG…)      -> ("image/jpeg", base64), réduite si besoin ;
+    - PDF (texte ou scanné)  -> ("application/pdf", base64), lu directement par Claude ;
+    - Word .docx, Excel .xlsx, CSV, TXT -> ("text/plain", texte extrait).
     """
+    import zipfile
+
+    nom = os.path.basename(getattr(fichier, "name", "") or "fichier")
+    extension = os.path.splitext(nom)[1].lower()
     if fichier.size > TAILLE_MAX_FICHIER:
-        raise AssistantIAError("La photo est trop lourde (15 Mo maximum).")
+        raise AssistantIAError(f"Le fichier « {nom} » est trop lourd (15 Mo maximum).")
+
+    entete = fichier.read(8)
+    fichier.seek(0)
+
+    if entete.startswith(b"%PDF") or extension == ".pdf":
+        donnees = fichier.read()
+        try:
+            from pypdf import PdfReader
+
+            pages = len(PdfReader(io.BytesIO(donnees)).pages)
+        except Exception as exc:  # noqa: BLE001
+            raise AssistantIAError(f"Le PDF « {nom} » est illisible ou protégé par mot de passe.") from exc
+        if pages > PAGES_PDF_MAX:
+            raise AssistantIAError(
+                f"Le PDF « {nom} » fait {pages} pages ({PAGES_PDF_MAX} maximum) : envoyez seulement les pages utiles."
+            )
+        return "application/pdf", base64.standard_b64encode(donnees).decode("ascii")
+
+    if entete.startswith(b"PK"):  # .docx et .xlsx sont des archives zip
+        try:
+            archive = zipfile.ZipFile(fichier)
+            membres = set(archive.namelist())
+        except zipfile.BadZipFile as exc:
+            raise AssistantIAError(f"Le fichier « {nom} » est endommagé.") from exc
+        if "word/document.xml" in membres:
+            return _bloc_texte(nom, _texte_word(archive))
+        if "xl/workbook.xml" in membres:
+            fichier.seek(0)
+            return _bloc_texte(nom, _texte_excel(fichier))
+        raise AssistantIAError(f"Le format du fichier « {nom} » n'est pas pris en charge (PDF, Word, Excel ou photo).")
+
+    if extension in (".doc", ".xls") or entete.startswith(b"\xd0\xcf\x11\xe0"):
+        raise AssistantIAError(
+            f"« {nom} » est à l'ancien format Word/Excel : enregistrez-le en .docx, .xlsx ou PDF, puis réessayez."
+        )
+
+    if extension in (".csv", ".txt"):
+        brut = fichier.read()
+        for encodage in ("utf-8-sig", "cp1252"):
+            try:
+                return _bloc_texte(nom, brut.decode(encodage))
+            except UnicodeDecodeError:
+                continue
+        raise AssistantIAError(f"Le fichier « {nom} » n'est pas un texte lisible.")
 
     from PIL import Image, ImageOps  # Pillow est déjà une dépendance de l'application
 
@@ -47,7 +191,9 @@ def preparer_image(fichier) -> tuple[str, str]:
         image = Image.open(fichier)
         image = ImageOps.exif_transpose(image)  # remet droites les photos de téléphone
     except Exception as exc:  # noqa: BLE001
-        raise AssistantIAError("Le fichier n'est pas une image lisible (JPG ou PNG).") from exc
+        raise AssistantIAError(
+            f"« {nom} » n'est pas lisible : envoyez une photo (JPG, PNG), un PDF, un Word (.docx) ou un Excel (.xlsx)."
+        ) from exc
 
     if image.mode not in ("RGB", "L"):
         image = image.convert("RGB")
@@ -74,14 +220,18 @@ def extraire_json(consigne: str, schema: dict, images=(), texte: str = "") -> di
             "La bibliothèque « anthropic » n'est pas installée (pip install anthropic)."
         ) from exc
 
-    contenu = [
-        {"type": "image", "source": {"type": "base64", "media_type": mt, "data": data}}
-        for mt, data in images
-    ]
+    contenu = []
+    for mt, data in images:  # fichiers préparés par preparer_image : photo, PDF ou texte extrait
+        if mt == "text/plain":
+            contenu.append({"type": "text", "text": data})
+        elif mt == "application/pdf":
+            contenu.append({"type": "document", "source": {"type": "base64", "media_type": mt, "data": data}})
+        else:
+            contenu.append({"type": "image", "source": {"type": "base64", "media_type": mt, "data": data}})
     if texte.strip():
         contenu.append({"type": "text", "text": f"Texte saisi par l'utilisateur :\n{texte.strip()}"})
     if not contenu:
-        raise AssistantIAError("Ajoutez une photo ou un texte à analyser.")
+        raise AssistantIAError("Ajoutez une photo, un fichier (PDF, Word, Excel) ou un texte à analyser.")
     contenu.append({"type": "text", "text": "Analyse le document ci-dessus selon les consignes."})
 
     client = anthropic.Anthropic(timeout=120.0)

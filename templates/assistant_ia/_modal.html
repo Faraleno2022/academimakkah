@@ -9,9 +9,9 @@
       <div class="modal-body">
         <p class="text-muted small mb-3" id="assistantIAAide"></p>
 
-        <label for="assistantIAPhotos" class="form-label fw-semibold">Photo du document</label>
-        <input type="file" class="form-control mb-1" id="assistantIAPhotos" accept="image/*" capture="environment" multiple>
-        <div class="form-text mb-3">Sur téléphone, l'appareil photo s'ouvre directement. Prenez la photo bien à plat, avec de la lumière.</div>
+        <label for="assistantIAPhotos" class="form-label fw-semibold">Photo ou fichier du document</label>
+        <input type="file" class="form-control mb-1" id="assistantIAPhotos" accept="image/*,.pdf,.docx,.xlsx,.csv,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple>
+        <div class="form-text mb-3">Photo (JPG, PNG), <strong>PDF</strong>, <strong>Word</strong> (.docx) ou <strong>Excel</strong> (.xlsx), plusieurs fichiers possibles. Sur téléphone, vous pouvez aussi prendre la photo : bien à plat, avec de la lumière.</div>
 
         <label for="assistantIATexte" class="form-label fw-semibold">Ou écrivez / collez le texte</label>
         <textarea class="form-control" id="assistantIATexte" rows="3" placeholder=""></textarea>
@@ -72,7 +72,7 @@ window.AssistantIA = (function () {
     Object.entries(extra).forEach(([k, v]) => { if (v !== undefined && v !== null) fd.append(k, v); });
 
     if (!el('assistantIAPhotos').files.length && !el('assistantIATexte').value.trim()) {
-      erreur('Ajoutez une photo ou un texte.'); return;
+      erreur('Ajoutez une photo, un fichier ou un texte.'); return;
     }
     etat(true);
     try {

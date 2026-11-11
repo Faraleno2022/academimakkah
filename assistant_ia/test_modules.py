@@ -220,3 +220,134 @@ class TestAccueilTests(Base):
         page = self.client.get(reverse('examen_accueil:saisie_notes'), {'classe': self.classe.pk, 'tous': '1'})
         self.assertContains(page, 'ouvrirAssistantAccueil')
         self.assertContains(page, reverse('examen_accueil:assistant_notes'))
+
+
+class DocumentsTests(TestCase):
+    """PDF, Word et Excel sont acceptés en plus des photos."""
+
+    def _fichier(self, nom, contenu):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return SimpleUploadedFile(nom, contenu)
+
+    def _docx(self):
+        import zipfile
+        w = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+        cellule = lambda t: f'<w:tc><w:p><w:r><w:t>{t}</w:t></w:r></w:p></w:tc>'
+        xml = (f'<?xml version="1.0" encoding="UTF-8"?><w:document {w}><w:body>'
+               '<w:p><w:r><w:t>Liste des </w:t></w:r><w:r><w:t>nouveaux inscrits</w:t></w:r></w:p>'
+               f'<w:tbl><w:tr>{cellule("Diallo Aminata")}{cellule("14,5")}</w:tr>'
+               f'<w:tr>{cellule("Bah Mamadou")}{cellule("12")}</w:tr></w:tbl></w:body></w:document>')
+        tampon = BytesIO()
+        with zipfile.ZipFile(tampon, 'w') as archive:
+            archive.writestr('word/document.xml', xml)
+        return tampon.getvalue()
+
+    def _xlsx(self):
+        from openpyxl import Workbook
+        classeur = Workbook()
+        feuille = classeur.active
+        feuille.title = 'Notes'
+        feuille.append(['Matricule', 'Nom', 'Note', 'Né le'])
+        feuille.append(['L-001', 'Bah Mamadou', 14.0, date(2013, 5, 2)])
+        feuille.append([None, None, None, None])
+        feuille.append(['L-002', 'Camara Fatoumata', 12.5, None])
+        tampon = BytesIO()
+        classeur.save(tampon)
+        return tampon.getvalue()
+
+    def _pdf(self, pages=1):
+        from reportlab.pdfgen import canvas
+        tampon = BytesIO()
+        dessin = canvas.Canvas(tampon)
+        for _ in range(pages):
+            dessin.drawString(72, 720, 'Bordereau de versements')
+            dessin.showPage()
+        dessin.save()
+        return tampon.getvalue()
+
+    def test_word_excel_csv_deviennent_du_texte(self):
+        from assistant_ia.claude import preparer_image
+
+        type_, texte = preparer_image(self._fichier('liste.docx', self._docx()))
+        self.assertEqual(type_, 'text/plain')
+        self.assertIn('Liste des nouveaux inscrits', texte)
+        self.assertIn('Diallo Aminata | 14,5', texte)
+
+        type_, texte = preparer_image(self._fichier('notes.xlsx', self._xlsx()))
+        self.assertEqual(type_, 'text/plain')
+        self.assertIn('L-001 | Bah Mamadou | 14 | 02/05/2013', texte)
+        self.assertIn('L-002 | Camara Fatoumata | 12.5', texte)
+
+        type_, texte = preparer_image(self._fichier('liste.csv', 'Nom;Note\nSow Aïssatou;15\n'.encode('cp1252')))
+        self.assertIn('Sow Aïssatou;15', texte)
+
+    def test_pdf_envoye_tel_quel_et_limites(self):
+        import base64
+        from assistant_ia.claude import AssistantIAError, preparer_image
+
+        type_, donnees = preparer_image(self._fichier('bordereau.pdf', self._pdf()))
+        self.assertEqual(type_, 'application/pdf')
+        self.assertTrue(base64.b64decode(donnees).startswith(b'%PDF'))
+
+        for nom, contenu, attendu in (
+            ('gros.pdf', self._pdf(pages=41), '40 maximum'),
+            ('ancien.doc', b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1 vieux', 'ancien format'),
+            ('ancien.xls', b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1 vieux', 'ancien format'),
+            ('faux.pdf', b'%PDF-1.4 pas un vrai pdf', 'illisible'),
+            ('vide.xlsx', None, 'aucun texte'),
+        ):
+            if contenu is None:
+                from openpyxl import Workbook
+                tampon = BytesIO()
+                Workbook().save(tampon)
+                contenu = tampon.getvalue()
+            with self.assertRaises(AssistantIAError, msg=nom) as echec:
+                preparer_image(self._fichier(nom, contenu))
+            self.assertIn(attendu, str(echec.exception), nom)
+
+    def test_blocs_envoyes_a_claude(self):
+        """Photo -> image, PDF -> document, Word/Excel -> texte."""
+        from types import SimpleNamespace
+        from assistant_ia import claude
+
+        appels = {}
+
+        class FauxClient:
+            def __init__(self, **_):
+                self.beta = SimpleNamespace(messages=SimpleNamespace(create=self.creer))
+
+            def creer(self, **parametres):
+                appels.update(parametres)
+                return SimpleNamespace(stop_reason='end_turn', content=[SimpleNamespace(type='text', text='{"ok": true}')])
+
+        with mock.patch.dict('os.environ', {'ANTHROPIC_API_KEY': 'sk-test'}), \
+                mock.patch('anthropic.Anthropic', FauxClient):
+            resultat = claude.extraire_json('consigne', {'type': 'object'}, images=[
+                ('image/jpeg', 'AAAA'), ('application/pdf', 'BBBB'), ('text/plain', 'Contenu du fichier « a.xlsx » :\nx'),
+            ])
+        self.assertEqual(resultat, {'ok': True})
+        blocs = appels['messages'][0]['content']
+        self.assertEqual([b['type'] for b in blocs], ['image', 'document', 'text', 'text'])
+        self.assertEqual(blocs[1]['source'], {'type': 'base64', 'media_type': 'application/pdf', 'data': 'BBBB'})
+
+    def test_un_excel_passe_par_l_assistant_des_eleves(self):
+        """De bout en bout : le fichier envoyé par le navigateur arrive à Claude en texte."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        utilisateur = get_user_model().objects.create_superuser('admin-doc', 'a@a.gn', 'x')
+        self.client.force_login(utilisateur)
+        with override_settings(MIDDLEWARE=SANS_LICENCE), \
+                mock.patch('notes.assistant_saisie.extraire_json', return_value={'notes': [], 'non_reconnus': []}) as appel:
+            from notes.models import ClasseNote, MatiereNote
+            ecole = Ecole.objects.create(nom='École doc', adresse='Conakry', telephone='+224620000601', directeur='D')
+            classe = Classe.objects.create(ecole=ecole, nom='9A', niveau='COLLEGE_9', annee_scolaire='2026-2027')
+            classe_note = ClasseNote.objects.create(ecole=ecole, nom='9A', niveau='COLLEGE_9', niveau_enseignement='SECONDAIRE', annee_scolaire='2026-2027')
+            Eleve.objects.create(matricule='D-001', prenom='Mamadou', nom='Bah', sexe='M', classe=classe)
+            MatiereNote.objects.create(classe=classe_note, nom='Français', code='FR', coefficient=1)
+            rep = self.client.post(reverse('notes:assistant_notes'), {
+                'classe_id': classe_note.pk, 'photos': SimpleUploadedFile('notes.xlsx', self._xlsx()),
+            })
+        self.assertEqual(rep.status_code, 200, rep.content)
+        type_, texte = appel.call_args.kwargs['images'][0]
+        self.assertEqual(type_, 'text/plain')
+        self.assertIn('Bah Mamadou', texte)

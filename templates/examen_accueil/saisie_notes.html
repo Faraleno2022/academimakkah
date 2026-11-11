@@ -74,7 +74,7 @@
         </div>
         <div class="d-flex flex-wrap gap-2">
             <button type="submit" class="btn btn-primary"><i class="fas fa-save me-1"></i>Enregistrer les notes</button>
-            <button type="button" class="btn btn-outline-primary" onclick="ouvrirAssistantAccueil()"><i class="fas fa-camera me-1"></i>Remplir depuis une photo</button>
+            <button type="button" class="btn btn-outline-primary" onclick="ouvrirAssistantAccueil()"><i class="fas fa-camera me-1"></i>Remplir depuis une photo ou un fichier</button>
             <a href="{% url 'examen_accueil:consultation' %}?classe={{ classe.pk }}" class="btn btn-outline-success"><i class="fas fa-eye me-1"></i>Voir les résultats</a>
         </div>
     </form>
