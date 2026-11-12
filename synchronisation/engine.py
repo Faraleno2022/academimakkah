@@ -10,7 +10,7 @@ from django.utils import timezone
 from eleves.models import Ecole
 from .context import mute_sync, recu_du_serveur
 from .registry import CLES_NATURELLES, ETATS_ACQUIS, SYNC_MODEL_LABELS, SYNC_MODEL_SET
-from .scope import scoped_queryset, school_for_instance, validate_scope, remember_school
+from .scope import scoped_queryset, school_for_instance, validate_scope, remember_school, direct_school_id
 
 
 SYNC_FIELD_NAMES = {
@@ -173,6 +173,56 @@ def _financial_keys(obj):
     return set()
 
 
+# Identifiants uniques sur TOUT le serveur, alors que chaque poste (donc chaque école) les
+# numérote seul : « CL8-001 » ou « REC20260001 » existent dans plusieurs écoles. Sans ce
+# traitement, la base refuse la fiche de la seconde école (« Duplicate entry ») et tout ce qui
+# en dépend (paiements, échéanciers, historique) reste bloqué indéfiniment.
+IDENTIFIANTS_UNIQUES = {
+    'eleves.Eleve': ('matricule',),
+    'paiements.Paiement': ('numero_recu',),
+    'bus.AbonnementBus': ('numero_recu',),
+}
+
+
+def rendre_identifiants_uniques(obj, model_label, ecole):
+    """Ajoute le code de l'école à un identifiant déjà pris par une AUTRE école.
+
+    Le numéro d'origine reste inchangé sur le poste ; en ligne, la fiche porte « CL8-001-E7 »
+    (E + identifiant de l'école). Le même poste renvoie toujours le même résultat. Un doublon
+    dans la MÊME école (ou d'une école inconnue) n'est pas touché : il reste refusé, car il
+    peut s'agir d'une vraie fiche en double.
+    """
+    modele = type(obj)
+    for nom in IDENTIFIANTS_UNIQUES.get(model_label, ()):
+        valeur = getattr(obj, nom, None)
+        if not valeur:
+            continue
+        pris = modele.objects.filter(**{nom: valeur})
+        if obj.pk:
+            pris = pris.exclude(pk=obj.pk)
+        autre = pris.first()
+        if autre is None:
+            continue
+        ecole_autre = direct_school_id(autre)
+        if ecole_autre is None or ecole_autre == ecole.pk:
+            continue
+
+        longueur = modele._meta.get_field(nom).max_length
+        suffixes = [f'-E{ecole.pk}', f'E{ecole.pk}']
+        suffixe = next((s for s in suffixes if len(valeur) + len(s) <= longueur), suffixes[-1])
+        candidat, n = (valeur + suffixe)[:longueur], 1
+        while True:
+            existant = modele.objects.filter(**{nom: candidat})
+            if obj.pk:
+                existant = existant.exclude(pk=obj.pk)
+            if not existant.exists():
+                break
+            n += 1
+            plus = f'{suffixe}{n}'
+            candidat = valeur[:longueur - len(plus)] + plus
+        setattr(obj, nom, candidat)
+
+
 @transaction.atomic
 def build_change_instance(model_label, object_uuid, payload, *, operation='UPDATE', ecole=None, trusted=False):
     """Cree/met a jour l'objet cible depuis un changement, sans toucher a une
@@ -260,6 +310,7 @@ def build_change_instance(model_label, object_uuid, payload, *, operation='UPDAT
                 setattr(obj, field.name, value)
             if ecole is not None:
                 validate_scope(obj, ecole, trusted=trusted)
+                rendre_identifiants_uniques(obj, model_label, ecole)
             if model_label == 'paiements.Paiement' and obj.montant < 0:
                 raise ValueError('Le montant du paiement ne peut pas être négatif.')
             obj.is_synced = True
