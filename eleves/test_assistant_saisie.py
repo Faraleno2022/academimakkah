@@ -116,14 +116,16 @@ class AssistantEleveTests(TestCase):
             self._ligne(_index=1, prenom='Fatou', nom='Camara', sexe='F', resp_prenom='Sekou', resp_nom='Camara',
                         resp_relation='PERE', resp_telephone='664 11 22 33', resp_adresse='Kipé'),
             self._ligne(_index=2, prenom='Mariama', nom='Diallo', sexe='F', resp_telephone='622613559'),  # parent connu
-            self._ligne(_index=3, prenom='Oumar', nom='Bah', resp_prenom='Alpha'),  # responsable incomplet
+            self._ligne(_index=3, prenom='Oumar', nom='Bah', resp_prenom='Alpha'),  # parent sans téléphone
+            self._ligne(_index=5, prenom='Rouguiatou', nom='Bangoura', sexe='F', resp_telephone='628550559'),  # téléphone seul
+            self._ligne(_index=6, prenom='Aïcha', nom='Camara', sexe='F', resp_telephone='628 55 05 59'),  # même parent
             self._ligne(_index=4, prenom='Sans', nom='Classe', classe_id=str(self.autre_classe.pk)),  # autre école
         ])
         self.assertEqual(rep.status_code, 200, rep.content)
         data = rep.json()
-        self.assertEqual([c['index'] for c in data['crees']], [0, 1, 2])
+        self.assertEqual([c['index'] for c in data['crees']], [0, 1, 2, 5, 6])
         self.assertEqual([e['index'] for e in data['echecs']], [3, 4])
-        self.assertIn('incomplet', data['echecs'][0]['erreur'])
+        self.assertIn('téléphone', data['echecs'][0]['erreur'])
 
         ibrahima = Eleve.objects.get(prenom='IBRAHIMA', nom='SOW')
         self.assertTrue(ibrahima.matricule)  # généré comme par le formulaire
@@ -135,6 +137,13 @@ class AssistantEleveTests(TestCase):
         self.assertEqual(Eleve.objects.get(prenom='MARIAMA').responsable_principal, self.parent)
         self.assertFalse(Eleve.objects.filter(prenom='OUMAR').exists())
         self.assertFalse(Eleve.objects.filter(classe=self.autre_classe).exists())
+
+        # Parent connu seulement par son téléphone : enregistré comme le fait l'import Excel, une seule fois
+        rouguiatou = Eleve.objects.get(prenom='ROUGUIATOU')
+        parent = rouguiatou.responsable_principal
+        self.assertEqual((parent.telephone, parent.relation), ('+224628550559', 'AUTRE'))
+        self.assertEqual(Eleve.objects.get(prenom='AÏCHA').responsable_principal, parent)
+        self.assertEqual(Responsable.objects.filter(telephone='+224628550559').count(), 1)
 
     def test_excel_au_format_de_l_import(self):
         from io import BytesIO

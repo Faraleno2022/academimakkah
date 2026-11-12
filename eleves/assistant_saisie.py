@@ -267,23 +267,29 @@ def _enregistrer_ligne(request, ligne, classes_par_id, ecole):
     }
 
     form_resp = None
+    resp_partiel = None
     resp = {c: _t(ligne, f"resp_{c}") for c in ("prenom", "nom", "relation", "telephone", "adresse")}
     telephone = _telephone_local(resp["telephone"])
     connu = _responsable_connu(ecole, telephone)
     if connu:
         donnees["responsable_principal"] = str(connu.id)
     elif any(resp.values()):
-        manquants = [lib for cle, lib in (("prenom", "prénom"), ("nom", "nom"), ("relation", "relation"),
-                                          ("telephone", "téléphone"), ("adresse", "adresse")) if not resp[cle]]
-        if manquants:
-            raise ValueError("responsable incomplet (" + ", ".join(manquants) + ") : complétez-le ou videz ses champs")
         if not telephone:
-            raise ValueError("téléphone du responsable invalide (8 ou 9 chiffres)")
-        form_resp = ResponsableForm(
-            {f"r-{c}": v for c, v in {**resp, "telephone": telephone}.items()}, prefix="r", user=request.user
-        )
-        if not form_resp.is_valid():
-            raise ValueError("responsable : " + _erreurs(form_resp))
+            raise ValueError("téléphone du responsable invalide (8 ou 9 chiffres) : corrigez-le ou videz ses champs")
+        if all(resp[c] for c in ("prenom", "nom", "relation", "adresse")):
+            form_resp = ResponsableForm(
+                {f"r-{c}": v for c, v in {**resp, "telephone": telephone}.items()}, prefix="r", user=request.user
+            )
+            if not form_resp.is_valid():
+                raise ValueError("responsable : " + _erreurs(form_resp))
+        else:
+            # Comme l'import Excel d'élèves : un parent connu seulement par son téléphone est
+            # enregistré avec ce qui est lu ; le reste se complète plus tard sur sa fiche.
+            resp_partiel = Responsable(
+                telephone=f"+224{telephone}", prenom=resp["prenom"], nom=resp["nom"],
+                relation=resp["relation"] if resp["relation"] in RELATIONS else "AUTRE",
+                adresse=resp["adresse"],
+            )
 
     form = EleveForm(donnees, user=request.user)
     form.fields["classe"].queryset = Classe.objects.filter(pk=classe.pk)
@@ -293,6 +299,9 @@ def _enregistrer_ligne(request, ligne, classes_par_id, ecole):
     with transaction.atomic():
         if form_resp:
             form.instance.responsable_principal = form_resp.save()
+        elif resp_partiel:
+            resp_partiel.save()
+            form.instance.responsable_principal = resp_partiel
         eleve = form.save(commit=False)
         eleve.cree_par = request.user
         eleve.save()
