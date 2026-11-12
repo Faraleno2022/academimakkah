@@ -1805,6 +1805,11 @@ function ouvrirAssistantPaiement() {
             html += `<div class="alert alert-danger py-2 mb-2"><strong>Ce paiement semble déjà enregistré</strong> : reçu ${echapper(d.recu)} du ${echapper(d.date)}, `
                 + `${Number(d.montant).toLocaleString('fr-FR')} GNF (${echapper(d.statut)}). N’enregistrez que s’il s’agit d’un autre versement.</div>`;
         }
+        if (data.situation) {
+            const s = data.situation;
+            if (s.alerte) html += `<div class="alert alert-danger py-2 mb-2"><i class="fas fa-exclamation-triangle me-2"></i><strong>${echapper(s.alerte)}</strong></div>`;
+            html += `<div class="alert alert-info py-2 mb-2"><i class="fas fa-wallet me-2"></i><strong>Situation de l’élève :</strong> ${echapper(s.resume)}</div>`;
+        }
 
         if (data.eleve) {
             const ok = await chargerEleve(data.eleve.matricule);
@@ -1885,6 +1890,13 @@ function ouvrirAssistantPaiement() {
                     const d = p.deja_enregistre;
                     alerte = `Déjà enregistré : reçu ${d.recu} du ${d.date}, ${Number(d.montant).toLocaleString('fr-FR')} GNF (${d.statut}).`;
                 }
+                if (p.situation) {
+                    remarque = (remarque + ' ' + p.situation.resume).trim();
+                    if (p.situation.alerte) {
+                        alerte = (alerte ? alerte + ' ' : '') + p.situation.alerte;
+                        if (!p.situation.solde) douteux.push('montant');
+                    }
+                }
             } else {
                 douteux.push('matricule');
                 alerte = `Élève « ${lu.eleve_nom || 'non lu'} » non retrouvé : saisissez son matricule.`
@@ -1899,7 +1911,7 @@ function ouvrirAssistantPaiement() {
                     reference: lu.reference || '',
                 },
                 douteux, remarque, alerte,
-                coche: !!p.eleve && lu.montant !== null && !p.deja_enregistre,
+                coche: !!p.eleve && lu.montant !== null && !p.deja_enregistre && !(p.situation && p.situation.bloquant),
             };
         });
 

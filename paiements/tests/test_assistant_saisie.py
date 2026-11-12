@@ -202,3 +202,73 @@ class AssistantPaiementTests(TestCase):
         with mock.patch('paiements.assistant_saisie.extraire_json', return_value={'paiements': [_lu(matricule='7A-002')]}):
             data = self.client.post(reverse('paiements:assistant_paiement'), {'texte': 'Un tout autre bordereau de versements du mois'}).json()
         self.assertIsNone(data['deja_importe'])
+
+    # ----- Situation de la scolarité après analyse -----
+
+    def _types(self):
+        self.inscription = TypePaiement.objects.create(nom="Frais d'inscription")
+        self.tranche_1 = TypePaiement.objects.create(nom='Tranche 1')
+        return self.inscription, self.tranche_1
+
+    def _payer(self, eleve, montant, statut='VALIDE'):
+        return Paiement.objects.create(
+            eleve=eleve, type_paiement=self.type_t2, mode_paiement=self.orange, montant=montant,
+            date_paiement='2026-10-01', annee_scolaire='2026-2027', statut=statut,
+        )
+
+    def test_situation_reste_et_prochain_poste(self):
+        self._types()
+        self._echeancier(self.mamadou)  # 100 000 d'inscription + 3 tranches de 200 000 = 700 000
+        s = self._poster(_lu(matricule='7A-002', montant=50000))
+        situation = s['situation']
+        self.assertEqual((situation['total_du'], situation['reste'], situation['solde']), (700000, 700000, False))
+        self.assertEqual(situation['prochain'], "Frais d'inscription")
+        self.assertIn('Paiement partiel', situation['resume'])
+        self.assertEqual(s['lu']['type_paiement_id'], self.inscription.pk)   # type proposé d'après le reste
+        self.assertIn('type_paiement_id', s['lu']['champs_douteux'])
+
+    def test_tranche_deja_soldee_remplacee_et_paiements_en_attente_comptes(self):
+        self._types()
+        self._echeancier(self.mamadou)
+        self._payer(self.mamadou, 200000)                          # validé
+        self._payer(self.mamadou, 100000, statut='EN_ATTENTE')     # en attente : compte aussi
+        s = self._poster(_lu(matricule='7A-002', montant=200000, type_paiement_id=self.tranche_1.pk))
+        situation = s['situation']
+        self.assertEqual(situation['reste'], 400000)               # inscription + tranche 1 couvertes
+        self.assertEqual(situation['en_attente'], 100000)
+        self.assertEqual(situation['prochain'], 'Tranche 2')
+        self.assertEqual(s['lu']['type_paiement_id'], self.type_t2.pk)  # « Tranche 1 » soldée -> tranche 2
+        self.assertIn('déjà soldé', situation['resume'])
+        self.assertFalse(situation['bloquant'])
+        restes = {p['libelle']: p['reste'] for p in situation['postes']}
+        self.assertEqual(restes, {"Frais d'inscription": 0, 'Tranche 1': 0, 'Tranche 2': 200000, 'Tranche 3': 200000})
+
+    def test_montant_superieur_au_reste_et_scolarite_soldee(self):
+        self._types()
+        self._echeancier(self.mamadou)
+        self._payer(self.mamadou, 600000)
+        trop = self._poster(_lu(matricule='7A-002', montant=150000))['situation']
+        self.assertTrue(trop['bloquant'])
+        self.assertIn('dépasse le reste à payer (100 000 GNF)', trop['alerte'])
+
+        self._payer(self.mamadou, 100000)
+        solde = self._poster(_lu(matricule='7A-002', montant=50000))['situation']
+        self.assertTrue(solde['solde'] and solde['bloquant'])
+        self.assertIn('entièrement payée', solde['alerte'])
+
+    def test_deux_lignes_du_meme_eleve_et_eleve_sans_echeancier(self):
+        self._types()
+        self._echeancier(self.mamadou)
+        self._payer(self.mamadou, 300000)                          # reste 400 000
+        with mock.patch('paiements.assistant_saisie.extraire_json', return_value={'paiements': [
+            _lu(matricule='7A-002', montant=300000, reference='A1', date_paiement='2026-11-10'),
+            _lu(matricule='7A-002', montant=300000, reference='A2', date_paiement='2026-11-11'),
+            _lu(matricule='8B-001', montant=10000, reference='A3'),
+        ]}):
+            data = self.client.post(reverse('paiements:assistant_paiement'), {'texte': 'reçu'}).json()
+        premier, second, sans = [p['situation'] for p in data['paiements']]
+        self.assertFalse(premier['bloquant'])
+        self.assertTrue(second['bloquant'])                        # 300 000 déjà lus plus haut : reste 100 000
+        self.assertIn('100 000 GNF', second['alerte'])
+        self.assertFalse(sans['echeancier'])                       # Fatoumata n'a pas d'échéancier
+        self.assertFalse(sans['bloquant'])

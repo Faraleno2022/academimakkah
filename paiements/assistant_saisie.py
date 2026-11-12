@@ -168,6 +168,127 @@ def _resume_paiement(p) -> dict:
             "montant": int(p.montant), "statut": p.get_statut_display()}
 
 
+LIBELLES_POSTES = {"tranche_1": "Tranche 1", "tranche_2": "Tranche 2", "tranche_3": "Tranche 3"}
+
+
+def _gnf(valeur) -> str:
+    return f"{int(valeur):,}".replace(",", " ") + " GNF"
+
+
+def _type_pour_poste(cle, types, echeancier):
+    """Type de paiement actif qui vise exactement ce poste (inscription ou tranche n)."""
+    from .allocation import payment_type_plan
+
+    attendu = "reinscription" if echeancier.est_reinscription else "inscription"
+    candidats = []
+    for t in types:
+        plan = payment_type_plan(t)
+        if cle == "inscription":
+            if plan["include_registration"] and not plan["tranches"]:
+                candidats.append((plan["registration_kind"] != attendu, t))
+        elif plan["tranches"] == (int(cle[-1]),) and not plan["include_registration"]:
+            candidats.append((False, t))
+    candidats.sort(key=lambda c: (c[0], len(c[1].nom)))
+    return candidats[0][1] if candidats else None
+
+
+def _situation(eleve, lu, types, deja_dans_document=0):
+    """
+    Situation de la scolarité de l'élève pour l'année en cours : total dû, reste à payer,
+    reste par poste (inscription, tranches) et prochain poste à régler. Même calcul que
+    la page « Ajouter un paiement » : paiements validés ET en attente, remises déduites.
+    Peut corriger ``lu["type_paiement_id"]`` quand la tranche lue est déjà soldée.
+    """
+    from decimal import Decimal
+
+    from django.db.models import Sum
+
+    from .allocation import ALLOCATION_COMPONENTS, payment_type_plan, reste_par_tranche_avec_couverture
+    from .models import Paiement, PaiementRemise
+    from .views import _echeancier_for_eleve
+
+    echeancier = _echeancier_for_eleve(eleve)
+    if echeancier is None:
+        return {"echeancier": False, "bloquant": False, "alerte": "",
+                "resume": "Pas encore d'échéancier pour cette année : il sera créé à l'enregistrement."}
+
+    actifs = Paiement.objects.filter(
+        eleve=eleve, annee_scolaire=echeancier.annee_scolaire, statut__in=("EN_ATTENTE", "VALIDE")
+    )
+    encaisse = actifs.aggregate(s=Sum("montant"))["s"] or 0
+    en_attente = actifs.filter(statut="EN_ATTENTE").aggregate(s=Sum("montant"))["s"] or 0
+    remises = PaiementRemise.objects.filter(
+        paiement__eleve=eleve, paiement__annee_scolaire=echeancier.annee_scolaire,
+        paiement__statut__in=("EN_ATTENTE", "VALIDE"),
+    ).aggregate(s=Sum("montant_remise"))["s"] or 0
+    couverture = Decimal(encaisse) + Decimal(remises) + Decimal(deja_dans_document)
+
+    restes = reste_par_tranche_avec_couverture(echeancier, couverture)
+    total_du = int(echeancier.total_du)
+    reste = max(0, total_du - int(couverture))
+    postes = []
+    for cle, champ_du, _ in ALLOCATION_COMPONENTS:
+        du = int(getattr(echeancier, champ_du) or 0)
+        if du:
+            postes.append({
+                "cle": cle, "du": du, "reste": int(restes[cle]),
+                "libelle": echeancier.libelle_frais_admission if cle == "inscription" else LIBELLES_POSTES[cle],
+            })
+    prochain = next((p for p in postes if p["reste"] > 0), None)
+    situation = {
+        "echeancier": True, "total_du": total_du, "reste": reste, "solde": reste == 0,
+        "en_attente": int(en_attente), "postes": postes,
+        "prochain": prochain["libelle"] if prochain else "", "alerte": "", "bloquant": False,
+    }
+
+    if reste == 0:
+        situation["resume"] = f"Scolarité entièrement payée ({_gnf(total_du)})."
+        situation["alerte"] = "Scolarité déjà entièrement payée : aucun paiement n'est attendu pour cet élève cette année."
+        situation["bloquant"] = True
+        return situation
+
+    detail = " ; ".join(
+        f"{p['libelle']} soldé" if p["reste"] == 0 else
+        (f"{p['libelle']} : reste {_gnf(p['reste'])}" if p["reste"] < p["du"] else f"{p['libelle']} : {_gnf(p['du'])} dû")
+        for p in postes
+    )
+    resume = f"Reste à payer : {_gnf(reste)} sur {_gnf(total_du)} ({detail}). À régler maintenant : {prochain['libelle']}."
+    if en_attente:
+        resume += f" Dont {_gnf(en_attente)} déjà saisi(s) en attente de validation."
+    if deja_dans_document:
+        resume += f" Tient compte de {_gnf(deja_dans_document)} lu(s) plus haut dans ce document."
+
+    montant = lu["montant"]
+    if montant is not None and montant > reste:
+        situation["alerte"] = (f"Le montant lu ({_gnf(montant)}) dépasse le reste à payer ({_gnf(reste)}) : "
+                               "il serait refusé. Corrigez le montant.")
+        situation["bloquant"] = True
+    elif montant is not None and montant > prochain["reste"]:
+        resume += f" Le montant dépasse le reste de {prochain['libelle']} : l'excédent passera sur le poste suivant."
+    elif montant is not None and montant < prochain["reste"]:
+        resume += f" Paiement partiel : il restera {_gnf(prochain['reste'] - int(montant))} sur {prochain['libelle']}."
+
+    # Type de paiement : absent, ou visant un poste déjà soldé -> on propose le prochain poste
+    par_id = {t.id: t for t in types}
+    type_lu = par_id.get(lu["type_paiement_id"])
+    vises = []
+    if type_lu:
+        plan = payment_type_plan(type_lu)
+        vises = (["inscription"] if plan["include_registration"] else []) + [f"tranche_{n}" for n in plan["tranches"]]
+    deja_solde = bool(vises) and all(int(restes.get(c, 0)) == 0 for c in vises)
+    if type_lu is None or deja_solde:
+        propose = _type_pour_poste(prochain["cle"], types, echeancier)
+        if propose and propose.id != lu["type_paiement_id"]:
+            if deja_solde:
+                resume += f" « {type_lu.nom} » est déjà soldé : type remplacé par « {propose.nom} »."
+            else:
+                resume += f" Type proposé : « {propose.nom} »."
+            lu["type_paiement_id"] = propose.id
+            lu["champs_douteux"].append("type_paiement_id")
+    situation["resume"] = resume
+    return situation
+
+
 @login_required
 @require_POST
 def assistant_paiement(request):
@@ -182,7 +303,7 @@ def assistant_paiement(request):
         return JsonResponse({"ok": False, "erreur": str(exc)}, status=400)
 
     ids_types, ids_modes = {t.id for t in types}, {m.id for m in modes}
-    paiements = []
+    paiements, engages = [], {}  # engages : montants déjà lus dans ce document, par élève
     for lu in resultat.get("paiements", [])[:MAX_LIGNES]:
         # Seuls des types / modes existants et actifs sont renvoyés à la page
         if lu["type_paiement_id"] not in ids_types:
@@ -196,8 +317,17 @@ def assistant_paiement(request):
 
         eleve, suggestions = _trouver_eleve(request.user, lu["eleve_nom"], lu["matricule"], lu["classe"])
         identique = _paiement_identique(eleve, lu["montant"], lu["date_paiement"], lu["reference"])
+        situation = None
+        if eleve is not None:
+            try:
+                situation = _situation(eleve, lu, types, engages.get(eleve.id, 0))
+            except Exception:  # noqa: BLE001 — la situation est une aide : elle ne doit jamais bloquer la lecture
+                logger.exception("Assistant paiement : situation indisponible pour l'élève %s", eleve.pk)
+            if lu["montant"] is not None and not identique and not (situation or {}).get("bloquant"):
+                engages[eleve.id] = engages.get(eleve.id, 0) + int(lu["montant"])
         paiements.append({
             "lu": lu,
+            "situation": situation,
             "deja_enregistre": _resume_paiement(identique) if identique else None,
             "eleve": _fiche(eleve, dict((e.id, s) for e, s in suggestions).get(eleve.id, 1.0)) if eleve else None,
             "suggestions": [_fiche(e, s) for e, s in suggestions],
