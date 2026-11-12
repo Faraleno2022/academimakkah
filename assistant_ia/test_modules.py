@@ -164,8 +164,7 @@ class AvancesTests(Base):
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
-        # Comme la page « Ajouter une avance » : seul un non-administrateur est limité à son école
-        Profil.objects.filter(user=cls.user).update(role='COMPTABLE')
+        # L'utilisateur garde le rôle ADMIN de son école : il ne doit voir que le personnel de celle-ci
         cls.periode = PeriodeSalaire.objects.create(mois=11, annee=2026, ecole=cls.ecole, nombre_semaines=Decimal('4'), cree_par=cls.user)
         cls.prof = Enseignant.objects.create(
             nom='Diallo', prenoms='Ibrahima', ecole=cls.ecole, type_enseignant=TypeEnseignant.PRIMAIRE, statut='ACTIF',
@@ -373,3 +372,52 @@ class DocumentsTests(TestCase):
         type_, texte = appel.call_args.kwargs['images'][0]
         self.assertEqual(type_, 'text/plain')
         self.assertIn('Bah Mamadou', texte)
+
+class ProtectionDesDonneesTests(Base):
+    """Aucune page de l'assistant ne répond sans connexion, ni ne garde le document envoyé."""
+
+    PAGES = [
+        'notes:assistant_notes', 'notes:assistant_notes_excel',
+        'eleves:assistant_eleve', 'eleves:assistant_eleves_importer', 'eleves:assistant_eleves_excel',
+        'paiements:assistant_paiement', 'paiements:assistant_paiements_importer', 'paiements:assistant_paiements_excel',
+        'bus:assistant_bus', 'bus:assistant_bus_importer', 'bus:assistant_bus_excel',
+        'bus:assistant_cantine', 'bus:assistant_cantine_importer', 'bus:assistant_cantine_excel',
+        'salaires:assistant_avances', 'salaires:assistant_avances_importer', 'salaires:assistant_avances_excel',
+        'examen_accueil:assistant_notes', 'examen_accueil:assistant_notes_excel',
+        'eleves:doublons_eleves',
+    ]
+
+    def test_rien_sans_connexion(self):
+        self.client.logout()
+        with mock.patch('assistant_ia.claude.extraire_json') as appel:
+            for nom in self.PAGES:
+                for methode in (self.client.get, self.client.post):
+                    rep = methode(reverse(nom))
+                    self.assertIn(rep.status_code, (302, 403, 405), nom)
+                    if rep.status_code == 302:
+                        self.assertIn('login', rep['Location'], nom)
+                    self.assertNotIn(b'L-001', rep.content, nom)
+        appel.assert_not_called()
+
+    def test_compte_en_lecture_seule_ne_peut_rien_importer(self):
+        Profil.objects.filter(user=self.user).update(lecture_seule=True)
+        rep = self.envoyer('eleves:assistant_eleves_importer', lignes=[
+            {'_index': 0, 'prenom': 'Test', 'nom': 'Lecture', 'sexe': 'M', 'classe_id': str(self.classe.pk)},
+        ])
+        self.assertNotEqual(rep.status_code, 200)
+        self.assertFalse(Eleve.objects.filter(nom='LECTURE').exists())
+
+    def test_le_document_envoye_n_est_pas_conserve(self):
+        import os
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        media = settings.MEDIA_ROOT
+        avant = {os.path.join(d, f) for d, _, fichiers in os.walk(media) for f in fichiers} if os.path.isdir(media) else set()
+        with mock.patch('eleves.assistant_saisie.extraire_json', return_value={'eleves': []}):
+            self.client.post(reverse('eleves:assistant_eleve'), {
+                'photos': SimpleUploadedFile('liste.csv', 'Nom;Prenom\nSecret;Eleve\n'.encode('utf-8')),
+            })
+        apres = {os.path.join(d, f) for d, _, fichiers in os.walk(media) for f in fichiers} if os.path.isdir(media) else set()
+        self.assertEqual(avant, apres)  # rien n'est écrit sur le disque du serveur
+        from utilisateurs.models import JournalActivite
+        self.assertFalse(JournalActivite.objects.filter(description__icontains='Secret').exists())

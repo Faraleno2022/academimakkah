@@ -117,3 +117,8 @@ build_cahier_charges.py
 
 # Fichiers d activation .cmd envoyes aux clients (contiennent une licence)
 activations_clients/
+
+# Sauvegardes de base de données : jamais dans le dépôt (données d'élèves et de parents)
+backups/
+# Documents d'essai de l'assistant (noms d'élèves réels)
+exemples_assistant/

@@ -16,7 +16,7 @@ from django.views.decorators.http import require_POST
 
 from assistant_ia import lot
 from assistant_ia.claude import AssistantIAError, extraire_json, preparer_image
-from utilisateurs.utils import user_is_admin, user_school
+from utilisateurs.utils import user_is_superadmin, user_school
 
 from .forms import AvanceSalaireForm
 from .models import AvanceSalaire
@@ -26,7 +26,9 @@ logger = logging.getLogger(__name__)
 
 def _formulaire(request, donnees=None):
     ecole = user_school(request.user)
-    restreindre = not user_is_admin(request.user) and ecole is not None
+    # Seul le superutilisateur voit le personnel de toutes les écoles ; un administrateur
+    # d'école (rôle ADMIN) reste limité à la sienne.
+    restreindre = not user_is_superadmin(request.user) and ecole is not None
     return AvanceSalaireForm(donnees, ecole=ecole if restreindre else None)
 
 

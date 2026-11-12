@@ -27,7 +27,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from assistant_ia.claude import AssistantIAError, extraire_json, normaliser, preparer_image, ressemblance
-from utilisateurs.utils import user_is_admin, user_school
+from utilisateurs.utils import user_is_superadmin, user_school
 
 from .models import Classe, Eleve, HistoriqueEleve, Responsable
 from .utils_annee import get_annee_active
@@ -115,7 +115,7 @@ N'invente rien : laisse vide ce que tu ne lis pas clairement."""
 
 def _classes_proposees(request):
     """Mêmes classes que la liste du formulaire (école de l'utilisateur, année active)."""
-    if user_is_admin(request.user):
+    if user_is_superadmin(request.user):
         return []
     ecole = user_school(request.user)
     if not ecole:
@@ -166,8 +166,8 @@ def _responsable_connu(ecole, telephone_local: str):
 
 
 def _ecole_ou_refus(request):
-    ecole = None if user_is_admin(request.user) else user_school(request.user)
-    if not user_is_admin(request.user) and ecole is None:
+    ecole = None if user_is_superadmin(request.user) else user_school(request.user)
+    if not user_is_superadmin(request.user) and ecole is None:
         return None, JsonResponse({"ok": False, "erreur": "Votre compte n'est rattaché à aucune école."}, status=403)
     return ecole, None
 
