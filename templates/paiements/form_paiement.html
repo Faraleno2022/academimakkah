@@ -1800,6 +1800,11 @@ function ouvrirAssistantPaiement() {
     async function remplir(data, resume) {
         const lu = data.lu, douteux = new Set(lu.champs_douteux || []);
         let html = '';
+        if (data.deja_enregistre) {
+            const d = data.deja_enregistre;
+            html += `<div class="alert alert-danger py-2 mb-2"><strong>Ce paiement semble déjà enregistré</strong> : reçu ${echapper(d.recu)} du ${echapper(d.date)}, `
+                + `${Number(d.montant).toLocaleString('fr-FR')} GNF (${echapper(d.statut)}). N’enregistrez que s’il s’agit d’un autre versement.</div>`;
+        }
 
         if (data.eleve) {
             const ok = await chargerEleve(data.eleve.matricule);
@@ -1876,6 +1881,10 @@ function ouvrirAssistantPaiement() {
             let alerte = '', remarque = lu.remarque || '';
             if (p.eleve) {
                 remarque = (`Élève : ${p.eleve.nom} (${p.eleve.classe}). ` + remarque).trim();
+                if (p.deja_enregistre) {
+                    const d = p.deja_enregistre;
+                    alerte = `Déjà enregistré : reçu ${d.recu} du ${d.date}, ${Number(d.montant).toLocaleString('fr-FR')} GNF (${d.statut}).`;
+                }
             } else {
                 douteux.push('matricule');
                 alerte = `Élève « ${lu.eleve_nom || 'non lu'} » non retrouvé : saisissez son matricule.`
@@ -1890,7 +1899,7 @@ function ouvrirAssistantPaiement() {
                     reference: lu.reference || '',
                 },
                 douteux, remarque, alerte,
-                coche: !!p.eleve && lu.montant !== null,
+                coche: !!p.eleve && lu.montant !== null && !p.deja_enregistre,
             };
         });
 

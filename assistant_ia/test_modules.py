@@ -106,6 +106,28 @@ class BusTests(Base):
         self.assertIn(abo.numero_recu, data['crees'][0]['texte'])
         self.assertNotContains(self.client.get(reverse('bus:nouveau')), 'Paiement bus enregistré')
 
+    def test_bus_document_repris_une_deuxieme_fois(self):
+        texte = 'Paiements de bus du 10/11/2026 : Bah Mamadou 7A, 150 000 GNF, 1ère tranche'
+        analyse = lambda: self.lire('bus.assistant_saisie', 'bus:assistant_bus', {'paiements': [self._lu(matricule='L-001')]}, texte=texte)[0].json()
+        premiere = analyse()
+        self.assertIsNone(premiere['deja_importe'])
+        self.assertTrue(premiere['lignes'][0]['coche'])
+
+        ligne = {**premiere['lignes'][0]['valeurs'], '_index': 0}
+        rep = self.envoyer('bus:assistant_bus_importer', lignes=[ligne], empreintes=premiere['empreintes']).json()
+        self.assertEqual(len(rep['crees']), 1, rep)
+
+        seconde = analyse()
+        self.assertEqual(seconde['deja_importe']['nombre'], 1)
+        self.assertFalse(seconde['lignes'][0]['coche'])
+        self.assertIn('Déjà enregistré', seconde['lignes'][0]['alerte'])
+        rep = self.envoyer('bus:assistant_bus_importer', lignes=[ligne], empreintes=premiere['empreintes']).json()
+        self.assertEqual(rep['crees'], [])
+        self.assertEqual(AbonnementBus.objects.count(), 1)
+
+        # Le même document dans un autre module (cantine) n'est pas « déjà importé »
+        cantine = self.lire('bus.assistant_saisie', 'bus:assistant_cantine', {'abonnements': []}, texte=texte)[0]
+        self.assertEqual(cantine.status_code, 400)  # rien de lu, mais pas d'erreur liée à l'empreinte
     def test_excel_et_bouton(self):
         lignes = self.classeur(self.envoyer('bus:assistant_bus_excel', lignes=[
             {'matricule': 'L-001', 'grille_id': str(self.grille.pk), 'tranche': 'T1', 'montant': '150000', 'date': '2026-11-10'},

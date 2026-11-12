@@ -179,6 +179,9 @@ def assistant_eleve(request):
     if refus:
         return refus
 
+    from assistant_ia import lot
+
+    empreintes = lot.empreintes_document(request)
     classes = _classes_proposees(request)
     try:
         images = [preparer_image(f) for f in request.FILES.getlist("photos")[:4]]
@@ -239,6 +242,8 @@ def assistant_eleve(request):
         "classes": [[c.id, c.nom] for c in classes],
         "relations": [list(r) for r in Responsable.RELATION_CHOICES],
         "url_doublons": reverse("eleves:doublons_eleves"),
+        "empreintes": empreintes,
+        "deja_importe": lot.deja_importe(request, "eleves", empreintes),
     })
 
 
@@ -360,6 +365,13 @@ def assistant_eleves_importer(request):
             logger.exception("Assistant élèves : échec d'enregistrement de %s", nom_affiche)
             echecs.append({"index": ligne.get("_index"), "nom": nom_affiche, "erreur": "erreur à l'enregistrement"})
 
+    from assistant_ia import lot
+
+    try:
+        corps = json.loads(request.body.decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        corps = {}
+    lot.noter_import(request, "eleves", lot.empreintes_du_corps(corps), len(crees))
     logger.info("Assistant élèves : %s créé(s), %s refusé(s), par %s", len(crees), len(echecs), request.user.username)
     return JsonResponse({"ok": True, "crees": crees, "echecs": echecs})
 

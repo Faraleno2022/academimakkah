@@ -36,6 +36,8 @@
 <script>
 window.AssistantIA = (function () {
   let options = null;
+  let empreintes = [];      // empreinte du dernier document analysé, renvoyée à l'enregistrement
+  let dejaImporte = null;   // { quand, par, nombre } si ce document a déjà servi à un import
   const el = (id) => document.getElementById(id);
 
   function csrf() {
@@ -83,7 +85,17 @@ window.AssistantIA = (function () {
       let data;
       try { data = await rep.json(); } catch (_) { throw new Error('Réponse inattendue du serveur (session expirée ?).'); }
       if (!data.ok) throw new Error(data.erreur || "L'assistant n'a pas pu lire le document.");
+      empreintes = data.empreintes || [];
+      dejaImporte = data.deja_importe || null;
       await options.onResultat(data, resume);
+      if (dejaImporte) {
+        el('assistantIAResume').classList.remove('d-none');
+        el('assistantIAResume').insertAdjacentHTML('afterbegin',
+          '<div class="alert alert-danger py-2 mb-2"><i class="fas fa-exclamation-triangle me-2"></i><strong>Ce document a déjà été importé</strong> le '
+          + echapper(dejaImporte.quand) + ' par ' + echapper(dejaImporte.par)
+          + (dejaImporte.nombre ? ' (' + dejaImporte.nombre + ' ligne(s) enregistrée(s))' : '')
+          + '. Pour éviter un double enregistrement, aucune ligne n\u2019est cochée : ne cochez que ce qui manque vraiment.</div>');
+      }
     } catch (e) {
       erreur(e.message || String(e));
     } finally {
@@ -106,13 +118,13 @@ window.AssistantIA = (function () {
   function tableau(conteneur, colonnes, lignes) {
     var html = '<div class="table-responsive" style="max-height:55vh"><table class="table table-sm table-bordered align-middle mb-2">'
       + '<thead class="table-light" style="position:sticky;top:0;z-index:1"><tr><th style="width:32px">'
-      + '<input type="checkbox" class="form-check-input" data-tout checked title="Tout cocher"></th>'
+      + '<input type="checkbox" class="form-check-input" data-tout' + (dejaImporte ? '' : ' checked') + ' title="Tout cocher"></th>'
       + colonnes.map(function (c) { return '<th style="min-width:' + (c.largeur || 110) + 'px">' + echapper(c.titre) + '</th>'; }).join('')
       + '</tr></thead><tbody>';
     lignes.forEach(function (l, i) {
       var classeLigne = l.alerte ? 'table-warning' : '';
       html += '<tr data-ligne="' + i + '" class="' + classeLigne + '"><td><input type="checkbox" class="form-check-input" data-coche'
-        + (l.coche === false ? '' : ' checked') + '></td>';
+        + (l.coche === false || dejaImporte ? '' : ' checked') + '></td>';
       colonnes.forEach(function (c) {
         var v = l.valeurs[c.cle];
         var douteux = (l.douteux || []).indexOf(c.cle) !== -1;
@@ -161,6 +173,7 @@ window.AssistantIA = (function () {
 
   // Envoi JSON (import) ou téléchargement d'un fichier Excel renvoyé par le serveur
   async function envoyer(url, donnees, nomFichier) {
+    if (donnees && Array.isArray(donnees.lignes) && empreintes.length) donnees.empreintes = empreintes;
     const rep = await fetch(url, {
       method: 'POST', body: JSON.stringify(donnees),
       headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf(), 'X-Requested-With': 'XMLHttpRequest' },

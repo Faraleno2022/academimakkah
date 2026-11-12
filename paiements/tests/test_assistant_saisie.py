@@ -151,3 +151,54 @@ class AssistantPaiementTests(TestCase):
         self.assertEqual(lignes[1][3], 150000)
         self.assertEqual(lignes[1][6], 'Orange Money')
         self.assertFalse(Paiement.objects.exists())
+
+    # ----- Document repris une deuxième fois -----
+
+    def test_document_deja_importe_et_paiement_deja_enregistre(self):
+        import json
+
+        self._echeancier(self.mamadou)
+        tranche = TypePaiement.objects.create(nom='Tranche 1')
+        texte = 'Bordereau du 10/11/2026 : Bah Mamadou 7A, 150 000 GNF, Orange Money, réf OM-777'
+        lu = _lu(matricule='7A-002', montant=150000, reference='OM-777', type_paiement_id=tranche.pk, mode_paiement_id=self.orange.pk)
+
+        def analyser():
+            with mock.patch('paiements.assistant_saisie.extraire_json', return_value={'paiements': [dict(lu)]}):
+                return self.client.post(reverse('paiements:assistant_paiement'), {'texte': texte}).json()
+
+        premiere = analyser()
+        self.assertIsNone(premiere['deja_importe'])
+        self.assertIsNone(premiere['paiements'][0]['deja_enregistre'])
+        self.assertEqual(len(premiere['empreintes']), 1)
+
+        ligne = {'_index': 0, 'matricule': '7A-002', 'montant': '150000', 'date_paiement': '2026-11-10',
+                 'type_paiement_id': str(tranche.pk), 'mode_paiement_id': str(self.orange.pk), 'reference': 'OM-777'}
+        corps = json.dumps({'lignes': [ligne], 'empreintes': premiere['empreintes']})
+        with mock.patch('paiements.views.send_payment_receipt'), mock.patch('paiements.views.send_enrollment_confirmation'):
+            rep = self.client.post(reverse('paiements:assistant_paiements_importer'), corps, content_type='application/json').json()
+        self.assertEqual(len(rep['crees']), 1, rep)
+        recu = Paiement.objects.get().numero_recu
+
+        # Même document analysé une seconde fois (mêmes mots, espaces et casse différents)
+        with mock.patch('paiements.assistant_saisie.extraire_json', return_value={'paiements': [dict(lu)]}):
+            seconde = self.client.post(reverse('paiements:assistant_paiement'), {'texte': '  ' + texte.upper().replace(' ', '  ')}).json()
+        self.assertEqual(seconde['deja_importe']['nombre'], 1)
+        self.assertEqual(seconde['deja_importe']['par'], 'compta-ia')
+        self.assertEqual(seconde['paiements'][0]['deja_enregistre']['recu'], recu)
+
+        # Et même si l'utilisateur coche quand même la ligne : refusée, aucun doublon créé
+        with mock.patch('paiements.views.send_payment_receipt'), mock.patch('paiements.views.send_enrollment_confirmation'):
+            rep = self.client.post(reverse('paiements:assistant_paiements_importer'), corps, content_type='application/json').json()
+        self.assertEqual(rep['crees'], [])
+        self.assertIn('déjà enregistré', rep['echecs'][0]['erreur'])
+        self.assertIn(recu, rep['echecs'][0]['erreur'])
+        self.assertEqual(Paiement.objects.count(), 1)
+
+        # Même montant le même jour sans référence : reconnu aussi ; un autre jour : accepté à l'analyse
+        self.assertIsNotNone(self._poster(_lu(matricule='7A-002', montant=150000, reference=''))['deja_enregistre'])
+        self.assertIsNone(self._poster(_lu(matricule='7A-002', montant=150000, reference='', date_paiement='2026-11-12'))['deja_enregistre'])
+
+    def test_un_autre_document_n_est_pas_signale(self):
+        with mock.patch('paiements.assistant_saisie.extraire_json', return_value={'paiements': [_lu(matricule='7A-002')]}):
+            data = self.client.post(reverse('paiements:assistant_paiement'), {'texte': 'Un tout autre bordereau de versements du mois'}).json()
+        self.assertIsNone(data['deja_importe'])

@@ -184,3 +184,85 @@ ENTIER_OU_NUL = {"anyOf": [{"type": "integer"}, {"type": "null"}]}
 REGLES_COMMUNES = """- champs_douteux : noms des champs dont tu n'es pas sûr (ex. ["montant"]).
 - remarque : courte explication en français si quelque chose est incertain, sinon "".
 N'invente rien : laisse "" ou null ce que tu ne lis pas clairement."""
+
+# ---------------------------------------------------------------------------
+# Fichier déjà importé : empreinte du document (SHA-256), mémorisée dans le journal
+# d'activité à chaque import réussi et recherchée à chaque nouvelle analyse.
+# ---------------------------------------------------------------------------
+
+MARQUE_IMPORT = "Import par l'assistant"
+
+
+def empreintes_document(request):
+    """Empreintes des fichiers envoyés et du texte collé (le contenu, pas le nom du fichier)."""
+    import hashlib
+
+    resultat = []
+    for fichier in request.FILES.getlist("photos"):
+        h = hashlib.sha256()
+        for morceau in fichier.chunks():
+            h.update(morceau)
+        fichier.seek(0)
+        resultat.append(h.hexdigest()[:32])
+    saisi = " ".join((request.POST.get("texte") or "").split())
+    if len(saisi) >= 20:  # un texte trop court n'identifie pas un document
+        resultat.append(hashlib.sha256(saisi.lower().encode("utf-8")).hexdigest()[:32])
+    return resultat
+
+
+def _journal_ecole(user):
+    from utilisateurs.models import JournalActivite
+
+    journal = JournalActivite.objects.filter(action="CREATION", type_objet="SYSTEME")
+    ecole = getattr(getattr(user, "profil", None), "ecole", None)
+    return journal.filter(user__profil__ecole=ecole) if ecole else journal.filter(user=user)
+
+
+def deja_importe(request, module, empreintes):
+    """Dernier import réussi du même document pour ce module et cette école, ou None."""
+    from django.utils import timezone
+
+    for empreinte in empreintes or []:
+        trace = (
+            _journal_ecole(request.user)
+            .filter(description__startswith=f"{MARQUE_IMPORT} [{module}]", description__contains=empreinte)
+            .select_related("user").order_by("-date_action").first()
+        )
+        if trace:
+            nombre = re.search(r": (\d+) ligne", trace.description)
+            return {
+                "quand": timezone.localtime(trace.date_action).strftime("%d/%m/%Y à %H:%M"),
+                "par": trace.user.get_full_name() or trace.user.username,
+                "nombre": int(nombre.group(1)) if nombre else None,
+            }
+    return None
+
+
+def empreintes_du_corps(corps):
+    valeurs = corps.get("empreintes") if isinstance(corps, dict) else None
+    return [e for e in valeurs if isinstance(e, str) and re.fullmatch(r"[0-9a-f]{32}", e)][:8] if isinstance(valeurs, list) else []
+
+
+def noter_import(request, module, empreintes, nombre):
+    """Mémorise qu'un document a servi à enregistrer ``nombre`` ligne(s)."""
+    from utilisateurs.models import JournalActivite
+
+    if not empreintes or not nombre:
+        return
+    JournalActivite.objects.create(
+        user=request.user, action="CREATION", type_objet="SYSTEME",
+        description=f"{MARQUE_IMPORT} [{module}] : {nombre} ligne(s) enregistrée(s). Document : {' '.join(empreintes)}",
+        adresse_ip=request.META.get("REMOTE_ADDR") or "0.0.0.0",
+        user_agent=(request.META.get("HTTP_USER_AGENT") or "")[:200],
+    )
+
+
+def reponse_lecture(request, module, empreintes, **donnees):
+    """Réponse JSON d'une analyse, avec l'empreinte du document et l'alerte « déjà importé »."""
+    from django.http import JsonResponse
+
+    return JsonResponse({
+        "ok": True, **donnees,
+        "empreintes": empreintes,
+        "deja_importe": deja_importe(request, module, empreintes),
+    })

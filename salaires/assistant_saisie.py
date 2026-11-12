@@ -30,9 +30,28 @@ def _formulaire(request, donnees=None):
     return AvanceSalaireForm(donnees, ecole=ecole if restreindre else None)
 
 
+def _avance_identique(personne, periode_id, montant, jour):
+    """Même personne, même période, même montant, même date : avance déjà enregistrée."""
+    if personne is None or not str(periode_id or "").isdigit() or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(jour or "")):
+        return None
+    try:
+        montant = int(float(montant))
+    except (TypeError, ValueError):
+        return None
+    return AvanceSalaire.objects.filter(
+        enseignant=personne, periode_id=periode_id or None, montant=montant, date_avance=jour
+    ).order_by("-pk").first()
+
+
+def _alerte_avance(avance) -> str:
+    return (f"Avance déjà enregistrée le {avance.date_avance:%d/%m/%Y} pour cette période : "
+            "ne la cochez que s'il s'agit d'une autre avance.")
+
+
 @login_required
 @require_POST
 def assistant_avances(request):
+    empreintes = lot.empreintes_document(request)
     form = _formulaire(request)
     enseignants = list(form.fields["enseignant"].queryset)
     periodes = list(form.fields["periode"].queryset)
@@ -93,25 +112,29 @@ Pour chaque avance :
         for cle, manque in (("enseignant_id", personne is None or "personne" in douteux), ("montant", montant is None)):
             if manque:
                 douteux.append(cle)
+        jour = lu["date"] if re.fullmatch(r"\d{4}-\d{2}-\d{2}", lu["date"] or "") else timezone.localdate().isoformat()
+        identique = _avance_identique(personne, periodes[0].id, montant, jour)
+        if identique:
+            alerte = _alerte_avance(identique)
         lignes.append({
             "valeurs": {
                 "enseignant_id": personne.id if personne else "", "periode_id": periodes[0].id,
                 "montant": "" if montant is None else int(montant),
-                "date": lu["date"] if re.fullmatch(r"\d{4}-\d{2}-\d{2}", lu["date"] or "") else timezone.localdate().isoformat(),
+                "date": jour,
                 "mode_paiement_id": lu["mode_paiement_id"] if lu["mode_paiement_id"] in ids_modes else "",
                 "reference": lu["reference"], "motif": lu["motif"],
             },
             "douteux": douteux,
             "remarque": (f"Lu : {lu['personne']}. " if lu["personne"] else "") + lu["remarque"],
             "alerte": alerte,
-            "coche": bool(personne and montant is not None),
+            "coche": bool(personne and montant is not None and not identique),
         })
     if not lignes:
         return JsonResponse({"ok": False, "erreur": "Aucune avance n'a été lue sur ce document."}, status=400)
 
     logger.info("Assistant avances : %s ligne(s) lue(s) par %s", len(lignes), request.user.username)
-    return JsonResponse({
-        "ok": True, "lignes": lignes,
+    return lot.reponse_lecture(request, "avances", empreintes, **{
+        "lignes": lignes,
         "intro": f"<strong>{len(lignes)} avance(s) lue(s).</strong> Corrigez si besoin (orange = à contrôler), décochez "
                  "les lignes à ne pas enregistrer, puis validez. Le salaire net de chaque personne est recalculé.",
         "colonnes": [
@@ -131,7 +154,7 @@ Pour chaque avance :
 def assistant_avances_importer(request):
     from .views import ajouter_avance
 
-    lignes, _ = lot.lignes_du_corps(request)
+    lignes, corps = lot.lignes_du_corps(request)
     if not lignes:
         return JsonResponse({"ok": False, "erreur": "Aucune ligne à enregistrer."}, status=400)
 
@@ -152,6 +175,11 @@ def assistant_avances_importer(request):
             "reference_externe": lot.texte(ligne, "reference"),
             "motif": lot.texte(ligne, "motif") or "Saisi avec l'assistant photo.",
         }
+        identique = _avance_identique(personne, donnees["periode"], donnees["montant"], donnees["date_avance"])
+        if identique:
+            echecs.append({"index": index, "nom": nom, "erreur": _alerte_avance(identique).replace(
+                "ne la cochez que", "saisissez-la par le formulaire")})
+            continue
         form = _formulaire(request, donnees)
         if not form.is_valid():
             echecs.append({"index": index, "nom": nom, "erreur": lot.erreurs_formulaire(form)})
@@ -171,6 +199,7 @@ def assistant_avances_importer(request):
             echecs.append({"index": index, "nom": nom, "erreur": " ".join(erreurs)
                            or "avance refusée : vérifiez que cette personne est payée sur cette période"})
 
+    lot.noter_import(request, "avances", lot.empreintes_du_corps(corps), len(crees))
     logger.info("Assistant avances : %s enregistrée(s), %s refusée(s), par %s", len(crees), len(echecs), request.user.username)
     return JsonResponse({"ok": True, "crees": crees, "echecs": echecs})
 

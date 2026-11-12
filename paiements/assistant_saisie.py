@@ -15,6 +15,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from assistant_ia import lot
 from assistant_ia.claude import AssistantIAError, extraire_json, normaliser, preparer_image, ressemblance
 from eleves.models import Eleve
 
@@ -140,9 +141,37 @@ def _fiche(e, score):
     }
 
 
+def _paiement_identique(eleve, montant, date_iso, reference=""):
+    """Paiement déjà enregistré pour cet élève : même référence, ou même montant le même jour."""
+    import re
+
+    from .models import Paiement
+
+    if eleve is None:
+        return None
+    actifs = Paiement.objects.filter(eleve=eleve).exclude(statut__in=("REJETE", "REMBOURSE")).order_by("-pk")
+    if (reference or "").strip():
+        par_reference = actifs.filter(reference_externe__iexact=reference.strip()).first()
+        if par_reference:
+            return par_reference
+    try:
+        montant = int(float(montant))
+    except (TypeError, ValueError):
+        return None
+    if montant <= 0 or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_iso or ""):
+        return None
+    return actifs.filter(montant=montant, date_paiement=date_iso).first()
+
+
+def _resume_paiement(p) -> dict:
+    return {"recu": p.numero_recu or "", "date": p.date_paiement.strftime("%d/%m/%Y"),
+            "montant": int(p.montant), "statut": p.get_statut_display()}
+
+
 @login_required
 @require_POST
 def assistant_paiement(request):
+    empreintes = lot.empreintes_document(request)
     types = list(TypePaiement.objects.filter(actif=True).order_by("nom"))
     modes = list(ModePaiement.objects.filter(actif=True).order_by("nom"))
 
@@ -166,8 +195,10 @@ def assistant_paiement(request):
         lu["plusieurs_paiements"] = False
 
         eleve, suggestions = _trouver_eleve(request.user, lu["eleve_nom"], lu["matricule"], lu["classe"])
+        identique = _paiement_identique(eleve, lu["montant"], lu["date_paiement"], lu["reference"])
         paiements.append({
             "lu": lu,
+            "deja_enregistre": _resume_paiement(identique) if identique else None,
             "eleve": _fiche(eleve, dict((e.id, s) for e, s in suggestions).get(eleve.id, 1.0)) if eleve else None,
             "suggestions": [_fiche(e, s) for e, s in suggestions],
         })
@@ -180,13 +211,13 @@ def assistant_paiement(request):
         len(paiements), (paiements[0]["eleve"] or {}).get("id", "non trouvé"), request.user.username,
     )
     # Le premier paiement reste au niveau racine : la page s'en sert quand il n'y en a qu'un
-    return JsonResponse({
-        "ok": True,
+    return lot.reponse_lecture(
+        request, "paiements", empreintes,
         **paiements[0],
-        "paiements": paiements,
-        "types": [[t.id, t.nom] for t in types],
-        "modes": [[m.id, m.nom] for m in modes],
-    })
+        paiements=paiements,
+        types=[[t.id, t.nom] for t in types],
+        modes=[[m.id, m.nom] for m in modes],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +292,14 @@ def assistant_paiements_importer(request):
             "reference_externe": _t(ligne, "reference"),
             "observations": "Saisi avec l'assistant photo.",
         })
+        identique = _paiement_identique(eleve, donnees["montant"], donnees["date_paiement"], donnees["reference_externe"])
+        if identique:
+            montant_gnf = f"{int(identique.montant):,}".replace(",", " ")
+            echecs.append({"index": index, "nom": nom, "erreur": (
+                f"déjà enregistré le {identique.date_paiement:%d/%m/%Y} (reçu {identique.numero_recu}, "
+                f"{montant_gnf} GNF). S'il s'agit vraiment d'un second paiement identique, "
+                "saisissez-le par le formulaire.")})
+            continue
         form = PaiementForm(donnees, user=request.user)
         if not form.is_valid():
             erreurs = " ; ".join(
@@ -292,6 +331,8 @@ def assistant_paiements_importer(request):
             echecs.append({"index": index, "nom": nom, "erreur": " ".join(erreurs) or "paiement refusé"})
 
     list(stock)  # les messages de la vue ne doivent pas réapparaître sur la page suivante
+    import json
+    lot.noter_import(request, "paiements", lot.empreintes_du_corps(json.loads(request.body.decode("utf-8"))), len(crees))
     logger.info("Assistant paiements : %s enregistré(s), %s refusé(s), par %s", len(crees), len(echecs), request.user.username)
     return JsonResponse({"ok": True, "crees": crees, "echecs": echecs})
 

@@ -43,6 +43,27 @@ def _date(valeur) -> str:
     return valeur if re.fullmatch(r"\d{4}-\d{2}-\d{2}", valeur or "") else ""
 
 
+def _identique(modele, eleve, montant, jour, periodicite):
+    """Même élève, même montant, même date et même période : déjà enregistré."""
+    import re
+
+    if eleve is None or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(jour or "")):
+        return None
+    try:
+        montant = int(float(montant))
+    except (TypeError, ValueError):
+        return None
+    return modele.objects.filter(
+        eleve=eleve, montant=montant, date_debut=jour, periodicite=periodicite
+    ).order_by("-pk").first()
+
+
+def _alerte_identique(identique) -> str:
+    recu = getattr(identique, "numero_recu", "") or ""
+    return (f"Déjà enregistré le {identique.date_debut:%d/%m/%Y}"
+            + (f" (reçu {recu})" if recu else "") + " : ne le cochez que s'il s'agit d'un autre versement.")
+
+
 def _entete(quoi) -> str:
     return (f"Tu aides la caisse d'une école guinéenne à saisir {quoi} dans MySchoolGN. On te donne la photo "
             "d'un reçu, d'un bordereau, d'une capture Orange Money / MTN ou d'une liste, ou un texte. "
@@ -72,6 +93,7 @@ def assistant_bus(request):
     ecole, refus = _ecole_ou_refus(request)
     if refus:
         return refus
+    empreintes = lot.empreintes_document(request)
     form, grilles, tranches, modes = _options_bus(ecole)
     if not grilles:
         return JsonResponse({"ok": False, "erreur": "Créez d'abord une grille tarifaire de bus."}, status=400)
@@ -129,21 +151,25 @@ Pour chaque paiement :
                 douteux.append(cle)
         if "eleve_nom" in douteux:
             douteux.append("matricule")
+        jour = _date(lu["date"]) or timezone.localdate().isoformat()
+        identique = _identique(AbonnementBus, eleve, montant, jour, lu["tranche"])
+        if identique:
+            alerte = _alerte_identique(identique)
         lignes.append({
             "valeurs": {
                 "matricule": matricule or lu["matricule"], "montant": "" if montant is None else int(montant),
-                "date": _date(lu["date"]) or timezone.localdate().isoformat(), "grille_id": grille,
+                "date": jour, "grille_id": grille,
                 "tranche": lu["tranche"], "mode_paiement_id": mode, "reference": lu["reference"],
             },
             "douteux": douteux, "remarque": f"{debut} {lu['remarque']}".strip(), "alerte": alerte,
-            "coche": bool(eleve and montant is not None and grille and lu["tranche"]),
+            "coche": bool(eleve and montant is not None and grille and lu["tranche"] and not identique),
         })
     if not lignes:
         return JsonResponse({"ok": False, "erreur": "Aucun paiement de bus n'a été lu sur ce document."}, status=400)
 
     logger.info("Assistant bus : %s ligne(s) lue(s) par %s", len(lignes), request.user.username)
-    return JsonResponse({
-        "ok": True, "lignes": lignes,
+    return lot.reponse_lecture(request, "bus", empreintes, **{
+        "lignes": lignes,
         "intro": f"<strong>{len(lignes)} paiement(s) de bus lu(s).</strong> Corrigez si besoin (orange = à contrôler), "
                  "décochez les lignes à ne pas enregistrer, puis validez. Un reçu est créé pour chaque ligne.",
         "colonnes": [
@@ -163,10 +189,11 @@ def _importer(request, modele, formulaire, vue, donnees_de, description):
     ecole, refus = _ecole_ou_refus(request)
     if refus:
         return refus
-    lignes, _ = lot.lignes_du_corps(request)
+    lignes, corps = lot.lignes_du_corps(request)
     if not lignes:
         return JsonResponse({"ok": False, "erreur": "Aucune ligne à enregistrer."}, status=400)
 
+    module = "bus" if modele is AbonnementBus else "cantine"
     eleves = formulaire(ecole=ecole).fields["eleve"].queryset
     crees, echecs = [], []
     for ligne in lignes:
@@ -178,6 +205,11 @@ def _importer(request, modele, formulaire, vue, donnees_de, description):
             continue
         nom = f"{eleve.prenom} {eleve.nom}"
         donnees = donnees_de(ligne, eleve)
+        identique = _identique(modele, eleve, donnees["montant"], donnees["date_debut"], donnees["periodicite"])
+        if identique:
+            echecs.append({"index": index, "nom": nom, "erreur": _alerte_identique(identique).replace(
+                "ne le cochez que", "saisissez-le par le formulaire")})
+            continue
         form = formulaire(donnees, ecole=ecole)
         if not form.is_valid():
             echecs.append({"index": index, "nom": nom, "erreur": lot.erreurs_formulaire(form)})
@@ -195,6 +227,7 @@ def _importer(request, modele, formulaire, vue, donnees_de, description):
         else:
             echecs.append({"index": index, "nom": nom, "erreur": " ".join(erreurs) or "enregistrement refusé"})
 
+    lot.noter_import(request, module, lot.empreintes_du_corps(corps), len(crees))
     logger.info("Assistant %s : %s enregistré(s), %s refusé(s), par %s",
                 modele.__name__, len(crees), len(echecs), request.user.username)
     return JsonResponse({"ok": True, "crees": crees, "echecs": echecs})
@@ -267,6 +300,7 @@ def assistant_cantine(request):
     ecole, refus = _ecole_ou_refus(request)
     if refus:
         return refus
+    empreintes = lot.empreintes_document(request)
     schema = lot.schema_liste("abonnements", {
         "eleve_nom": {"type": "string"}, "matricule": {"type": "string"}, "classe": {"type": "string"},
         "montant": lot.NOMBRE_OU_NUL, "date": {"type": "string"},
@@ -308,22 +342,26 @@ Pour chaque abonnement :
                             ("periodicite", not lu["periodicite"]), ("type_repas", not lu["type_repas"])):
             if manque:
                 douteux.append(cle)
+        jour = _date(lu["date"]) or timezone.localdate().isoformat()
+        identique = _identique(AbonnementCantine, eleve, montant, jour, lu["periodicite"] or "MENSUEL")
+        if identique:
+            alerte = _alerte_identique(identique)
         lignes.append({
             "valeurs": {
                 "matricule": matricule or lu["matricule"], "montant": "" if montant is None else int(montant),
-                "date": _date(lu["date"]) or timezone.localdate().isoformat(),
+                "date": jour,
                 "periodicite": lu["periodicite"] or "MENSUEL", "type_repas": lu["type_repas"] or "DEJEUNER",
                 "reference": lu["reference"],
             },
             "douteux": douteux, "remarque": f"{debut} {lu['remarque']}".strip(), "alerte": alerte,
-            "coche": bool(eleve and montant is not None),
+            "coche": bool(eleve and montant is not None and not identique),
         })
     if not lignes:
         return JsonResponse({"ok": False, "erreur": "Aucun abonnement de cantine n'a été lu sur ce document."}, status=400)
 
     logger.info("Assistant cantine : %s ligne(s) lue(s) par %s", len(lignes), request.user.username)
-    return JsonResponse({
-        "ok": True, "lignes": lignes,
+    return lot.reponse_lecture(request, "cantine", empreintes, **{
+        "lignes": lignes,
         "intro": f"<strong>{len(lignes)} abonnement(s) de cantine lu(s).</strong> Corrigez si besoin (orange = à contrôler), "
                  "décochez les lignes à ne pas enregistrer, puis validez.",
         "colonnes": [
