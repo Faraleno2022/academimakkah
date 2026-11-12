@@ -117,3 +117,45 @@ class DoublonsTests(TestCase):
         self.assertContains(self.client.get(url), 'Seul un administrateur')
         self.client.post(url, {'corbeille': [self.germaine_2.pk]})
         self.assertTrue(Eleve.objects.filter(pk=self.germaine_2.pk).exists())
+
+    def test_rapports_pdf_et_excel(self):
+        from io import BytesIO
+        from openpyxl import load_workbook
+        from pypdf import PdfReader
+
+        url = reverse('eleves:doublons_eleves')
+        page = self.client.get(url, {'classe': self.classe.pk})
+        self.assertContains(page, 'export=pdf')
+        self.assertContains(page, 'export=excel')
+
+        excel = self.client.get(url, {'classe': self.classe.pk, 'export': 'excel'})
+        self.assertEqual(excel.status_code, 200)
+        self.assertIn('spreadsheet', excel['Content-Type'])
+        lignes = [l for l in load_workbook(BytesIO(excel.content)).active.values if l and l[0]]
+        entetes = next(i for i, l in enumerate(lignes) if l[0] == 'Classe')
+        donnees = lignes[entetes + 1:]
+        matricules = {l[3]: l for l in donnees}
+        self.assertIn('CL9-185', matricules)                       # le doublon de Germaine
+        self.assertNotIn('X-1', matricules)                        # jamais une autre école
+        self.assertEqual(matricules['CL9-182'][-1], 'Garder')
+        self.assertEqual(matricules['CL9-185'][-1], 'Corbeille (fiche vide)')
+        self.assertEqual(matricules['CL9-186'][-1], 'Garder')      # celle de Micheline qui a un paiement
+        self.assertIn('1 paiement(s)', matricules['CL9-186'][11])
+        self.assertEqual(matricules['CL9-210'][1], 'Noms proches : à vérifier')
+
+        pdf = self.client.get(url, {'export': 'pdf'})
+        self.assertEqual(pdf.status_code, 200)
+        self.assertEqual(pdf['Content-Type'], 'application/pdf')
+        texte = ' '.join(p.extract_text() for p in PdfReader(BytesIO(pdf.content)).pages)
+        self.assertIn('CL9-185', texte)
+        self.assertIn('Corbeille (fiche vide)', texte)
+        self.assertNotIn('X-1', texte)
+        self.assertTrue(Eleve.objects.filter(pk=self.germaine_2.pk).exists())   # un rapport ne modifie rien
+
+    def test_rapport_sans_doublon_et_sans_connexion(self):
+        url = reverse('eleves:doublons_eleves')
+        pdf = self.client.get(url, {'classe': self.autre_classe.pk, 'export': 'pdf'})
+        self.assertEqual(pdf.status_code, 200)
+        self.assertEqual(self.client.get(url, {'classe': self.autre_classe.pk}).content.count(b'export=pdf'), 0)
+        self.client.logout()
+        self.assertEqual(self.client.get(url, {'export': 'excel'}).status_code, 302)
