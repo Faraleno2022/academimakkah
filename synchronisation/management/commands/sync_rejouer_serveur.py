@@ -17,13 +17,14 @@ depuis septembre sont enregistrés en une fois.
   devenues inutiles (journal de synchronisation uniquement, jamais une donnée métier).
 """
 
+import re
 from collections import defaultdict
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from eleves.models import Ecole
-from synchronisation.engine import apply_sync_change
+from synchronisation.engine import apply_sync_change, get_model, objet_par_uuid
 from synchronisation.models import SyncChange
 from synchronisation.registry import SYNC_MODEL_LABELS
 from synchronisation.sequence import reemettre
@@ -71,6 +72,7 @@ class Command(BaseCommand):
 
         reussis, restants = [], list(a_rejouer)
         erreurs = defaultdict(lambda: [0, set()])
+        raisons = {}  # id du changement -> dernière erreur
         ctx = transaction.atomic() if not reel else _SansTransaction()
         with ctx:
             for numero in range(1, max(1, options['passes']) + 1):
@@ -86,6 +88,7 @@ class Command(BaseCommand):
                         reussis.append((ecole_id, label, uuid, pk))
                     except Exception as exc:  # noqa: BLE001 — chaque fiche est indépendante
                         encore.append((ecole_id, label, uuid, pk))
+                        raisons[pk] = ' '.join(str(exc).split())
                         erreurs[(label, ' '.join(str(exc).split())[:150])][0] += 1
                         erreurs[(label, ' '.join(str(exc).split())[:150])][1].add(ecoles.get(ecole_id, str(ecole_id)))
                 self.stdout.write(f"passe {numero} : {len(restants) - len(encore)} réussie(s), {len(encore)} en échec")
@@ -95,6 +98,11 @@ class Command(BaseCommand):
                 restants = encore
                 if not restants:
                     break
+            # Identification des fiches restantes : à faire AVANT l'annulation de la simulation
+            restantes_details = [
+                (ecoles.get(ecole_id, str(ecole_id)), label, self._indice(pk, raisons.get(pk, "")))
+                for ecole_id, label, _, pk in restants[:60]
+            ]
             if not reel:
                 transaction.set_rollback(True)
 
@@ -117,6 +125,13 @@ class Command(BaseCommand):
             for (label, erreur), (nombre, noms) in sorted(erreurs.items(), key=lambda x: -x[1][0])[:15]:
                 self.stdout.write(f"  {nombre:>5} × {label} — {erreur}  ({', '.join(sorted(noms))})")
 
+        if restantes_details:
+            self.stdout.write(self.style.MIGRATE_HEADING("\nFiches qui restent en échec (décision humaine)"))
+            for ecole, label, indice in restantes_details:
+                self.stdout.write(f"  - {ecole} | {label} | {indice}")
+            if len(restants) > len(restantes_details):
+                self.stdout.write(f"  … {len(restants) - len(restantes_details)} autre(s)")
+
         if reel:
             ids = [pk for _, _, _, pk in reussis]
             if ids:
@@ -133,6 +148,47 @@ class Command(BaseCommand):
         else:
             self.stdout.write(self.style.WARNING(
                 "\nSIMULATION terminée : rien n'a été enregistré. Relancez avec --confirmer pour appliquer."))
+
+
+    @staticmethod
+    def _indice(pk, raison):
+        """Ce qui permet de reconnaître la fiche, et pourquoi son parent manque s'il manque."""
+        change = SyncChange.objects.filter(pk=pk).first()
+        if change is None:
+            return raison
+        payload = change.payload or {}
+        morceaux = []
+        for cle in ('matricule', 'prenom', 'nom', 'numero_recu', 'montant', 'date_avance',
+                    'date_paiement', 'description', 'motif', 'statut'):
+            valeur = payload.get(cle)
+            if valeur not in ('', None):
+                morceaux.append(f"{cle}={str(valeur)[:60]}")
+        for champ, label_parent in (('enseignant', 'salaires.Enseignant'), ('eleve', 'eleves.Eleve')):
+            ref = payload.get(champ)
+            modele = get_model(label_parent)
+            if isinstance(ref, dict) and ref.get('sync_uuid') and modele is not None:
+                parent = objet_par_uuid(modele, ref['sync_uuid'])
+                if parent is not None:
+                    morceaux.append(f"{champ}={getattr(parent, 'nom_complet', parent)}")
+        texte = ", ".join(morceaux) or change.model_label
+        texte += f" | {raison[:110]}"
+        correspondance = re.match(r"Relation introuvable pour (\w+)", raison)
+        modele = get_model(change.model_label)
+        if correspondance and modele is not None:
+            champ = correspondance.group(1)
+            ref = payload.get(champ)
+            try:
+                parent_label = modele._meta.get_field(champ).remote_field.model._meta.label
+            except Exception:  # noqa: BLE001
+                parent_label = None
+            if parent_label and isinstance(ref, dict) and ref.get('sync_uuid'):
+                histoire = SyncChange.objects.filter(
+                    model_label=parent_label, object_uuid=ref['sync_uuid']).order_by('-id').first()
+                if histoire is None:
+                    texte += f" | {champ} : le serveur n'a JAMAIS reçu cette fiche ({parent_label})"
+                else:
+                    texte += f" | {champ} : dernier changement {histoire.statut} ({(histoire.erreur or 'sans erreur')[:90]})"
+        return texte
 
 
 class _SansTransaction:

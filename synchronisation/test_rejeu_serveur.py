@@ -107,5 +107,8 @@ class RejeuServeurTests(TestCase):
         sortie = self._lancer(confirmer=True)
         self.assertIn('1 déjà remplacée(s)', sortie)
         self.assertIn('Relation introuvable pour eleve', sortie)
+        self.assertIn('Fiches qui restent en échec', sortie)
+        self.assertIn('numero_recu=REC-ORPH', sortie)                        # de quoi reconnaître la fiche
+        self.assertIn("le serveur n'a JAMAIS reçu cette fiche", sortie)       # cause : parent jamais arrivé
         self.assertFalse(Paiement.objects.filter(numero_recu__startswith='REC-ORPH').exists())
         self.assertEqual(SyncChange.objects.get(object_uuid=orpheline).statut, SyncChange.STATUT_FAILED)
