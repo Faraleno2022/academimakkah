@@ -971,6 +971,12 @@ function ouvrirAssistantEleve() {
             var alerte = e.doublons.length
                 ? 'Peut-être déjà inscrit : ' + e.doublons.map(function (d) { return d.nom + ' – ' + d.matricule + ' (' + d.classe + ')'; }).join(' ; ')
                 : '';
+            if (e.doublons_meme_classe > 1) {
+                alerte += ' — Cette classe a déjà ' + e.doublons_meme_classe + ' fiches à ce nom : corrigez-les dans « Doublons ».';
+            }
+            if (e.deja_dans_document) {
+                alerte = ('Apparaît déjà plus haut dans le document (ligne ' + e.deja_dans_document + ').' + (alerte ? ' ' + alerte : '')).trim();
+            }
             var remarque = lu.remarque || '';
             if (e.responsable_connu) remarque = ('Responsable déjà enregistré : ' + e.responsable_connu.nom + '. ' + remarque).trim();
             return {
@@ -981,12 +987,15 @@ function ouvrirAssistantEleve() {
                     resp_telephone: r.telephone, resp_adresse: r.adresse
                 },
                 douteux: douteux, remarque: remarque, alerte: alerte,
-                coche: !e.doublons.length
+                coche: !e.doublons.length && !e.deja_dans_document
             };
         });
+        var avecDoublonsClasse = data.eleves.some(function (e) { return e.doublons_meme_classe > 1; });
 
         resume('<strong>' + lignes.length + ' élèves lus.</strong> Corrigez les cases si besoin (orange = à contrôler), '
             + 'décochez les lignes à ne pas importer, puis validez. Les lignes « déjà inscrit » sont décochées.'
+            + (avecDoublonsClasse ? ' <a href="' + data.url_doublons + '?classe=' + (data.eleves.find(function (e) { return e.doublons_meme_classe > 1; }).lu.classe_id || '')
+                + '" target="_blank" class="fw-semibold text-danger">Des fiches sont déjà en double dans la classe : les voir et les corriger</a>.' : '')
             + '<div id="assistantElevesTable" class="mt-2 bg-white text-dark p-2 rounded"></div><div id="assistantElevesBilan"></div>');
         var zone = document.getElementById('assistantElevesTable');
         var table = AssistantIA.tableau(zone, colonnes, lignes);

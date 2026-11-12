@@ -1,0 +1,89 @@
+{% extends 'base.html' %}
+{% block title %}Doublons d'élèves{% endblock %}
+
+{% block breadcrumb_items %}
+    <li class="breadcrumb-item"><a href="{% url 'eleves:liste_eleves' %}">Élèves</a></li>
+    <li class="breadcrumb-item active">Doublons</li>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <h1 class="h3 mb-0"><i class="fas fa-clone text-warning me-2"></i>Doublons d'élèves</h1>
+        <a class="btn btn-outline-secondary" href="{% url 'eleves:liste_eleves' %}">Tous les élèves</a>
+    </div>
+
+    <form method="get" class="d-flex flex-wrap gap-2 align-items-center mb-3">
+        <label for="classe" class="form-label mb-0">Classe :</label>
+        <select name="classe" id="classe" class="form-select" style="max-width:320px" onchange="this.form.submit()">
+            <option value="">Toutes les classes</option>
+            {% for c in classes %}<option value="{{ c.pk }}" {% if c.pk|stringformat:"d" == classe_id %}selected{% endif %}>{{ c.nom }}</option>{% endfor %}
+        </select>
+    </form>
+
+    {% if not groupes %}
+    <div class="alert alert-success"><i class="fas fa-check-circle me-2"></i>Aucun doublon trouvé{% if classe_id %} dans cette classe{% endif %}.</div>
+    {% else %}
+    <div class="alert alert-info">
+        <strong>{{ nb_certains }}</strong> doublon(s) certain(s) (même nom dans la même classe){% if groupes|length > nb_certains %} et <strong>{{ groupes|length|add:0 }}</strong> groupe(s) au total, dont des noms très proches à vérifier{% endif %}.
+        <br>Proposition : on garde la fiche qui a le plus de données (paiements, notes, abonnements…), sinon la plus ancienne.
+        Les autres fiches <strong>sans aucune donnée</strong> sont cochées pour la corbeille. Une fiche qui a des données n'est jamais cochée d'office : vérifiez-la avant.
+        La corbeille est réversible (Administration › Corbeille).
+    </div>
+
+    <form method="post" data-no-fast-submit onsubmit="return confirm('Placer les fiches cochées dans la corbeille ? Elles pourront être restaurées.');">
+        {% csrf_token %}
+        <input type="hidden" name="classe" value="{{ classe_id }}">
+        {% for g in groupes %}
+        <div class="card mb-3 {% if g.certain %}border-warning{% else %}border-secondary{% endif %}">
+            <div class="card-header d-flex flex-wrap justify-content-between gap-2">
+                <span><strong>{{ g.fiches.0.eleve.prenom }} {{ g.fiches.0.eleve.nom }}</strong> — {{ g.classe.nom }}</span>
+                {% if g.certain %}
+                <span class="badge bg-warning text-dark">Même nom : doublon certain</span>
+                {% else %}
+                <span class="badge bg-secondary">Noms très proches : à vérifier</span>
+                {% endif %}
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light">
+                        <tr><th style="width:110px">Corbeille</th><th>Matricule</th><th>Élève</th><th>Né(e) le</th><th>Responsable</th><th>Statut</th><th>Données rattachées</th><th>Proposition</th></tr>
+                    </thead>
+                    <tbody>
+                    {% for f in g.fiches %}
+                        <tr class="{% if f.garder %}table-success{% elif f.total %}table-danger{% endif %}">
+                            <td>
+                                {% if not f.garder %}
+                                <input type="checkbox" class="form-check-input" name="corbeille" value="{{ f.eleve.pk }}" {% if f.proposee %}checked{% endif %} {% if not peut_corriger %}disabled{% endif %} aria-label="Mettre à la corbeille">
+                                {% endif %}
+                            </td>
+                            <td><a href="{% url 'eleves:detail_eleve' f.eleve.pk %}" target="_blank">{{ f.eleve.matricule }}</a></td>
+                            <td>{{ f.eleve.prenom }} {{ f.eleve.nom }}</td>
+                            <td>{{ f.eleve.date_naissance|date:"d/m/Y"|default:"—" }}</td>
+                            <td>{{ f.responsable|default:"—" }}{% if f.telephone and f.telephone != f.responsable %} <small class="text-muted">{{ f.telephone }}</small>{% endif %}</td>
+                            <td>{{ f.eleve.get_statut_display }}</td>
+                            <td>
+                                {% for libelle, nombre in f.donnees.items %}<span class="badge bg-light text-dark border me-1">{{ nombre }} {{ libelle }}</span>{% empty %}<span class="text-muted">aucune</span>{% endfor %}
+                            </td>
+                            <td>
+                                {% if f.garder %}<strong class="text-success">Garder</strong>
+                                {% elif f.proposee %}<span class="text-warning">Corbeille (fiche vide)</span>
+                                {% elif f.total %}<span class="text-danger">À vérifier : la fiche a des données</span>
+                                {% else %}<span class="text-muted">À vérifier</span>{% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endfor %}
+        {% if peut_corriger %}
+        <button type="submit" class="btn btn-danger"><i class="fas fa-trash-alt me-2"></i>Placer les fiches cochées dans la corbeille</button>
+        {% else %}
+        <div class="alert alert-warning">Seul un administrateur ou le compte principal de l'école peut corriger les doublons.</div>
+        {% endif %}
+    </form>
+    {% endif %}
+</div>
+{% endblock %}

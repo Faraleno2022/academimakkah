@@ -23,9 +23,10 @@ from django.contrib.auth.decorators import login_required
 from django.db import transaction
 from django.db.models import Q
 from django.http import HttpResponse, JsonResponse
+from django.urls import reverse
 from django.views.decorators.http import require_POST
 
-from assistant_ia.claude import AssistantIAError, extraire_json, preparer_image, ressemblance
+from assistant_ia.claude import AssistantIAError, extraire_json, normaliser, preparer_image, ressemblance
 from utilisateurs.utils import user_is_admin, user_school
 
 from .models import Classe, Eleve, HistoriqueEleve, Responsable
@@ -146,7 +147,7 @@ def _doublons(eleves_ecole, prenom: str, nom: str):
     trouves.sort(key=lambda x: x[0], reverse=True)
     return [
         {"id": e.id, "matricule": e.matricule, "nom": f"{e.prenom} {e.nom}",
-         "classe": e.classe.nom if e.classe else "", "statut": e.get_statut_display()}
+         "classe": e.classe.nom if e.classe else "", "classe_id": e.classe_id, "statut": e.get_statut_display()}
         for _, e in trouves[:3]
     ]
 
@@ -192,7 +193,7 @@ def assistant_eleve(request):
         if ecole else []
     )
 
-    eleves = []
+    eleves, vus = [], {}
     for lu in resultat.get("eleves", [])[:MAX_LIGNES]:
         if not (lu["prenom"] or lu["nom"]):
             continue
@@ -211,9 +212,17 @@ def assistant_eleve(request):
             lu["date_naissance"] = ""
 
         connu = _responsable_connu(ecole, resp["telephone"])
+        # Même élève deux fois dans le document (même nom, même classe) : on le signale
+        cle = (lu["classe_id"], " ".join(sorted(normaliser(f"{lu['prenom']} {lu['nom']}").split())))
+        deja_dans_document = vus.get(cle)
+        vus.setdefault(cle, len(eleves) + 1)
+        doublons = _doublons(eleves_ecole, lu["prenom"], lu["nom"])
+        meme_classe = [d for d in doublons if lu["classe_id"] and d["classe_id"] == lu["classe_id"]]
         eleves.append({
             "lu": lu,
-            "doublons": _doublons(eleves_ecole, lu["prenom"], lu["nom"]),
+            "deja_dans_document": deja_dans_document,
+            "doublons_meme_classe": len(meme_classe),
+            "doublons": doublons,
             "responsable_connu": (
                 {"id": connu.id, "nom": f"{connu.prenom} {connu.nom}", "telephone": connu.telephone}
                 if connu else None
@@ -229,6 +238,7 @@ def assistant_eleve(request):
         "eleves": eleves,
         "classes": [[c.id, c.nom] for c in classes],
         "relations": [list(r) for r in Responsable.RELATION_CHOICES],
+        "url_doublons": reverse("eleves:doublons_eleves"),
     })
 
 

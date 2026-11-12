@@ -4,6 +4,7 @@ from . import views_collecte
 from .assistant_saisie import assistant_eleve, assistant_eleves_excel, assistant_eleves_importer
 from .views_paiements_actifs import actifs_paiements
 from .views_repartition import repartir_importes
+from .doublons import doublons_eleves
 from .views_import import (
     importer_eleves,
     telecharger_template_eleves,
@@ -26,6 +27,7 @@ urlpatterns = [
     path('collecte/proposition/<int:pk>/', views_collecte.verifier_proposition, name='verifier_proposition'),
     path('actifs-paiements/', actifs_paiements, name='actifs_paiements'),
     path('importes/repartir/', repartir_importes, name='repartir_importes'),
+    path('doublons/', doublons_eleves, name='doublons_eleves'),
     # Liste et recherche des élèves
     path('', views.liste_eleves, name='liste_eleves'),
     path('liste/', views.liste_eleves, name='liste_eleves'),

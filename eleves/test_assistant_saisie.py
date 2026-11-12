@@ -77,6 +77,16 @@ class AssistantEleveTests(TestCase):
         self.assertIn('date_naissance', un['lu']['champs_douteux'])
         self.assertEqual(un['doublons'], [])
 
+    def test_eleve_present_deux_fois_dans_le_document(self):
+        rep, _ = self._poster([
+            _lecture(prenom='Fatou', nom='Sylla', classe_id=self.classe.pk),
+            _lecture(prenom='SYLLA', nom='Fatou ', classe_id=self.classe.pk),
+            _lecture(prenom='Fatou', nom='Sylla', classe_id=None),  # sans classe : ne compte pas
+        ])
+        eleves = rep.json()['eleves']
+        self.assertEqual([e['deja_dans_document'] for e in eleves], [None, 1, None])
+        self.assertIn('url_doublons', rep.json())
+
     def test_rien_n_est_enregistre(self):
         avant_eleves, avant_resp = Eleve.objects.count(), Responsable.objects.count()
         self._poster(_lecture(prenom='Fatou', nom='Camara'))
