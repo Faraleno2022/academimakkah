@@ -1,0 +1,379 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ titre_page }} - myschool{% endblock %}
+
+{% block breadcrumb_items %}
+    <li class="breadcrumb-item"><a href="{% url 'paiements:tableau_bord' %}">Paiements</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'paiements:liste_paiements' %}">Liste des paiements</a></li>
+    <li class="breadcrumb-item active">Reçus 4 par feuille</li>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .planche-barre { background:#fff; border:1px solid #dee2e6; border-radius:10px; padding:14px; }
+    .planche-recherche { position:relative; }
+    .planche-resultats {
+        position:absolute; left:0; right:0; top:100%; z-index:30; background:#fff;
+        border:1px solid #ced4da; border-radius:8px; margin-top:2px;
+        box-shadow:0 6px 18px rgba(0,0,0,.12); max-height:320px; overflow-y:auto; display:none;
+    }
+    .planche-resultats .res {
+        padding:8px 12px; cursor:pointer; border-bottom:1px solid #f0f0f0;
+        display:flex; justify-content:space-between; gap:10px; align-items:center;
+    }
+    .planche-resultats .res:last-child { border-bottom:0; }
+    .planche-resultats .res:hover, .planche-resultats .res.actif { background:#e8f0fb; }
+    .planche-resultats .res small { color:#6c757d; display:block; }
+    .planche-resultats .vide { padding:10px 12px; color:#6c757d; }
+
+    .feuille {
+        background:#fff; border:1px solid #adb5bd; border-radius:6px; padding:10px;
+        box-shadow:0 2px 8px rgba(0,0,0,.08); margin-bottom:18px; position:relative;
+    }
+    .feuille-titre {
+        font-size:.8rem; color:#6c757d; font-weight:600; text-transform:uppercase;
+        margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;
+    }
+    .grille { display:grid; grid-template-columns:1fr 1fr; gap:0; border:1px dashed #adb5bd; }
+    .case {
+        min-height:150px; padding:10px; border:1px dashed #ced4da; position:relative;
+        display:flex; flex-direction:column; justify-content:center;
+    }
+    .case.libre { color:#adb5bd; align-items:center; text-align:center; background:#fafbfc; }
+    .case.libre .num { font-size:1.6rem; font-weight:700; }
+    .case.pleine { background:#f4f8fd; justify-content:flex-start; }
+    .case .retirer {
+        position:absolute; top:6px; right:6px; border:0; background:#e9ecef; color:#495057;
+        width:24px; height:24px; border-radius:50%; line-height:1; cursor:pointer;
+    }
+    .case .retirer:hover { background:#dc3545; color:#fff; }
+    .case .rang { font-size:.72rem; color:#6c757d; font-weight:700; }
+    .case .nom { font-weight:700; color:#1a3868; margin-top:2px; }
+    .case .ligne { font-size:.85rem; color:#343a40; }
+    .case .montant { font-size:1.05rem; font-weight:700; margin-top:6px; color:#0b5ed7; }
+    @media (max-width:576px) { .grille { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+
+{% block page_actions %}
+    <a href="{% url 'paiements:liste_paiements' %}" class="btn btn-outline-secondary">
+        <i class="fas fa-arrow-left me-1"></i>Retour à la liste
+    </a>
+{% endblock %}
+
+{% block content %}
+<div id="planche"
+     data-url-recherche="{% url 'paiements:recus_4_recherche' %}"
+     data-url-pdf="{% url 'paiements:generer_recus_4_par_feuille_pdf' %}">
+
+    <div class="planche-barre mb-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-lg-6">
+                <label for="planche-q" class="form-label fw-bold mb-1">
+                    <i class="fas fa-search me-1"></i>Ajouter un reçu : tapez un nom, un matricule ou un n° de reçu
+                </label>
+                <div class="planche-recherche">
+                    <input type="text" id="planche-q" class="form-control" autocomplete="off"
+                           placeholder="Ex : camara, MAT-0012, REC2026…">
+                    <div id="planche-resultats" class="planche-resultats"></div>
+                </div>
+                <small class="text-muted">Entrée = ajoute le premier résultat dans le prochain emplacement libre.</small>
+            </div>
+            <div class="col-lg-6">
+                <div class="d-flex flex-wrap gap-2 justify-content-lg-end">
+                    <button type="button" class="btn btn-outline-primary" id="btn-derniers"
+                            title="Remplit les emplacements libres avec les derniers paiements validés">
+                        <i class="fas fa-bolt me-1"></i>Charger les 4 derniers
+                    </button>
+                    <button type="button" class="btn btn-outline-primary" id="btn-jour"
+                            title="Charge tous les paiements validés d'aujourd'hui (feuilles ajoutées automatiquement)">
+                        <i class="fas fa-calendar-day me-1"></i>Paiements du jour
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary" id="btn-vider">
+                        <i class="fas fa-eraser me-1"></i>Vider
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div class="d-flex flex-wrap justify-content-between align-items-center mt-3 gap-2">
+            <div id="planche-compte" class="text-muted"></div>
+            <div class="d-flex gap-2">
+                <button type="button" class="btn btn-outline-secondary" id="btn-feuille">
+                    <i class="fas fa-plus me-1"></i>Ajouter une feuille
+                </button>
+                <button type="button" class="btn btn-primary" id="btn-imprimer">
+                    <i class="fas fa-print me-1"></i>Imprimer / PDF
+                </button>
+            </div>
+        </div>
+        <div id="planche-message" class="small text-danger mt-2" style="display:none;"></div>
+    </div>
+
+    <div id="planche-feuilles"></div>
+</div>
+
+{{ preselection|json_script:"planche-preselection" }}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    var racine = document.getElementById('planche');
+    var URL_RECHERCHE = racine.getAttribute('data-url-recherche');
+    var URL_PDF = racine.getAttribute('data-url-pdf');
+    var PAR_FEUILLE = 4;
+    var MAX_RECUS = 200;
+
+    var feuilles = document.getElementById('planche-feuilles');
+    var champ = document.getElementById('planche-q');
+    var boite = document.getElementById('planche-resultats');
+    var compte = document.getElementById('planche-compte');
+    var message = document.getElementById('planche-message');
+
+    // État : liste d'emplacements ; null = libre, sinon le résumé d'un paiement.
+    var cases = [];
+    var resultats = [];
+    var actif = -1;
+    var minuteur = null;
+
+    function dire(texte) {
+        message.textContent = texte || '';
+        message.style.display = texte ? 'block' : 'none';
+    }
+
+    function creer(tag, classe, texte) {
+        var el = document.createElement(tag);
+        if (classe) { el.className = classe; }
+        if (texte !== undefined) { el.textContent = texte; }
+        return el;
+    }
+
+    function gnf(n) {
+        return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' GNF';
+    }
+
+    function remplis() {
+        var n = 0, i;
+        for (i = 0; i < cases.length; i++) { if (cases[i]) { n++; } }
+        return n;
+    }
+
+    function dejaPresent(id) {
+        var i;
+        for (i = 0; i < cases.length; i++) {
+            if (cases[i] && cases[i].id === id) { return true; }
+        }
+        return false;
+    }
+
+    function assurerUneFeuille() {
+        while (cases.length < PAR_FEUILLE) { cases.push(null); }
+        while (cases.length % PAR_FEUILLE !== 0) { cases.push(null); }
+    }
+
+    function ajouterFeuille() {
+        var i;
+        for (i = 0; i < PAR_FEUILLE; i++) { cases.push(null); }
+    }
+
+    // Place un paiement dans le prochain emplacement libre (feuille ajoutée si besoin).
+    function placer(p) {
+        var i;
+        if (dejaPresent(p.id)) { return 'doublon'; }
+        if (remplis() >= MAX_RECUS) { return 'plein'; }
+        for (i = 0; i < cases.length; i++) {
+            if (!cases[i]) { cases[i] = p; return 'ok'; }
+        }
+        ajouterFeuille();
+        cases[cases.length - PAR_FEUILLE] = p;
+        return 'ok';
+    }
+
+    function retirer(index) {
+        cases[index] = null;
+        dire('');
+        // Retire les feuilles entièrement vides en fin de liste (sauf la première).
+        while (cases.length > PAR_FEUILLE) {
+            var dernieres = cases.slice(cases.length - PAR_FEUILLE), vides = true, i;
+            for (i = 0; i < dernieres.length; i++) { if (dernieres[i]) { vides = false; } }
+            if (!vides) { break; }
+            cases.length = cases.length - PAR_FEUILLE;
+        }
+        dessiner();
+    }
+
+    function dessinerCase(index) {
+        var p = cases[index];
+        var el = creer('div', 'case ' + (p ? 'pleine' : 'libre'));
+        var rang = (index % PAR_FEUILLE) + 1;
+        if (!p) {
+            el.appendChild(creer('div', 'num', String(rang)));
+            el.appendChild(creer('div', '', 'Emplacement libre'));
+            return el;
+        }
+        var bouton = creer('button', 'retirer', '×');
+        bouton.type = 'button';
+        bouton.title = 'Retirer ce reçu';
+        bouton.onclick = function () { retirer(index); };
+        el.appendChild(bouton);
+        el.appendChild(creer('div', 'rang', 'REÇU ' + rang));
+        el.appendChild(creer('div', 'nom', p.eleve));
+        el.appendChild(creer('div', 'ligne', (p.matricule ? p.matricule + ' · ' : '') + p.classe));
+        el.appendChild(creer('div', 'ligne', 'N° ' + p.numero_recu + ' · ' + p.date));
+        el.appendChild(creer('div', 'ligne', p.type));
+        el.appendChild(creer('div', 'montant', gnf(p.montant)));
+        return el;
+    }
+
+    function dessiner() {
+        assurerUneFeuille();
+        feuilles.innerHTML = '';
+        var nbFeuilles = cases.length / PAR_FEUILLE, f, k;
+        for (f = 0; f < nbFeuilles; f++) {
+            var feuille = creer('div', 'feuille');
+            var titre = creer('div', 'feuille-titre');
+            titre.appendChild(creer('span', '', 'Feuille A4 n° ' + (f + 1) + ' sur ' + nbFeuilles));
+            feuille.appendChild(titre);
+            var grille = creer('div', 'grille');
+            for (k = 0; k < PAR_FEUILLE; k++) {
+                grille.appendChild(dessinerCase(f * PAR_FEUILLE + k));
+            }
+            feuille.appendChild(grille);
+            feuilles.appendChild(feuille);
+        }
+        var n = remplis();
+        compte.textContent = n + ' reçu' + (n > 1 ? 's' : '') + ' chargé' + (n > 1 ? 's' : '')
+            + ' sur ' + nbFeuilles + ' feuille' + (nbFeuilles > 1 ? 's' : '') + ' A4';
+    }
+
+    function demander(parametres, apres) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', URL_RECHERCHE + '?' + parametres, true);
+        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState !== 4) { return; }
+            if (xhr.status !== 200) { dire("Recherche impossible. Réessayez."); return; }
+            try { apres(JSON.parse(xhr.responseText).resultats || []); }
+            catch (e) { dire("Réponse inattendue du serveur."); }
+        };
+        xhr.send();
+    }
+
+    function chargerListe(liste) {
+        var ajoutes = 0, doublons = 0, i, etat;
+        for (i = 0; i < liste.length; i++) {
+            etat = placer(liste[i]);
+            if (etat === 'ok') { ajoutes++; }
+            else if (etat === 'doublon') { doublons++; }
+            else { dire('Maximum ' + MAX_RECUS + ' reçus atteint.'); break; }
+        }
+        dessiner();
+        if (!liste.length) { dire('Aucun paiement validé trouvé.'); }
+        else if (!ajoutes && doublons) { dire('Ces reçus sont déjà sur la feuille.'); }
+    }
+
+    // ── Liste déroulante de recherche ────────────────────────────────
+    function fermerResultats() { boite.style.display = 'none'; boite.innerHTML = ''; resultats = []; actif = -1; }
+
+    function choisir(index) {
+        var etat = placer(resultats[index]);
+        if (etat === 'doublon') { dire('Ce reçu est déjà sur la feuille.'); }
+        else if (etat === 'plein') { dire('Maximum ' + MAX_RECUS + ' reçus atteint.'); }
+        else { dire(''); }
+        dessiner();
+        champ.value = '';
+        fermerResultats();
+        champ.focus();
+    }
+
+    function montrerResultats(liste) {
+        resultats = liste; actif = liste.length ? 0 : -1;
+        boite.innerHTML = '';
+        if (!liste.length) {
+            boite.appendChild(creer('div', 'vide', 'Aucun paiement validé trouvé.'));
+        }
+        var i;
+        for (i = 0; i < liste.length; i++) {
+            (function (idx) {
+                var p = liste[idx];
+                var ligne = creer('div', 'res' + (idx === 0 ? ' actif' : ''));
+                var gauche = creer('div');
+                gauche.appendChild(creer('strong', '', p.eleve));
+                gauche.appendChild(creer('small', '', (p.matricule ? p.matricule + ' · ' : '') + p.classe
+                    + ' · N° ' + p.numero_recu + ' · ' + p.date));
+                ligne.appendChild(gauche);
+                ligne.appendChild(creer('span', 'fw-bold', gnf(p.montant)));
+                ligne.onmousedown = function (e) { e.preventDefault(); choisir(idx); };
+                boite.appendChild(ligne);
+            })(i);
+        }
+        boite.style.display = 'block';
+    }
+
+    function marquerActif() {
+        var lignes = boite.querySelectorAll('.res'), i;
+        for (i = 0; i < lignes.length; i++) {
+            lignes[i].className = 'res' + (i === actif ? ' actif' : '');
+        }
+    }
+
+    champ.addEventListener('input', function () {
+        var q = champ.value.replace(/^\s+|\s+$/g, '');
+        clearTimeout(minuteur);
+        if (q.length < 2) { fermerResultats(); return; }
+        minuteur = setTimeout(function () {
+            demander('q=' + encodeURIComponent(q), montrerResultats);
+        }, 250);
+    });
+    champ.addEventListener('keydown', function (e) {
+        var code = e.keyCode;
+        if (code === 40 && resultats.length) { actif = Math.min(actif + 1, resultats.length - 1); marquerActif(); e.preventDefault(); }
+        else if (code === 38 && resultats.length) { actif = Math.max(actif - 1, 0); marquerActif(); e.preventDefault(); }
+        else if (code === 13) { e.preventDefault(); if (actif >= 0 && resultats[actif]) { choisir(actif); } }
+        else if (code === 27) { fermerResultats(); }
+    });
+    champ.addEventListener('blur', function () { setTimeout(fermerResultats, 150); });
+
+    // ── Boutons ──────────────────────────────────────────────────────
+    document.getElementById('btn-derniers').onclick = function () {
+        dire('');
+        var libres = 0, i;
+        for (i = 0; i < cases.length; i++) { if (!cases[i]) { libres++; } }
+        demander('mode=derniers&n=' + Math.max(libres, PAR_FEUILLE) + '&_=' + new Date().getTime(), function (liste) {
+            // On ne place que les paiements pas encore sur la feuille, jusqu'à remplir les libres.
+            var nouveaux = [], j;
+            for (j = 0; j < liste.length && nouveaux.length < Math.max(libres, PAR_FEUILLE); j++) {
+                if (!dejaPresent(liste[j].id)) { nouveaux.push(liste[j]); }
+            }
+            chargerListe(nouveaux);
+        });
+    };
+    document.getElementById('btn-jour').onclick = function () {
+        dire('');
+        demander('mode=jour&_=' + new Date().getTime(), chargerListe);
+    };
+    document.getElementById('btn-vider').onclick = function () {
+        cases = []; dire(''); dessiner();
+    };
+    document.getElementById('btn-feuille').onclick = function () {
+        ajouterFeuille(); dessiner();
+    };
+    document.getElementById('btn-imprimer').onclick = function () {
+        var ids = [], i;
+        for (i = 0; i < cases.length; i++) { if (cases[i]) { ids.push(cases[i].id); } }
+        if (!ids.length) { dire("Chargez au moins un reçu avant d'imprimer."); return; }
+        dire('');
+        window.open(URL_PDF + '?ids=' + ids.join(','), '_blank');
+    };
+
+    // ── Préselection (depuis la liste ou la fiche d'un paiement) ─────
+    try {
+        var pre = JSON.parse(document.getElementById('planche-preselection').textContent);
+        var i;
+        for (i = 0; i < pre.length; i++) { placer(pre[i]); }
+    } catch (e) { /* page ouverte sans préselection */ }
+    dessiner();
+    champ.focus();
+})();
+</script>
+{% endblock %}

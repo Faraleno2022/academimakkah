@@ -4397,6 +4397,80 @@ def generer_recu_pdf(request, paiement_id:int):
     return response
 
 
+def _recus_valides_queryset(request):
+    """Paiements validés visibles par l'utilisateur (même périmètre d'école que la liste)."""
+    qs = Paiement.objects.select_related(
+        'eleve', 'type_paiement', 'mode_paiement',
+        'eleve__classe', 'eleve__classe__ecole',
+    ).filter(statut='VALIDE')
+    return filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
+
+
+def _paiement_pour_planche(paiement):
+    """Résumé JSON d'un paiement affiché dans un emplacement de la feuille."""
+    eleve = paiement.eleve
+    return {
+        'id': paiement.pk,
+        'eleve': getattr(eleve, 'nom_complet', '') or str(eleve),
+        'matricule': getattr(eleve, 'matricule', '') or '',
+        'classe': str(eleve.classe) if getattr(eleve, 'classe', None) else '',
+        'numero_recu': paiement.numero_recu or '',
+        'type': getattr(paiement.type_paiement, 'nom', '') or '',
+        'montant': int(paiement.montant or 0),
+        'date': paiement.date_paiement.strftime('%d/%m/%Y'),
+    }
+
+
+@login_required
+def recus_4_par_feuille(request):
+    """Page de préparation : charger 4 paiements (ou plus) sur la feuille A4, puis imprimer."""
+    ids = []
+    for valeur in request.GET.getlist('ids'):
+        for morceau in str(valeur).split(','):
+            morceau = morceau.strip()
+            if morceau.isdigit() and int(morceau) not in ids:
+                ids.append(int(morceau))
+    par_id = {p.pk: p for p in _recus_valides_queryset(request).filter(pk__in=ids[:200])}
+    preselection = [_paiement_pour_planche(par_id[i]) for i in ids if i in par_id]
+    return render(request, 'paiements/recus_4_par_feuille.html', {
+        'titre_page': "Reçus 4 par feuille",
+        'preselection': preselection,
+    })
+
+
+@login_required
+def recus_4_recherche(request):
+    """Recherche JSON de paiements validés pour remplir les emplacements de la feuille.
+
+    - `q` : élève, matricule, classe ou n° de reçu ;
+    - `mode=derniers` : les derniers paiements validés (`n`, 4 par défaut) ;
+    - `mode=jour` : tous les paiements validés d'aujourd'hui (40 maximum).
+    """
+    from ecole_moderne.recherche import filtrer_termes
+
+    qs = _recus_valides_queryset(request).order_by('-date_paiement', '-pk')
+    mode = (request.GET.get('mode') or '').strip()
+    if mode == 'jour':
+        qs = qs.filter(date_paiement=timezone.localdate())
+        limite = 40
+    elif mode == 'derniers':
+        try:
+            limite = max(1, min(int(request.GET.get('n') or 4), 40))
+        except ValueError:
+            limite = 4
+    else:
+        q = (request.GET.get('q') or '').strip()
+        if len(q) < 2:
+            return JsonResponse({'resultats': []})
+        qs = filtrer_termes(qs, q, (
+            'numero_recu', 'reference_externe',
+            'eleve__nom', 'eleve__prenom', 'eleve__matricule',
+            'eleve__classe__nom',
+        ), ('eleve__nom', 'eleve__prenom'))
+        limite = 15
+    return JsonResponse({'resultats': [_paiement_pour_planche(p) for p in qs[:limite]]})
+
+
 @login_required
 def generer_recus_4_par_feuille_pdf(request):
     """Reçus compacts : 4 reçus (4 élèves) par feuille A4, pour économiser le papier.

@@ -50,6 +50,8 @@ urlpatterns = [
     
     # Génération de documents
     path('recu/<int:paiement_id>/pdf/', views.generer_recu_pdf, name='generer_recu_pdf'),
+    path('recus/4-par-feuille/', views.recus_4_par_feuille, name='recus_4_par_feuille'),
+    path('recus/4-par-feuille/recherche/', views.recus_4_recherche, name='recus_4_recherche'),
     path('recus/4-par-feuille/pdf/', views.generer_recus_4_par_feuille_pdf, name='generer_recus_4_par_feuille_pdf'),
     path(
         'carnet/<int:paiement_id>/pdf/',
