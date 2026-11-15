@@ -141,10 +141,22 @@
 <!-- Tableau des paiements -->
 <div class="payments-table">
     {% if page_obj %}
+        <div class="d-flex flex-wrap align-items-center gap-2 p-2 border-bottom">
+            <button type="button" class="btn btn-outline-info btn-sm"
+                    title="Imprime les reçus cochés, 4 élèves par feuille A4 (économie de papier)"
+                    onclick="var s=document.querySelectorAll('.js-recu-sel:checked'),ids=[],i;for(i=0;i&lt;s.length;i++){ids.push(s[i].value);}if(!ids.length){alert('Cochez au moins un paiement validé dans la liste.');return;}window.open('{% url 'paiements:generer_recus_4_par_feuille_pdf' %}?ids='+ids.join(','),'_blank');">
+                <i class="fas fa-th-large me-1"></i>Imprimer 4 reçus par feuille
+            </button>
+            <small class="text-muted">Cochez les paiements validés (case de l'en-tête : tout cocher).</small>
+        </div>
         <div class="table-responsive table-container-scrollable">
             <table class="table table-hover mb-0">
                 <thead>
                     <tr>
+                        <th style="width:32px;">
+                            <input type="checkbox" class="form-check-input" title="Tout cocher / décocher (paiements validés)"
+                                   onclick="var s=document.querySelectorAll('.js-recu-sel'),i;for(i=0;i&lt;s.length;i++){s[i].checked=this.checked;}">
+                        </th>
                         <th>Élève</th>
                         <th>Type</th>
                         <th>Montant (GNF)</th>
@@ -158,6 +170,11 @@
                 <tbody>
                     {% for paiement in page_obj %}
                     <tr>
+                        <td>
+                            {% if paiement.statut == 'VALIDE' %}
+                                <input type="checkbox" class="form-check-input js-recu-sel" value="{{ paiement.id }}" title="Inclure dans l'impression 4 par feuille">
+                            {% endif %}
+                        </td>
                         <td>
                             <div class="eleve-info">
                                 {% if paiement.eleve.photo %}

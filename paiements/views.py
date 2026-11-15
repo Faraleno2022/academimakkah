@@ -4398,6 +4398,86 @@ def generer_recu_pdf(request, paiement_id:int):
 
 
 @login_required
+def generer_recus_4_par_feuille_pdf(request):
+    """Reçus compacts : 4 reçus (4 élèves) par feuille A4, pour économiser le papier.
+
+    Les paiements viennent de `?ids=1&ids=2…` (ou `?ids=1,2,3`). Seuls les
+    paiements validés de l'école de l'utilisateur sont imprimés.
+    """
+    MAX_RECUS = 200
+
+    ids = []
+    for valeur in request.GET.getlist('ids'):
+        for morceau in str(valeur).split(','):
+            morceau = morceau.strip()
+            if morceau.isdigit() and int(morceau) not in ids:
+                ids.append(int(morceau))
+    if not ids:
+        messages.warning(request, "Sélectionnez au moins un reçu à imprimer.")
+        return redirect('paiements:liste_paiements')
+    if len(ids) > MAX_RECUS:
+        messages.warning(
+            request,
+            f"Maximum {MAX_RECUS} reçus à la fois ({len(ids)} sélectionnés).",
+        )
+        return redirect('paiements:liste_paiements')
+
+    if canvas is None:
+        return HttpResponse("La génération de PDF n'est pas disponible sur ce serveur (ReportLab manquant).", status=500)
+
+    qs = Paiement.objects.select_related(
+        'eleve', 'type_paiement', 'mode_paiement',
+        'eleve__classe', 'eleve__classe__ecole',
+    ).filter(pk__in=ids, statut='VALIDE')
+    qs = filter_by_user_school(qs, request.user, 'eleve__classe__ecole')
+    par_id = {p.pk: p for p in qs}
+    # Conserver l'ordre de sélection.
+    paiements = [par_id[i] for i in ids if i in par_id]
+    if not paiements:
+        messages.warning(request, "Aucun reçu validé à imprimer dans la sélection.")
+        return redirect('paiements:liste_paiements')
+
+    # Même synchronisation d'échéancier que le reçu complet, une fois par élève/année.
+    deja_synchronises = set()
+    for paiement in paiements:
+        cle = (paiement.eleve_id, paiement.annee_scolaire)
+        if cle in deja_synchronises:
+            continue
+        deja_synchronises.add(cle)
+        try:
+            with transaction.atomic():
+                ensure_echeancier_for_eleve(
+                    paiement.eleve,
+                    created_by=getattr(paiement, 'cree_par', None),
+                    registration_kind=registration_kind_for_type(paiement.type_paiement),
+                    annee_scolaire=paiement.annee_scolaire,
+                )
+                _auto_validate_echeancier_for_eleve(
+                    paiement.eleve,
+                    annee_scolaire=paiement.annee_scolaire,
+                )
+        except Exception:
+            logger.exception("Validation automatique de l'échéancier avant reçus 4 par feuille échouée")
+
+    try:
+        from .recus_compacts import generer_recus_4_par_feuille_pdf as construire_pdf
+
+        pdf = construire_pdf(paiements)
+    except Exception:
+        logger.exception("Erreur lors de la génération des reçus 4 par feuille")
+        return HttpResponse(
+            "Une erreur est survenue lors de la génération des reçus.",
+            status=500,
+        )
+
+    response = HttpResponse(pdf, content_type='application/pdf')
+    response['Content-Disposition'] = (
+        f'inline; filename="Recus_4_par_feuille_{timezone.localdate():%Y%m%d}.pdf"'
+    )
+    return response
+
+
+@login_required
 @require_school_object(Paiement, pk_kwarg='paiement_id', field_path='eleve__classe__ecole')
 def generer_carnet_paiement_pdf(request, paiement_id: int):
     """Télécharge le carnet annuel des paiements validés d'un élève."""
