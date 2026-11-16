@@ -8,42 +8,35 @@
     <title>{% block title %}G.S HKD{% endblock %}</title>
 
     {# SEO : description par défaut, écrasable par les pages via le bloc meta_description #}
-    <meta name="description" content="{% block meta_description %}Myschool — système de gestion scolaire moderne : élèves, paiements, salaires, transport, notes et statistiques pour les établissements en Guinée.{% endblock %}">
+    <meta name="description" content="{% block meta_description %}Académie Makkah — centre d'apprentissage des cours islamiques (Coran, Hadith, Sîra, Fiqh, langue arabe) pour enfants et femmes adultes.{% endblock %}">
     <meta name="robots" content="{% block meta_robots %}index,follow{% endblock %}">
     <meta name="theme-color" content="#0d6efd">
     <link rel="canonical" href="{% block canonical_url %}{{ request.build_absolute_uri }}{% endblock %}">
 
     {# Open Graph (Facebook, WhatsApp, LinkedIn, etc.) #}
     <meta property="og:type" content="website">
-    <meta property="og:site_name" content="Myschool">
-    <meta property="og:title" content="{% block og_title %}{{ self.title|default:'Myschool' }}{% endblock %}">
-    <meta property="og:description" content="{% block og_description %}Gestion scolaire moderne — automatisation des inscriptions, paiements, notes et bulletins.{% endblock %}">
+    <meta property="og:site_name" content="Académie Makkah">
+    <meta property="og:title" content="{% block og_title %}{{ self.title|default:'Académie Makkah' }}{% endblock %}">
+    <meta property="og:description" content="{% block og_description %}Coran, Hadith, Sîra, Fiqh et langue arabe pour enfants et femmes adultes, en ligne et en présentiel.{% endblock %}">
     <meta property="og:url" content="{% block og_url %}{{ request.build_absolute_uri }}{% endblock %}">
     <meta property="og:image" content="{% block og_image %}{{ request.scheme }}://{{ request.get_host }}{% static_versioned 'images/optimized/ecole.webp' %}{% endblock %}">
     <meta property="og:locale" content="fr_FR">
 
     {# Twitter Card #}
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="{% block twitter_title %}{{ self.title|default:'Myschool' }}{% endblock %}">
-    <meta name="twitter:description" content="{% block twitter_description %}Gestion scolaire moderne, automatisée et fiable pour les établissements scolaires.{% endblock %}">
+    <meta name="twitter:title" content="{% block twitter_title %}{{ self.title|default:'Académie Makkah' }}{% endblock %}">
+    <meta name="twitter:description" content="{% block twitter_description %}Coran, Hadith, Sîra, Fiqh et langue arabe pour enfants et femmes adultes, en ligne et en présentiel.{% endblock %}">
     <meta name="twitter:image" content="{% block twitter_image %}{{ request.scheme }}://{{ request.get_host }}{% static_versioned 'images/optimized/ecole.webp' %}{% endblock %}">
 
     {% block structured_data %}
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
-      "@type": "SoftwareApplication",
-      "name": "Myschool GN",
-      "applicationCategory": "EducationalApplication",
-      "operatingSystem": "Web",
-      "url": "https://www.myschoolgn.space/",
-      "description": "Logiciel de gestion scolaire pour les etablissements en Guinee : eleves, paiements, salaires, transport, notes et rapports scolaires.",
-      "publisher": {
-        "@type": "EducationalOrganization",
-        "name": "Myschool GN",
-        "email": "contact@myschoolgn.space",
-        "telephone": "+224622613559"
-      }
+      "@type": "EducationalOrganization",
+      "name": "Académie Makkah",
+      "description": "Centre d'apprentissage des cours islamiques (Coran, Hadith, Sîra, Fiqh, langue arabe) pour enfants et femmes adultes, en ligne et en présentiel.",
+      "email": "academiemakkah@gmail.com",
+      "telephone": "+224627650170"
     }
     </script>
     {% endblock %}
@@ -349,8 +342,8 @@
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary fixed-top app-navbar">
         <div class="container-fluid">
             <a class="navbar-brand d-flex align-items-center" href="{% url 'home' %}">
-                <img src="{% static_versioned 'logos/logo.png' %}" alt="Logo Myschool" width="36" height="36" loading="eager" decoding="async" fetchpriority="high">
-                <span>Myschool</span>
+                <i class="fas fa-mosque me-2" aria-hidden="true"></i>
+                <span>{{ user_ecole.nom|default:"Académie Makkah" }}</span>
             </a>
 
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
@@ -368,18 +361,13 @@
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="{% url 'fonctionnalites' %}">
-                                <i class="fas fa-list-check me-1"></i>Fonctionnalités
+                            <a class="nav-link" href="{% url 'home' %}#matieres">
+                                <i class="fas fa-book-quran me-1"></i>Nos cours
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="{% url 'demo' %}#videos">
-                                <i class="fas fa-play-circle me-1" aria-hidden="true"></i>Vidéos
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="{% url 'tarifs' %}">
-                                <i class="fas fa-tags me-1"></i>Tarifs
+                            <a class="nav-link" href="{% url 'home' %}#equipe">
+                                <i class="fas fa-users me-1"></i>Notre équipe
                             </a>
                         </li>
                         <li class="nav-item">
@@ -388,7 +376,7 @@
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="{% url 'contact' %}">
+                            <a class="nav-link" href="{% url 'home' %}#contact">
                                 <i class="fas fa-envelope me-1"></i>Contact
                             </a>
                         </li>
@@ -730,7 +718,7 @@
                                 <li><hr class="dropdown-divider"></li>
                                 <li>
                                     <form method="post" action="{% url 'arreter_application' %}" class="px-3 py-1"
-                                          onsubmit="return confirm('Fermer complètement MySchoolGN ? Le serveur va s\'arrêter pour libérer les ressources et vous pourrez lancer une autre application.');">
+                                          onsubmit="return confirm('Fermer complètement l\'application ? Le serveur va s\'arrêter pour libérer les ressources et vous pourrez lancer une autre application.');">
                                         {% csrf_token %}
                                         <button type="submit" class="dropdown-item px-0 text-danger">
                                             <i class="fas fa-power-off me-1"></i>Quitter l'application
@@ -833,16 +821,16 @@
             <div class="row align-items-center">
                 <div class="col-md-6">
                     <small>
-                        &copy; {% now "Y" %} Myschool. Tous droits réservés.
+                        &copy; {% now "Y" %} {{ user_ecole.nom|default:"Académie Makkah" }}. Tous droits réservés.
                     </small>
                 </div>
                 <div class="col-md-6 text-md-end mt-2 mt-md-0">
                     <a href="{% url 'home' %}" class="text-light text-decoration-none me-3">
                         <i class="fas fa-home me-1"></i>Accueil
                     </a>
-                    <span class="me-3"><i class="fas fa-phone me-1"></i> +224 622613559</span>
-                    <a href="mailto:contact@myschoolgn.space" class="text-light text-decoration-none">
-                        <i class="fas fa-envelope me-1"></i> contact@myschoolgn.space
+                    <a href="tel:+224627650170" class="text-light text-decoration-none me-3"><i class="fas fa-phone me-1"></i> +224 627 65 01 70</a>
+                    <a href="mailto:academiemakkah@gmail.com" class="text-light text-decoration-none">
+                        <i class="fas fa-envelope me-1"></i> academiemakkah@gmail.com
                     </a>
                 </div>
             </div>
