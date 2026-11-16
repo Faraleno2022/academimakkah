@@ -22,6 +22,8 @@ ALLOWED_HOSTS = [
     'gshadjakanfingdiane.pythonanywhere.com',
     'myschoolgn.space',
     'www.myschoolgn.space',
+    'makkahacademie.com',
+    'www.makkahacademie.com',
     'myschool-rn3d.onrender.com',
 ]
 
@@ -30,6 +32,8 @@ CSRF_TRUSTED_ORIGINS = [
     'https://gshadjakanfingdiane.pythonanywhere.com',
     'https://myschoolgn.space',
     'https://www.myschoolgn.space',
+    'https://makkahacademie.com',
+    'https://www.makkahacademie.com',
     'https://myschool-rn3d.onrender.com',
 ]
 

@@ -63,6 +63,8 @@ if DEBUG:
         'https://localhost:8001',
         'https://myschoolgn.space',
         'https://www.myschoolgn.space',
+        'https://makkahacademie.com',
+        'https://www.makkahacademie.com',
     ]
 else:
     ALLOWED_HOSTS = [
@@ -70,6 +72,8 @@ else:
         'myschoolgn.pythonanywhere.com',
         'myschoolgn.space',
         'www.myschoolgn.space',
+        'makkahacademie.com',
+        'www.makkahacademie.com',
         'myschool-rn3d.onrender.com',
     ] + _env_list('DJANGO_ALLOWED_HOSTS')
     if RENDER_EXTERNAL_HOSTNAME:
@@ -80,6 +84,8 @@ else:
         'https://myschoolgn.pythonanywhere.com',
         'https://myschoolgn.space',
         'https://www.myschoolgn.space',
+        'https://makkahacademie.com',
+        'https://www.makkahacademie.com',
         'https://myschool-rn3d.onrender.com',
     ] + _env_list('DJANGO_CSRF_TRUSTED_ORIGINS')
     if RENDER_EXTERNAL_HOSTNAME:
