@@ -210,6 +210,72 @@
   .mk-modalite h3 { font-family: Georgia, 'Times New Roman', serif; font-weight: 700; color: #F5EFE2; font-size: 1.6rem; }
   .mk-modalite p { color: #CFDDD6; font-size: 1.1rem; margin: 0; }
 
+  /* Slogan */
+  .mk-slogan {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: .35rem .9rem;
+    font-family: Georgia, 'Times New Roman', serif;
+    font-weight: 700;
+    font-size: clamp(1.3rem, 2.6vw, 1.9rem);
+    color: var(--mk-or-fonce);
+    margin: 0;
+  }
+  .mk-slogan .point { width: .5rem; height: .5rem; border-radius: 50%; background: var(--mk-or); display: inline-block; }
+
+  /* Tarifs */
+  .mk-tarif-carte {
+    height: 100%;
+    background: #FFFDF8;
+    border: 1px solid var(--mk-bord);
+    border-top: 6px solid var(--mk-or);
+    border-radius: 1rem;
+    padding: 2rem;
+    color: var(--mk-vert);
+  }
+  .mk-tarif-carte.vert-bord { border-top-color: var(--mk-vert); }
+  .mk-tarif-carte h3 { font-family: Georgia, 'Times New Roman', serif; font-weight: 700; font-size: 1.6rem; margin-bottom: 1rem; }
+  .mk-tarif-carte h3 i { color: var(--mk-or-fonce); margin-right: .5rem; }
+  .mk-tarif-liste { list-style: none; padding: 0; margin: 0; }
+  .mk-tarif-liste li {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: .7rem 0;
+    border-bottom: 1px dashed var(--mk-bord);
+    font-size: 1.15rem;
+    color: var(--mk-texte);
+  }
+  .mk-tarif-liste li:last-child { border-bottom: none; }
+  .mk-tarif-liste .prix { font-family: Georgia, 'Times New Roman', serif; font-weight: 700; font-size: 1.5rem; color: var(--mk-vert); }
+
+  .mk-programmes { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 2rem; align-items: center; }
+  .mk-programmes .etiquette { font-weight: 700; color: var(--mk-vert); margin-right: .4rem; }
+  .mk-programmes .puce {
+    background: var(--mk-vert);
+    color: #F5EFE2;
+    border-radius: 2rem;
+    padding: .35rem 1.1rem;
+    font-weight: 600;
+  }
+
+  /* Particularité et hadith */
+  .mk-particularite {
+    background: var(--mk-vert);
+    color: #F5EFE2;
+    border-radius: 1rem;
+    padding: 2.25rem;
+    border-left: 8px solid var(--mk-or);
+  }
+  .mk-particularite .mk-eyebrow { color: var(--mk-or); }
+  .mk-particularite h3 { font-family: Georgia, 'Times New Roman', serif; font-weight: 700; font-size: clamp(1.4rem, 2.6vw, 2rem); color: #F5EFE2; margin: 0 0 1rem; }
+  .mk-particularite .mk-slogan { color: var(--mk-or); }
+  .mk-hadith { margin: 1.75rem 0 0; padding-top: 1.5rem; border-top: 1px solid rgba(245, 239, 226, .25); }
+  .mk-hadith .mk-arabe { font-size: clamp(1.4rem, 2.6vw, 1.9rem); line-height: 1.9; color: #F5EFE2; text-align: right; margin-bottom: 1rem; }
+  .mk-hadith p { color: #CFDDD6; font-size: 1.1rem; margin-bottom: .5rem; }
+  .mk-hadith footer { color: var(--mk-or); font-weight: 600; }
+
   /* Pied de page collé à la dernière section */
   .site-footer { margin-top: 0 !important; }
   .main-content { padding-bottom: 0 !important; }
@@ -285,6 +351,9 @@
       <p class="mk-arabe mb-0" lang="ar">أكاديمية مكة</p>
       <h1>Académie Makkah</h1>
       <p class="lead mb-0">Centre d'apprentissage des cours islamiques pour enfants et femmes adultes.</p>
+      <p class="mk-slogan" aria-label="Apprendre, comprendre, vivre">
+        <span>Apprendre</span><span class="point" aria-hidden="true"></span><span>Comprendre</span><span class="point" aria-hidden="true"></span><span>Vivre</span>
+      </p>
       <span class="mk-pastille"><i class="fas fa-globe" aria-hidden="true"></i>En ligne · <i class="fas fa-mosque" aria-hidden="true"></i>En présentiel</span>
       <div class="mk-actions" aria-label="Actions principales">
         <a href="#contact" class="btn btn-mk btn-lg">
@@ -409,6 +478,44 @@
   </div>
 </section>
 
+<!-- Tarifs -->
+<section class="mk-section mk-plein" id="tarifs" style="background: var(--mk-ivoire);">
+  <div class="container">
+    <p class="mk-eyebrow">Tarifs</p>
+    <h2 class="mk-titre mb-4">Nos formules</h2>
+    <div class="row g-4">
+      <div class="col-lg-7">
+        <div class="mk-tarif-carte">
+          <h3><i class="fas fa-child-reaching" aria-hidden="true"></i>Pour les enfants</h3>
+          <ul class="mk-tarif-liste">
+            <li><span>4 heures</span><span class="prix">10&nbsp;€</span></li>
+            <li><span>8 heures</span><span class="prix">20&nbsp;€</span></li>
+            <li><span>12 heures</span><span class="prix">30&nbsp;€</span></li>
+            <li><span>16 heures</span><span class="prix">40&nbsp;€</span></li>
+            <li><span>20 heures</span><span class="prix">50&nbsp;€</span></li>
+          </ul>
+        </div>
+      </div>
+      <div class="col-lg-5">
+        <div class="mk-tarif-carte vert-bord">
+          <h3><i class="fas fa-users" aria-hidden="true"></i>Pour les femmes</h3>
+          <ul class="mk-tarif-liste">
+            <li><span>8 heures</span><span class="prix">25&nbsp;€</span></li>
+            <li><span>16 heures</span><span class="prix">50&nbsp;€</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="mk-programmes">
+      <span class="etiquette">Programmes d'études :</span>
+      <span class="puce">Le Coran</span>
+      <span class="puce">Le Fiqh</span>
+      <span class="puce">La Sîra</span>
+      <span class="puce">La Tarbiya</span>
+    </div>
+  </div>
+</section>
+
 <!-- Équipe -->
 <section class="mk-section mk-plein" id="equipe" style="background: var(--mk-ivoire);">
   <div class="container">
@@ -439,7 +546,23 @@
 <section class="mk-section sable mk-plein" id="atouts">
   <div class="container">
     <p class="mk-eyebrow">Nos atouts</p>
-    <h2 class="mk-titre mb-4">Pourquoi nous choisir</h2>
+    <h2 class="mk-titre mb-3">Pourquoi choisir l'Académie Makkah ?</h2>
+    <p class="mk-intro-sous mb-4">À l'Académie Makkah, chaque apprentissage prend vie ! À travers des histoires, des vidéos, des dialogues, des mises en situation et des activités pratiques, les enfants et les femmes découvrent, comprennent et appliquent ce qu'ils apprennent.</p>
+
+    <div class="mk-particularite mb-5">
+      <p class="mk-eyebrow">Notre particularité</p>
+      <h3>Comprendre le sens et mettre en pratique les enseignements.</h3>
+      <p class="mb-3">Nous ne cherchons pas seulement à transmettre des connaissances : nous apprenons aux enfants et aux femmes à les comprendre et à les vivre au quotidien.</p>
+      <p class="mk-slogan">
+        <span>Apprendre</span><span class="point" aria-hidden="true"></span><span>Comprendre</span><span class="point" aria-hidden="true"></span><span>Vivre</span>
+      </p>
+      <blockquote class="mk-hadith">
+        <p class="mk-arabe" lang="ar">عنِ ابن مسعودٍ، قال : كان الرجلُ منا إذا تعلَّم عشرَ آياتٍ لم يجاوزْهنَّ حتى يعرفَ معانيهن والعملَ بهن</p>
+        <p>« Lorsqu'un homme parmi nous apprenait dix versets, il ne passait pas aux suivants avant d'en avoir compris le sens et mis en pratique les enseignements. »</p>
+        <footer>D'après Ibn Mas‘ûd, qu'Allah l'agrée</footer>
+      </blockquote>
+    </div>
+
     <div class="row g-4">
       <div class="col-md-4">
         <div class="mk-atout">
