@@ -228,7 +228,7 @@
                 <span class="info-value">{{ ecole.nom|default:"—" }}</span>
             </div>
             <div class="info-item">
-                <span class="info-label"><i class="fas fa-chalkboard me-1"></i>Classe</span>
+                <span class="info-label"><i class="fas fa-chalkboard me-1"></i>Niveau</span>
                 <span class="info-value">{{ eleve.classe.nom }}</span>
             </div>
             <div class="info-item">
@@ -398,7 +398,7 @@
             <div class="col-md-4">
                 <div class="p-3">
                     <div style="font-size: 2.5rem; font-weight: 800; color: #0d6efd;">{{ dernier.rang_formate }}</div>
-                    <div class="text-muted">Dernier classement ({{ dernier.periode|cut:"_" }})</div>
+                    <div class="text-muted">Dernière appréciation ({{ dernier.periode|cut:"_" }})</div>
                 </div>
             </div>
             {% endwith %}
@@ -477,40 +477,42 @@
     {% if matieres_data %}
     <div class="section-card">
         <div class="section-title"><i class="fas fa-table"></i>Notes mensuelles et compositions</div>
-        <div class="table-responsive">
-            <table class="table table-notes table-bordered mb-0">
-                <thead>
-                    <tr>
-                        <th style="text-align:left; min-width:120px;">Matière</th>
-                        <th>Coeff</th>
-                        {% for mois in mois_labels %}
-                        <th>{{ mois }}</th>
-                        {% endfor %}
-                        {% for periode_id, periode_label in compo_periodes %}
-                        <th style="background:#084298;">{{ periode_label|truncatechars:8 }}</th>
-                        {% endfor %}
-                        <th style="background:#198754;">Moy.</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for mat in matieres_data %}
-                    <tr>
-                        <td>{{ mat.nom }}</td>
-                        <td>{{ mat.coefficient|default:"—" }}</td>
-                        {% for note in mat.notes_mensuelles %}
-                        <td>{{ note }}</td>
-                        {% endfor %}
-                        {% for note in mat.notes_compo %}
-                        <td class="fw-bold">{{ note }}</td>
-                        {% endfor %}
-                        <td class="fw-bold {% if mat.moyenne is not None %}{% if mat.moyenne >= 14 %}note-bon{% elif mat.moyenne >= 10 %}note-moyen{% else %}note-faible{% endif %}{% endif %}">
-                            {{ mat.moyenne|default:"—" }}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+        {% for mat in matieres_data %}
+        <div class="matiere-bloc{% if not forloop.last %} mb-4{% endif %}">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h3 class="h6 fw-bold mb-0"><i class="fas fa-book me-2"></i>{{ mat.nom }}{% if mat.coefficient %} <small class="text-muted fw-normal">(coeff. {{ mat.coefficient }})</small>{% endif %}</h3>
+                <span class="fw-bold {% if mat.moyenne is not None %}{% if mat.moyenne >= 14 %}note-bon{% elif mat.moyenne >= 10 %}note-moyen{% else %}note-faible{% endif %}{% endif %}">Moyenne : {{ mat.moyenne|default:"—" }}</span>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-notes table-bordered mb-0">
+                    <thead>
+                        <tr>
+                            {% for mois in mois_labels %}
+                            <th>{{ mois }}</th>
+                            {% endfor %}
+                            {% for periode_id, periode_label in compo_periodes %}
+                            <th style="background:#084298;">{{ periode_label|truncatechars:8 }}</th>
+                            {% endfor %}
+                            <th style="background:#198754;">Moy.</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            {% for note in mat.notes_mensuelles %}
+                            <td>{{ note }}</td>
+                            {% endfor %}
+                            {% for note in mat.notes_compo %}
+                            <td class="fw-bold">{{ note }}</td>
+                            {% endfor %}
+                            <td class="fw-bold {% if mat.moyenne is not None %}{% if mat.moyenne >= 14 %}note-bon{% elif mat.moyenne >= 10 %}note-moyen{% else %}note-faible{% endif %}{% endif %}">
+                                {{ mat.moyenne|default:"—" }}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
+        {% endfor %}
     </div>
     {% endif %}
 
@@ -519,7 +521,7 @@
     <!-- ═══════════════════════════════════════════ -->
     {% if classements %}
     <div class="section-card">
-        <div class="section-title"><i class="fas fa-trophy"></i>Classements</div>
+        <div class="section-title"><i class="fas fa-trophy"></i>Appréciation</div>
         <div class="row g-3">
             {% for cl in classements %}
             <div class="col-md-4 col-sm-6">
@@ -553,7 +555,7 @@
             <div class="d-flex justify-content-between align-items-start flex-wrap">
                 <div>
                     <strong>{{ act.titre }}</strong>
-                    <span class="badge bg-secondary ms-1">{{ act.get_type_activite_display }}</span>
+                    <span class="badge bg-secondary ms-1">{% if act.type_activite == 'ARTISTIQUE' %}Art{% elif act.type_activite == 'CULTURELLE' %}Culture{% else %}{{ act.get_type_activite_display }}{% endif %}</span>
                     {% if act.appreciation %}
                     <span class="badge bg-info text-dark ms-1">{{ act.appreciation }}</span>
                     {% endif %}
