@@ -160,12 +160,12 @@
                 <!-- Classe -->
                 <div class="mb-4" id="classeGroup" style="display: none;">
                     <label class="form-label fw-bold">
-                        <i class="fas fa-school me-1 text-warning"></i> Classe de l'élève
+                        <i class="fas fa-school me-1 text-warning"></i> Niveau de l'élève
                     </label>
                     <div class="input-icon-group">
                         <i class="fas fa-chalkboard input-icon"></i>
                         <select name="classe" id="classeSelect" class="form-select form-select-lg" style="padding-left: 42px;" required>
-                            <option value="">— Sélectionnez la classe —</option>
+                            <option value="">— Sélectionnez le niveau —</option>
                         </select>
                     </div>
                     <div id="classeLoading" class="form-text text-primary" style="display: none;">
@@ -202,7 +202,7 @@
             </div>
             <div>
                 <strong>Informations personnelles</strong>
-                <div class="text-muted small">Matricule, nom, date de naissance, classe, responsables</div>
+                <div class="text-muted small">Matricule, nom, date de naissance, niveau, responsables</div>
             </div>
         </div>
         <div class="feature-item">
@@ -219,7 +219,7 @@
                 <i class="fas fa-trophy"></i>
             </div>
             <div>
-                <strong>Classements</strong>
+                <strong>Appréciation</strong>
                 <div class="text-muted small">Rang, mention et appréciation par période</div>
             </div>
         </div>
@@ -229,7 +229,7 @@
             </div>
             <div>
                 <strong>Activités journalières</strong>
-                <div class="text-muted small">Évaluations, activités sportives, culturelles, artistiques</div>
+                <div class="text-muted small">Évaluations, activités sportives, culture, art</div>
             </div>
         </div>
     </div>
@@ -288,7 +288,7 @@
                 classeSelect.disabled = false;
 
                 if (result.ok && result.data.classes) {
-                    classeSelect.innerHTML = '<option value="">— Sélectionnez la classe —</option>';
+                    classeSelect.innerHTML = '<option value="">— Sélectionnez le niveau —</option>';
                     result.data.classes.forEach(function(cls) {
                         const opt = document.createElement('option');
                         opt.value = cls.id;

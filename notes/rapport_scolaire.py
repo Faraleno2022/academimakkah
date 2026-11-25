@@ -127,6 +127,12 @@ def _bulletins_disponibles(eleve, classe_note, annee):
     ]
 
 
+def _libelle_type_activite(activite):
+    """Libellé affiché aux parents : « Art » et « Culture » au lieu d'artistique/culturelle."""
+    libelles = {'ARTISTIQUE': 'Art', 'CULTURELLE': 'Culture'}
+    return libelles.get(activite.type_activite) or activite.get_type_activite_display()
+
+
 class ClassementList(list):
     def last(self):
         return self[-1] if self else None
@@ -626,7 +632,7 @@ def _reponse_pdf_parent(eleve, titre, introduction, entetes=None, lignes=None,
         Paragraph(
             f"Élève : <b>{escape(eleve.nom_complet)}</b> &nbsp; | &nbsp; "
             f"Matricule : <b>{escape(eleve.matricule or '—')}</b> &nbsp; | &nbsp; "
-            f"Classe : <b>{escape(eleve.classe.nom if eleve.classe else '—')}</b> &nbsp; | &nbsp; "
+            f"Niveau : <b>{escape(eleve.classe.nom if eleve.classe else '—')}</b> &nbsp; | &nbsp; "
             f"Année : <b>{escape(annee or '—')}</b>",
             sous_titre_style,
         ),
@@ -841,7 +847,7 @@ def rapport_scolaire_document(request, document_type, format_document='pdf'):
         lignes = [
             (
                 activite.date.strftime('%d/%m/%Y'),
-                activite.get_type_activite_display(),
+                _libelle_type_activite(activite),
                 activite.titre,
                 activite.appreciation or '—',
                 activite.description or '—',
@@ -1066,7 +1072,7 @@ def _generer_rapport_pdf(eleve):
         ("Sexe", eleve.get_sexe_display()),
         ("Date de naissance", eleve.date_naissance.strftime('%d/%m/%Y') if eleve.date_naissance else '—'),
         ("Lieu de naissance", eleve.lieu_naissance or '—'),
-        ("Classe", eleve.classe.nom if eleve.classe else '—'),
+        ("Niveau", eleve.classe.nom if eleve.classe else '—'),
         ("Statut", eleve.get_statut_display()),
     ]
     # Responsables
@@ -1120,7 +1126,7 @@ def _generer_rapport_pdf(eleve):
         y -= 10
         if y < margin + 60:
             y = new_page()
-        y = _draw_section_title(c, "CLASSEMENTS", y, margin, col_width)
+        y = _draw_section_title(c, "APPRÉCIATION", y, margin, col_width)
         y -= 5
         y = _draw_classements(c, classements, y, margin, col_width, new_page)
 
@@ -1290,22 +1296,6 @@ def _draw_notes_table(c, eleve, classe_note, matieres, y, margin, col_width, new
     note_w = (col_width - mat_w - coeff_w) / max((num_cols - 2), 1)
     col_widths = [mat_w, coeff_w] + [note_w] * (num_cols - 2)
 
-    data = [header]
-    for rd in rows_data:
-        row_vals = [rd['matiere'][:18], rd['coeff']] + rd['mois']
-        # Ajouter les compos dans l'ordre des périodes
-        compo_dict = dict(rd['compo'])
-        for p in compo_periodes:
-            row_vals.append(compo_dict.get(p, '—'))
-        data.append(row_vals)
-
-    # Vérifier l'espace disponible
-    table_height = len(data) * 14 + 10
-    if y - table_height < margin:
-        y = new_page()
-
-    # Créer table ReportLab
-    table = Table(data, colWidths=col_widths, repeatRows=1)
     style = TableStyle([
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('FONTSIZE', (0, 0), (-1, -1), 6.5),
@@ -1315,20 +1305,26 @@ def _draw_notes_table(c, eleve, classe_note, matieres, y, margin, col_width, new
         ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
         ('ALIGN', (0, 0), (0, -1), 'LEFT'),
         ('GRID', (0, 0), (-1, -1), 0.4, colors.grey),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, couleur_document('couleur_fond_tableau')]),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.white),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('LEFTPADDING', (0, 0), (-1, -1), 3),
         ('RIGHTPADDING', (0, 0), (-1, -1), 3),
         ('TOPPADDING', (0, 0), (-1, -1), 2),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
     ])
-    table.setStyle(style)
 
-    tw, th = table.wrap(col_width, 0)
-    if y - th < margin:
-        y = new_page()
-    table.drawOn(c, margin, y - th)
-    y -= th + 5
+    # Un tableau distinct par matière (en-tête + une ligne de notes)
+    for rd in rows_data:
+        compo_dict = dict(rd['compo'])
+        row_vals = [rd['matiere'][:18], rd['coeff']] + rd['mois']
+        row_vals += [compo_dict.get(p, '—') for p in compo_periodes]
+        table = Table([header, row_vals], colWidths=col_widths)
+        table.setStyle(style)
+        tw, th = table.wrap(col_width, 0)
+        if y - th < margin:
+            y = new_page()
+        table.drawOn(c, margin, y - th)
+        y -= th + 6
 
     return y
 
@@ -1388,7 +1384,7 @@ def _draw_activites(c, activites, y, margin, col_width, new_page):
         pj_count = act.pieces_jointes.count()
         data.append([
             act.date.strftime('%d/%m/%Y'),
-            act.get_type_activite_display(),
+            _libelle_type_activite(act),
             act.titre[:35],
             act.appreciation[:25] if act.appreciation else '—',
             str(pj_count) if pj_count else '—',

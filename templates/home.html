@@ -250,16 +250,6 @@
   .mk-tarif-liste li:last-child { border-bottom: none; }
   .mk-tarif-liste .prix { font-family: Georgia, 'Times New Roman', serif; font-weight: 700; font-size: 1.5rem; color: var(--mk-vert); }
 
-  .mk-programmes { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 2rem; align-items: center; }
-  .mk-programmes .etiquette { font-weight: 700; color: var(--mk-vert); margin-right: .4rem; }
-  .mk-programmes .puce {
-    background: var(--mk-vert);
-    color: #F5EFE2;
-    border-radius: 2rem;
-    padding: .35rem 1.1rem;
-    font-weight: 600;
-  }
-
   /* Particularité et hadith */
   .mk-particularite {
     background: var(--mk-vert);
@@ -273,6 +263,8 @@
   .mk-particularite .mk-slogan { color: var(--mk-or); }
   .mk-hadith { margin: 1.75rem 0 0; padding-top: 1.5rem; border-top: 1px solid rgba(245, 239, 226, .25); }
   .mk-hadith .mk-arabe { font-size: clamp(1.4rem, 2.6vw, 1.9rem); line-height: 1.9; color: #F5EFE2; text-align: right; margin-bottom: 1rem; }
+  .mk-hadith .mk-authenticite { color: var(--mk-or); font-weight: 700; font-size: .95rem; letter-spacing: .02em; margin-bottom: 1rem; }
+  .mk-hadith .mk-authenticite i { margin-right: .5rem; }
   .mk-hadith p { color: #CFDDD6; font-size: 1.1rem; margin-bottom: .5rem; }
   .mk-hadith footer { color: var(--mk-or); font-weight: 600; }
 
@@ -381,57 +373,12 @@
     <p class="mk-eyebrow">Qui sommes-nous</p>
     <p class="mk-intro mb-0">Un centre d'apprentissage des cours islamiques, pensé pour les enfants et les femmes adultes.</p>
     <div class="mk-filet"></div>
-    <p class="mk-intro-sous mb-0">Coran, Hadith, Sîra, Fiqh et langue arabe : un programme complet, enseigné en ligne et en présentiel par une équipe d'enseignantes.</p>
-  </div>
-</section>
-
-<!-- Matières -->
-<section class="mk-section mk-plein" id="matieres" style="background: var(--mk-ivoire);">
-  <div class="container">
-    <p class="mk-eyebrow">Nos matières</p>
-    <h2 class="mk-titre mb-4">Cinq disciplines</h2>
-    <div class="row g-3 row-cols-1 row-cols-md-2 row-cols-lg-3">
-      <div class="col">
-        <div class="mk-matiere">
-          <span class="mk-arabe" lang="ar">القرآن</span>
-          <h3>Le Coran</h3>
-          <p>Mémorisation, compréhension des versets, méditation sur leurs sens et mise en pratique.</p>
-        </div>
-      </div>
-      <div class="col">
-        <div class="mk-matiere">
-          <span class="mk-arabe" lang="ar">الحديث</span>
-          <h3>Le Hadith prophétique</h3>
-          <p>Compréhension de ses enseignements, découverte de leurs finalités et mise en pratique.</p>
-        </div>
-      </div>
-      <div class="col">
-        <div class="mk-matiere">
-          <span class="mk-arabe" lang="ar">السيرة</span>
-          <h3>La Sîra prophétique</h3>
-          <p>Connaissance de la vie du Prophète ﷺ, enseignements à en tirer et application dans la vie quotidienne.</p>
-        </div>
-      </div>
-      <div class="col">
-        <div class="mk-matiere">
-          <span class="mk-arabe" lang="ar">الفقه</span>
-          <h3>Le Fiqh</h3>
-          <p>Compréhension des règles, découverte de leur sens et application dans la vie quotidienne.</p>
-        </div>
-      </div>
-      <div class="col">
-        <div class="mk-matiere">
-          <span class="mk-arabe" lang="ar">العربية</span>
-          <h3>La langue arabe</h3>
-          <p>Communication orale, lecture, écriture et expression.</p>
-        </div>
-      </div>
-    </div>
+    <p class="mk-intro-sous mb-0">Coran, Hadith, Sîra, Fiqh, langue arabe et Tarbiya : un programme complet, enseigné en ligne et en présentiel par une équipe d'enseignantes.</p>
   </div>
 </section>
 
 <!-- Publics -->
-<section class="mk-section sable mk-plein" id="publics">
+<section class="mk-section mk-plein" id="publics" style="background: var(--mk-ivoire);">
   <div class="container">
     <p class="mk-eyebrow">Pour qui</p>
     <h2 class="mk-titre mb-4">Deux publics</h2>
@@ -506,12 +453,57 @@
         </div>
       </div>
     </div>
-    <div class="mk-programmes">
-      <span class="etiquette">Programmes d'études :</span>
-      <span class="puce">Le Coran</span>
-      <span class="puce">Le Fiqh</span>
-      <span class="puce">La Sîra</span>
-      <span class="puce">La Tarbiya</span>
+  </div>
+</section>
+
+<!-- Programme : les six matières -->
+<section class="mk-section sable mk-plein" id="matieres">
+  <div class="container">
+    <p class="mk-eyebrow">Programme</p>
+    <h2 class="mk-titre mb-4">Six matières</h2>
+    <div class="row g-3 row-cols-1 row-cols-md-2 row-cols-lg-3">
+      <div class="col">
+        <div class="mk-matiere">
+          <span class="mk-arabe" lang="ar">القرآن</span>
+          <h3>Le Coran</h3>
+          <p>Mémorisation, compréhension des versets, méditation sur leurs sens et mise en pratique.</p>
+        </div>
+      </div>
+      <div class="col">
+        <div class="mk-matiere">
+          <span class="mk-arabe" lang="ar">الحديث</span>
+          <h3>Le Hadith prophétique</h3>
+          <p>Compréhension de ses enseignements, découverte de leurs finalités et mise en pratique.</p>
+        </div>
+      </div>
+      <div class="col">
+        <div class="mk-matiere">
+          <span class="mk-arabe" lang="ar">السيرة</span>
+          <h3>La Sîra prophétique</h3>
+          <p>Connaissance de la vie du Prophète ﷺ, enseignements à en tirer et application dans la vie quotidienne.</p>
+        </div>
+      </div>
+      <div class="col">
+        <div class="mk-matiere">
+          <span class="mk-arabe" lang="ar">الفقه</span>
+          <h3>Le Fiqh</h3>
+          <p>Compréhension des règles, découverte de leur sens et application dans la vie quotidienne.</p>
+        </div>
+      </div>
+      <div class="col">
+        <div class="mk-matiere">
+          <span class="mk-arabe" lang="ar">العربية</span>
+          <h3>La langue arabe</h3>
+          <p>Communication orale, lecture, écriture et expression.</p>
+        </div>
+      </div>
+      <div class="col">
+        <div class="mk-matiere">
+          <span class="mk-arabe" lang="ar">التربية</span>
+          <h3>La Tarbiya</h3>
+          <p>Éducation islamique : bon comportement, valeurs et belles manières, à vivre au quotidien.</p>
+        </div>
+      </div>
     </div>
   </div>
 </section>
@@ -557,6 +549,7 @@
         <span>Apprendre</span><span class="point" aria-hidden="true"></span><span>Comprendre</span><span class="point" aria-hidden="true"></span><span>Vivre</span>
       </p>
       <blockquote class="mk-hadith">
+        <p class="mk-authenticite"><i class="fas fa-circle-check" aria-hidden="true"></i>Authenticité : athar authentique (ṣaḥîḥ), rapporté par at-Ṭabarî dans son Tafsîr.</p>
         <p class="mk-arabe" lang="ar">عنِ ابن مسعودٍ، قال : كان الرجلُ منا إذا تعلَّم عشرَ آياتٍ لم يجاوزْهنَّ حتى يعرفَ معانيهن والعملَ بهن</p>
         <p>« Lorsqu'un homme parmi nous apprenait dix versets, il ne passait pas aux suivants avant d'en avoir compris le sens et mis en pratique les enseignements. »</p>
         <footer>D'après Ibn Mas‘ûd, qu'Allah l'agrée</footer>
@@ -575,7 +568,7 @@
         <div class="mk-atout">
           <div class="num">02</div>
           <h3>Un programme complet</h3>
-          <p>Cinq matières, du Coran à la langue arabe.</p>
+          <p>Six matières, du Coran à la Tarbiya.</p>
         </div>
       </div>
       <div class="col-md-4">
